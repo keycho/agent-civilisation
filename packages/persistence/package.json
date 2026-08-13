@@ -1,0 +1,13 @@
+{
+  "name": "@civ/persistence",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*"
+  },
+  "dependencies": {
+    "@civ/core": "*"
+  }
+}

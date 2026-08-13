@@ -35,8 +35,14 @@ const GROUND_FLOOR_H = 3.3
  * plinths and silhouette elements. That split is what lets the city stay a
  * real place while looking nothing like a GIS extrusion.
  */
-export function generateArchetype(input: ArchetypeInput, seedKey: string): ArchetypeOutput {
-  const choice = selectArchetype(input)
+export function generateArchetype(
+  input: ArchetypeInput,
+  seedKey: string,
+  /** the preview harness pins a form so every archetype can be compared side by side */
+  override?: ArchetypeId,
+): ArchetypeOutput {
+  const selected = selectArchetype(input)
+  const choice = override ? { ...selected, archetype: override, reason: `forced: ${override}` } : selected
   const m = choice.metrics
   const year = input.constructionYear ?? 1900
   const roof = selectRoof(choice.archetype, m, input.roofHint, year)
@@ -137,7 +143,7 @@ function floorBands(
   toH: number,
   levels: number,
   protrusion: number,
-  thickness = 0.22,
+  thickness = 0.1,
 ): void {
   if (levels < 2 || levels > 14) return
   const band = outsetRing(ring, protrusion)
@@ -228,13 +234,13 @@ function apartment(ctx: FormCtx): void {
     const rise = Math.min(h * 0.28, 3.0)
     const eaves = h - rise
     walls(b, ring, eaves)
-    floorBands(b, ring, GROUND_FLOOR_H, eaves, levels, 0.16)
+    floorBands(b, ring, GROUND_FLOOR_H, eaves, levels, 0.07)
     cornice(b, ring, eaves - 0.2, 0.35, 0.25)
     pitchedTop(ctx, eaves, rise, 'hip')
     return
   }
   walls(b, ring, h)
-  floorBands(b, ring, GROUND_FLOOR_H, h - 0.9, levels, 0.16)
+  floorBands(b, ring, GROUND_FLOOR_H, h - 0.9, levels, 0.07)
   parapet(b, ring, h, 0.9, 0.4)
 }
 
@@ -248,7 +254,7 @@ function warehouse(ctx: FormCtx): void {
   }
   if (roof === 'parapet') {
     walls(b, ring, h)
-    floorBands(b, ring, GROUND_FLOOR_H, h - 1, Math.min(levels, 6), 0.2, 0.26)
+    floorBands(b, ring, GROUND_FLOOR_H, h - 1, Math.min(levels, 6), 0.09, 0.12)
     cornice(b, ring, h - 1.3, 0.35, 0.3)
     parapet(b, ring, h, 0.8, 0.4)
     return
@@ -257,7 +263,7 @@ function warehouse(ctx: FormCtx): void {
   const eaves = Math.max(2.4, h - rise)
   walls(b, ring, eaves, 4.2)
   // Warehouse floor lines sit further apart and read heavier than a dwelling's.
-  floorBands(b, ring, 4.2, eaves, Math.min(levels, 6), 0.24, 0.28)
+  floorBands(b, ring, 4.2, eaves, Math.min(levels, 6), 0.1, 0.13)
   cornice(b, ring, eaves - 0.2, 0.4, 0.3)
   pitchedTop(ctx, eaves, rise, roof)
 }
@@ -298,15 +304,19 @@ function industrial(ctx: FormCtx): void {
 function civic(ctx: FormCtx): void {
   const { b, ring, h, metrics } = ctx
   // Nave plus a tall narrow element. The tower carries the silhouette; the
-  // body is deliberately plain so the tower reads at 20 pixels.
-  const naveH = h * 0.6
-  const rise = Math.min(naveH * 0.45, metrics.obb.width * 0.4)
+  // body is deliberately plain so the tower still reads at 20 pixels.
+  //
+  // BAG's height is the dominant roof plane, which for a church is the nave,
+  // not the tower — so the tower is built as a multiple of it rather than
+  // clamped to it. A tower level with its own nave reads as a shed.
+  const naveH = h * 0.66
+  const rise = Math.min(naveH * 0.6, metrics.obb.width * 0.45)
   const eaves = Math.max(2.5, naveH - rise)
   walls(b, ring, eaves, 4.5)
   pitchedTop(ctx, eaves, rise, 'gable')
 
-  const side = Math.min(metrics.obb.width * 0.72, 11)
-  const at = metrics.obb.length / 2 - side * 0.55
+  const side = Math.max(4.5, Math.min(metrics.obb.width * 0.78, 12))
+  const at = metrics.obb.length / 2 - side * 0.5
   const c = obbPoint(metrics.obb, -at, 0)
   const towerRing: Ring = [
     [c[0] - side / 2, c[1] - side / 2],
@@ -314,11 +324,13 @@ function civic(ctx: FormCtx): void {
     [c[0] + side / 2, c[1] + side / 2],
     [c[0] - side / 2, c[1] + side / 2],
   ]
-  const towerH = h
+  const towerH = h * 1.55
   b.wallBand(towerRing, 0, towerH, ROLE_WALL)
-  cornice(b, towerRing, towerH - 0.6, 0.35, 0.3)
-  const belfry = insetRing(towerRing, side * 0.08) ?? towerRing
-  spire(b, belfry, towerH, Math.max(4, h * 0.55))
+  // a belfry stage, set in slightly, then the spire
+  cornice(b, towerRing, towerH - side * 0.55, 0.3, 0.25)
+  const belfry = insetRing(towerRing, side * 0.1) ?? towerRing
+  b.capWithHole(towerRing, belfry, towerH, ROLE_TRIM)
+  spire(b, belfry, towerH, Math.max(5, h * 0.85))
 }
 
 function retail(ctx: FormCtx): void {
@@ -336,7 +348,7 @@ function retail(ctx: FormCtx): void {
   if (h > g) {
     b.wallBand(ring, g, h, ROLE_WALL)
     b.cap(ring, g, ROLE_TRIM, false)
-    floorBands(b, ring, g, h - 0.9, Math.max(1, levels - 1), 0.16)
+    floorBands(b, ring, g, h - 0.9, Math.max(1, levels - 1), 0.07)
   }
   if (ctx.roof === 'gable') {
     const rise = Math.min(h * 0.32, 2.6)
@@ -355,7 +367,7 @@ function tower(ctx: FormCtx): void {
   for (let i = 0; i < stages; i++) {
     const top = h * ((i + 1) / stages)
     walls(b, cur, top, i === 0 ? GROUND_FLOOR_H : 0.01)
-    floorBands(b, cur, z, top - 0.6, Math.max(2, Math.round(levels / stages)), 0.14)
+    floorBands(b, cur, z, top - 0.6, Math.max(2, Math.round(levels / stages)), 0.06)
     if (i < stages - 1) {
       const next = insetRing(cur, Math.max(0.8, Math.sqrt(ctx.metrics.area) * 0.06))
       if (!next) break
@@ -390,7 +402,7 @@ function agentBlock(ctx: FormCtx): void {
   const capH = h - 0.9
   const topStart = Math.max(g, capH - Math.max(3.0, capH * 0.16))
   b.wallBand(ring, g, topStart, ROLE_WALL)
-  floorBands(b, ring, g, topStart, Math.max(2, levels - 1), 0.26, 0.3)
+  floorBands(b, ring, g, topStart, Math.max(2, levels - 1), 0.13, 0.15)
   const top = insetRing(ring, 1.1)
   if (top) {
     b.capWithHole(ring, top, topStart, ROLE_TRIM)
@@ -406,7 +418,7 @@ function agentSlab(ctx: FormCtx): void {
   const { b, ring, h, levels, metrics } = ctx
   b.wallBand(ring, 0, Math.min(4.2, h * 0.35), ROLE_GROUND_FLOOR)
   b.wallBand(ring, Math.min(4.2, h * 0.35), h, ROLE_WALL)
-  floorBands(b, ring, Math.min(4.2, h * 0.35), h - 1.0, levels, 0.3, 0.32)
+  floorBands(b, ring, Math.min(4.2, h * 0.35), h - 1.0, levels, 0.14, 0.16)
   parapet(b, ring, h, 1.0, 0.45)
 
   // Circulation core expressed as a taller element at one end.
@@ -430,7 +442,7 @@ function agentTower(ctx: FormCtx): void {
   for (let i = 0; i < stages; i++) {
     const top = h * [0.42, 0.76, 1.0][i]
     b.wallBand(cur, z, top - (i === stages - 1 ? 1.0 : 0), i === 0 ? ROLE_GROUND_FLOOR : ROLE_WALL)
-    floorBands(b, cur, z, top - 1.0, Math.max(2, Math.round(levels * 0.33)), 0.22, 0.26)
+    floorBands(b, cur, z, top - 1.0, Math.max(2, Math.round(levels * 0.33)), 0.11, 0.13)
     if (i < stages - 1) {
       const next = insetRing(cur, Math.max(1.0, Math.sqrt(ctx.metrics.area) * 0.09))
       if (!next) {

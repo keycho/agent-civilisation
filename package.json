@@ -7,8 +7,8 @@
   "workspaces": [
     "packages/core",
     "packages/importer",
-    "packages/sim",
     "packages/persistence",
+    "packages/sim",
     "packages/client"
   ],
   "scripts": {
@@ -21,6 +21,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.20.1",
+    "playwright": "^1.62.1",
     "typescript": "^5.6.3"
   },
   "engines": {
