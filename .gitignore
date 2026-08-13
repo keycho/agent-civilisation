@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+.DS_Store
+
+# Importer scratch: raw upstream responses are cached here and are not committed.
+# The derived seed in packages/client/public/world/ IS committed.
+packages/importer/.cache/

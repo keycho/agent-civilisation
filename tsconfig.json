@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "paths": {
+      "@civ/core": ["./packages/core/src/index.ts"],
+      "@civ/core/*": ["./packages/core/src/*"],
+      "@civ/sim": ["./packages/sim/src/index.ts"],
+      "@civ/sim/*": ["./packages/sim/src/*"],
+      "@civ/persistence": ["./packages/persistence/src/index.ts"],
+      "@civ/persistence/*": ["./packages/persistence/src/*"]
+    }
+  },
+  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts"],
+  "exclude": ["node_modules", "**/dist", "packages/*/.cache"]
+}

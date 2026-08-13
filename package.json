@@ -1,0 +1,29 @@
+{
+  "name": "agent-civilisation",
+  "private": true,
+  "version": "3.0.0",
+  "description": "Agents inherit the real world and rebuild it. The diff is the product.",
+  "type": "module",
+  "workspaces": [
+    "packages/core",
+    "packages/importer",
+    "packages/sim",
+    "packages/persistence",
+    "packages/client"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test packages/*/test/*.test.ts",
+    "import": "npm run import -w @civ/importer",
+    "dev": "npm run dev -w @civ/client",
+    "preview:archetypes": "npm run dev -w @civ/client -- --open /preview/"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
