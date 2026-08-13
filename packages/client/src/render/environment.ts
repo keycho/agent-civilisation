@@ -1,6 +1,6 @@
 import { ENVIRONMENT } from '@civ/core'
 import {
-  ACESFilmicToneMapping,
+  NoToneMapping,
   AmbientLight,
   BackSide,
   Color,
@@ -44,12 +44,16 @@ export function createEnvironment(scene: Scene, opts: EnvironmentOptions): {
   const hemi = new HemisphereLight(
     new Color(ENVIRONMENT.sky).getHex(),
     new Color(ENVIRONMENT.ground).getHex(),
-    1.55,
+    2.0,
   )
   scene.add(hemi)
-  scene.add(new AmbientLight(new Color(ENVIRONMENT.shadowCool).getHex(), 0.28))
+  scene.add(new AmbientLight(new Color(ENVIRONMENT.shadowCool).getHex(), 0.3))
 
-  const sun = new DirectionalLight(new Color(ENVIRONMENT.sunWarm).getHex(), 2.15)
+  // Three divides irradiance by PI, so intensities are tuned so that a sunlit
+  // up-facing surface lands at roughly its authored albedo and a shadowed one
+  // at roughly half. Without that the whole palette renders a stop dark and no
+  // amount of colour-picking fixes it.
+  const sun = new DirectionalLight(new Color(ENVIRONMENT.sunWarm).getHex(), 3.4)
   sun.position.set(-0.55, 0.72, 0.42).multiplyScalar(opts.radius * 2.2)
   sun.target.position.set(0, opts.groundY, 0)
   sun.castShadow = true
@@ -77,8 +81,12 @@ export function createEnvironment(scene: Scene, opts: EnvironmentOptions): {
 export function configureRenderer(renderer: WebGLRenderer): void {
   renderer.shadowMap.enabled = true
   renderer.shadowMap.type = PCFSoftShadowMap
-  renderer.toneMapping = ACESFilmicToneMapping
-  renderer.toneMappingExposure = 1.02
+  // §15 asks for restrained materials and a deliberate palette rather than a
+  // photographic image. Filmic tone mapping fights that: it rolls off exactly
+  // the midtones the palette lives in, and the art direction stops being
+  // predictable. Lights are balanced to land near the authored albedo instead.
+  renderer.toneMapping = NoToneMapping
+  renderer.toneMappingExposure = 1
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
 }
 
@@ -119,9 +127,9 @@ function createSkyDome(radius: number): Mesh {
 /** Simple preview lighting for the archetype harness — no fog, no sky. */
 export function createPreviewEnvironment(scene: Scene): DirectionalLight {
   scene.background = new Color('#d9dcdb')
-  scene.add(new HemisphereLight(0xdfe6e8, 0x9a9c92, 1.7))
-  scene.add(new AmbientLight(0x8899aa, 0.3))
-  const sun = new DirectionalLight(0xfff2dd, 2.2)
+  scene.add(new HemisphereLight(0xdfe6e8, 0x9a9c92, 2.0))
+  scene.add(new AmbientLight(0x8899aa, 0.22))
+  const sun = new DirectionalLight(0xfff2dd, 3.4)
   sun.position.set(-40, 70, 45)
   sun.castShadow = true
   sun.shadow.mapSize.set(2048, 2048)

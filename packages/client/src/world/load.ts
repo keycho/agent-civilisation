@@ -1,0 +1,66 @@
+import {
+  type BaselineBuilding,
+  type WorldSeed,
+  generateArchetype,
+  selectRoof,
+  footprintMetrics,
+} from '@civ/core'
+import type { BatchItem } from '../render/batch.ts'
+import { eraTint, jitterFor, roofToneFor } from '../render/tones.ts'
+
+export interface LoadedChunk {
+  seed: WorldSeed
+  items: BatchItem[]
+  statics: Array<{ roofTone: number; jitter: number; era: number; agent: boolean }>
+}
+
+export async function loadChunk(base = '/world'): Promise<LoadedChunk> {
+  const index = (await (await fetch(`${base}/index.json`)).json()) as {
+    chunks: Array<{ id: string; name: string; file: string }>
+  }
+  const seed = (await (await fetch(`${base}/${index.chunks[0].file}`)).json()) as WorldSeed
+
+  const items: BatchItem[] = []
+  const statics: LoadedChunk['statics'] = []
+
+  for (const b of seed.buildings) {
+    const out = generateArchetype(
+      {
+        footprint: b.footprint,
+        heightM: b.heightM,
+        levels: b.levels,
+        purpose: b.purpose,
+        constructionYear: b.constructionYear,
+        source: 'real_world',
+        roofHint: b.roofHint,
+      },
+      b.id,
+    )
+    items.push({ id: b.id, mesh: out.mesh, baseY: b.groundM })
+    statics.push({
+      roofTone: roofToneFor(out.archetype, out.roof, b.constructionYear ?? 1900, out.metrics.area),
+      jitter: jitterFor(b.id),
+      era: eraTint(b.constructionYear),
+      agent: false,
+    })
+  }
+
+  return { seed, items, statics }
+}
+
+/** Static texture values for a building the simulation has just created. */
+export function staticsForAgentBuilding(b: BaselineBuilding & { archetype: string }): {
+  roofTone: number
+  jitter: number
+  era: number
+  agent: boolean
+} {
+  const m = footprintMetrics(b.footprint)
+  const roof = selectRoof(b.archetype as never, m, b.roofHint, b.constructionYear ?? 2030)
+  return {
+    roofTone: roofToneFor(b.archetype as never, roof, b.constructionYear ?? 2030, m.area),
+    jitter: jitterFor(b.id),
+    era: 0,
+    agent: true,
+  }
+}

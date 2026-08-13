@@ -58,11 +58,11 @@ export const PURPOSE_COLORS_ORDERED: RGB[] = (() => {
 
 /** Roof tones, selected per building at import from archetype and era. */
 export const ROOF_TONES: RGB[] = [
-  hexToRgb('#9b6a55'), // 0 clay tile — pre-war pitched
-  hexToRgb('#7c6a63'), // 1 weathered tile
-  hexToRgb('#6e7175'), // 2 slate
-  hexToRgb('#7f8183'), // 3 modern flat / membrane
-  hexToRgb('#8e9092'), // 4 agent-built flat — cleaner, cooler
+  hexToRgb('#b07a63'), // 0 clay tile — pre-war pitched
+  hexToRgb('#98827a'), // 1 weathered tile
+  hexToRgb('#868a8e'), // 2 slate
+  hexToRgb('#9a9c9e'), // 3 modern flat / membrane
+  hexToRgb('#aeb1b4'), // 4 agent-built flat — cleaner, cooler
 ]
 
 export const GROUND_FLOOR_DARKEN = 0.88
@@ -93,7 +93,7 @@ export const ENVIRONMENT = {
   sky: '#c9d3d8',
   horizon: '#dfe2e0',
   fog: '#cfd6d8',
-  ground: '#b4b6ac',
+  ground: '#bcbdb1',
   water: '#7f97a3',
   waterDeep: '#5d7683',
   grass: '#a8b394',
@@ -114,8 +114,20 @@ export const ENVIRONMENT = {
  * The one place the palette crosses into GLSL. Emitting it rather than
  * duplicating it by hand is what keeps §16.4's "one palette" true.
  */
+/**
+ * The palette above is authored in sRGB, the way a designer picks colours. The
+ * renderer's working space is linear, so handing those numbers straight to the
+ * shader would render every colour lighter and flatter than it was chosen to
+ * be. Converting here — once, at the boundary — is what keeps "one palette"
+ * from quietly meaning "two".
+ */
+export function srgbToLinear(c: number): number {
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
+}
+
 export function paletteGlsl(): string {
-  const vec3 = (c: RGB) => `vec3(${c.map((v) => v.toFixed(4)).join(',')})`
+  const vec3 = (c: RGB) =>
+    `vec3(${c.map((v) => srgbToLinear(v).toFixed(4)).join(',')})`
   return `
 const vec3 PURPOSE_COLORS[8] = vec3[8](${PURPOSE_COLORS_ORDERED.map(vec3).join(',')});
 const vec3 DIVERGENCE_COLORS[8] = vec3[8](${DIVERGENCE_COLORS_RGB.map(vec3).join(',')});

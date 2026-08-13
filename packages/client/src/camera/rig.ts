@@ -196,6 +196,18 @@ export class CameraRig {
     )
     this.camera.lookAt(this.target)
 
+    // The long lens sits kilometres back, and a near plane of 1 m there leaves
+    // the depth buffer resolving about a third of a metre — which silently
+    // collapses every ground layer (canals, roads, parcel decals) into the base
+    // plate. Near and far have to track the camera, not be set once.
+    const near = Math.max(0.4, this.distance * 0.05)
+    const far = this.distance * 3 + 2500
+    if (Math.abs(this.camera.near - near) > near * 0.02) {
+      this.camera.near = near
+      this.camera.far = far
+      this.camera.updateProjectionMatrix()
+    }
+
     // fov and distance move together — this is the whole trick
     const t = MathUtils.clamp(
       (this.distance - this.lens.streetDistance) / (this.lens.cityDistance - this.lens.streetDistance),

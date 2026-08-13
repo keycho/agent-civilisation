@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>agent civilisation</title>
+    <style>
+      :root {
+        --ink: #1e2226;
+        --muted: #71787e;
+        --panel: rgba(250, 249, 246, 0.9);
+        --line: rgba(30, 34, 38, 0.13);
+        --accent: #2f6f6b;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #c9d3d8; }
+      body {
+        font: 13px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+        color: var(--ink);
+        -webkit-font-smoothing: antialiased;
+      }
+      canvas { display: block; }
+
+      /* §15: the default experience is mostly world. UI is secondary. */
+      .panel {
+        position: fixed;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        backdrop-filter: blur(10px);
+        box-shadow: 0 6px 24px rgba(20, 25, 30, 0.09);
+      }
+
+      #titlecard {
+        top: 18px; left: 18px; padding: 13px 16px 14px; max-width: 300px;
+      }
+      #titlecard h1 { margin: 0; font-size: 13.5px; letter-spacing: 0.01em; font-weight: 600; }
+      #titlecard .place { margin: 1px 0 0; font-size: 12px; color: var(--muted); }
+      #titlecard .stats { margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--line);
+                          font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+      #titlecard .prov { margin-top: 7px; font-size: 10.5px; color: var(--muted); line-height: 1.45; }
+
+      #clock {
+        top: 18px; left: 50%; transform: translateX(-50%);
+        padding: 9px 16px; display: flex; align-items: center; gap: 14px;
+      }
+      #clock .date { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: 0.01em; }
+      #clock .speeds { display: flex; gap: 3px; }
+      #clock button {
+        font: inherit; font-size: 11px; padding: 4px 8px; cursor: pointer;
+        border: 1px solid var(--line); background: transparent; border-radius: 6px; color: var(--ink);
+      }
+      #clock button[aria-pressed="true"] { background: var(--ink); color: #f8f7f4; border-color: var(--ink); }
+
+      #modes { bottom: 18px; left: 18px; padding: 11px 13px; width: 264px; }
+      #modes .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 11.5px; }
+      #modes .row label { flex: 0 0 74px; color: var(--muted); }
+      #modes input[type="range"] { flex: 1; }
+      #modes output { flex: 0 0 62px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+      #divergenceIndex {
+        margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--line);
+        display: flex; justify-content: space-between; align-items: baseline;
+      }
+      #divergenceIndex .n { font-size: 21px; font-weight: 650; font-variant-numeric: tabular-nums; color: var(--accent); }
+      #divergenceIndex .l { font-size: 10.5px; color: var(--muted); text-align: right; line-height: 1.35; }
+
+      #inspector {
+        top: 18px; right: 18px; width: 296px; padding: 14px 16px; display: none;
+        max-height: calc(100vh - 36px); overflow-y: auto;
+      }
+      #inspector.on { display: block; }
+      #inspector h2 { margin: 0 0 2px; font-size: 13.5px; font-weight: 600; }
+      #inspector .sub { margin: 0 0 10px; font-size: 11.5px; color: var(--muted); }
+      #inspector dl { margin: 0; display: grid; grid-template-columns: 96px 1fr; gap: 3px 10px; font-size: 11.5px; }
+      #inspector dt { color: var(--muted); }
+      #inspector dd { margin: 0; font-variant-numeric: tabular-nums; }
+      #inspector .section { margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--line); }
+      #inspector .section h3 { margin: 0 0 5px; font-size: 11px; text-transform: uppercase;
+                               letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+      #inspector .lineage { font-size: 11.5px; line-height: 1.6; }
+      #inspector .lineage .step { display: flex; gap: 7px; }
+      #inspector .lineage .step .yr { color: var(--muted); font-variant-numeric: tabular-nums; flex: 0 0 34px; }
+      #close { position: absolute; top: 10px; right: 12px; border: 0; background: none;
+               font-size: 15px; color: var(--muted); cursor: pointer; line-height: 1; }
+
+      #feed { bottom: 18px; right: 18px; width: 300px; padding: 11px 13px; max-height: 40vh; overflow: hidden; }
+      #feed h3 { margin: 0 0 7px; font-size: 10.5px; text-transform: uppercase;
+                 letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+      #feed .e { display: flex; gap: 8px; font-size: 11.5px; padding: 2.5px 0; }
+      #feed .e .yr { color: var(--muted); font-variant-numeric: tabular-nums; flex: 0 0 30px; }
+      #feed .e .t { flex: 1; }
+      #feed .e .dot { flex: 0 0 6px; height: 6px; width: 6px; border-radius: 50%; margin-top: 6px; }
+
+      #loading {
+        position: fixed; inset: 0; display: grid; place-items: center;
+        background: #c9d3d8; color: var(--muted); font-size: 12.5px; z-index: 10;
+      }
+      #hint { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+              font-size: 10.5px; color: var(--muted); opacity: 0.8; }
+      a { color: inherit; }
+      .hidden { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <div id="loading">loading the real world…</div>
+
+    <div class="panel" id="titlecard">
+      <h1 id="chunkName">—</h1>
+      <p class="place" id="chunkNote"></p>
+      <div class="stats" id="chunkStats"></div>
+      <div class="prov" id="chunkProv"></div>
+    </div>
+
+    <div class="panel" id="clock">
+      <span class="date" id="date">—</span>
+      <span class="speeds" id="speeds"></span>
+    </div>
+
+    <div class="panel" id="modes">
+      <div class="row">
+        <label for="mode">Divergence</label>
+        <input id="mode" type="range" min="0" max="1" step="0.01" value="0" />
+        <output id="modeOut">normal</output>
+      </div>
+      <div class="row">
+        <label for="scrub">Year</label>
+        <input id="scrub" type="range" min="2026" max="2045" step="1" value="2026" />
+        <output id="scrubOut">live</output>
+      </div>
+      <div id="divergenceIndex">
+        <span class="n" id="divN">0.0%</span>
+        <span class="l" id="divL">divergence index<br />baseline stock touched</span>
+      </div>
+    </div>
+
+    <div class="panel" id="inspector">
+      <button id="close" title="close">×</button>
+      <h2 id="insTitle"></h2>
+      <p class="sub" id="insSub"></p>
+      <dl id="insFacts"></dl>
+      <div class="section hidden" id="insLineageBox">
+        <h3>Provenance</h3>
+        <div class="lineage" id="insLineage"></div>
+      </div>
+    </div>
+
+    <div class="panel" id="feed">
+      <h3>Live feed</h3>
+      <div id="feedList"></div>
+    </div>
+
+    <div id="hint">drag orbit · shift-drag pan · wheel zoom · click a building · <a href="/preview/">archetype harness</a></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
