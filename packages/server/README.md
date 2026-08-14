@@ -178,21 +178,32 @@ A season turning, at `surge` against the same Postgres:
 ```
 season 1 saturated; turning over
 
- season | events   |     type     | rationale
---------+----------+--------------+------------------------------------------------
-      1 |   15,681 | season_ended | season 1 reached 49.9% divergence over 199
-      2 |    2,826 |              | completed generations and stopped changing
-                   | season_began | season 2 begins on the same ground
+ season | events  |     type     | rationale
+--------+---------+--------------+-------------------------------------------------
+      1 |  15,704 | season_ended | season 1 reached 49.9% divergence over 199
+      2 |   2,097 |              | completed generations and stopped changing
+        |         | season_began | season 2 begins on the same ground
+
+ season | snapshots | first_ordinal | last_ordinal
+--------+-----------+---------------+--------------
+      1 |        45 |             0 |       15,432
+      2 |         7 |             0 |        1,823
 ```
 
-That run also surfaced two ordering faults, both fixed and both now covered by
-`test/seasons.test.ts`. `season_ended` was filed under season 2, because the
-flusher stamped the season at flush time and the turn happens between append and
-flush — it is stamped at append time now. And snapshot ordinals were positions
-in the shared log rather than in the season, so a new season's scrub spent 85%
-of its travel sitting on the season's first snapshot; ordinals and the scrub's
-range are season-local now.
+The first run of that turn surfaced two ordering faults, both fixed above, both
+covered by `test/seasons.test.ts`, and both visible in the table: `season_ended`
+belongs to season 1 rather than to the season it announced the end of, and
+season 2's ordinals restart at 0 rather than continuing the shared log.
+
+`season_ended` was filed under season 2 because the flusher stamped the season
+at flush time and the turn happens between append and flush. Snapshot ordinals
+were positions in the shared log while the scrub's range was the global count,
+so a new season's slider spent 85% of its travel on the season's first snapshot.
 
 A third was found by reading rather than running: the log spans seasons but a
 new season's tick restarts at 0, so anything filtering recent events by tick
 alone would have handed a joining spectator the *previous* season's feed.
+
+A fourth was found by pointing a browser at a running season: the §16.2 data
+texture had 900 spare slots, which a world that does not stop exhausts in
+minutes. See the root README.
