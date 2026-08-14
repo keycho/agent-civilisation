@@ -27,6 +27,13 @@ This is the index: what each section asks for, and where it lives.
 | **16.5** | Construction stages on one `progress` float | `packages/core/src/construction.ts`, `render/scaffold.ts`, the reveal in `buildingMaterial.ts` |
 | **16.6** | Road growth animation; instanced agents | `render/roadMesh.ts` (`updateAgentRoads`), `render/agents.ts` |
 | **17** | Cinematic director driven by event weight | `packages/client/src/camera/director.ts`, `cinematicWeight` written in `packages/sim/src/actions.ts` |
+| **18.1** | Seed variance over N seeds, assert the distribution | `packages/sim/test/tune.ts`, `test/run-seed.ts` |
+| **18.2** | The untouched set as a diagnostic | `test/lib/summarise.ts` (correlations, purpose mix, Jaccard) |
+| **18.3** | Canaries for the silent-wrongness class | `test/lib/summarise.ts` structural report, asserted in `tune.ts` |
+| **19** | Known gaps after build 1 | README "Not built"; voxcity account in `tools/voxcity/README.md` |
+| **20** | Remove calendar time | `core/src/types.ts` (`THROUGHPUT`, `RATE_WINDOW_TICKS`), `sim/src/tick.ts`, `client/src/main.ts` |
+| **20.5** | Lifespan as an action budget | `sim/src/state.ts` (`EFFORT_COST`), `tick.ts` `retire()` |
+| **20.9** | Frozen action budget, calibrated once | `test/lib/summarise.ts` `DECISION_BUDGET`, provenance in `test/calibrate.ts` |
 
 ## Where the spec was not followed literally
 
@@ -43,11 +50,22 @@ Each of these is argued in the README and in the commit that introduced it.
 - **§16.1's minimum archetype set** is implemented as specified; no extra real
   archetypes were added, though Schiedam's windmills would have justified one.
 
-## Where the seam exists but the far side has not been run
+## Where the seam exists but the output is not adopted
 
-- **§10 / stage 10.** The substrate contract is defined, read by the renderer,
-  and swappable via `npm run import -- --substrate <file>` with validation on
-  load. `tools/voxcity/emit_substrate.py` emits it. voxcity itself has not been
-  executed, so the committed seed carries `provider: "flat-datum"`.
+- **§10 / stage 10.** voxcity has now been run end to end and the swap works in
+  both directions. Its output is not adopted: the Netherlands DEM is AHN4 via
+  Google Earth Engine and returns zeros without credentials while reporting
+  success, and its land cover carries no water, which would delete every canal.
+  The committed seed stays `flat-datum`. Full account in
+  `tools/voxcity/README.md`.
 - **§9's `LLMDecisionEngine`** is a throwing stub satisfying the interface, as
   the spec asks.
+
+## Known, measured, and deliberately unfixed
+
+- **Acquisition ignores site value** (§18.2 finding). Stock that does not earn —
+  every utility and industrial building — is invisible to every agent under
+  every seed. The fix was implemented and measured at median index 35.9% ->
+  54.9%; it is a model decision that collides with a frozen budget, so it waits
+  for §18.4's yield rework on chunk two. `tune.ts` reports it as KNOWN.
+- **Era gating** remains a proxy for that same mispriced yield model, per §18.4.

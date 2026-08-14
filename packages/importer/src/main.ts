@@ -99,8 +99,30 @@ if (substrateArg >= 0 && process.argv[substrateArg + 1]) {
   if (!Array.isArray(loaded.elevation) || loaded.elevation.length !== loaded.cols * loaded.rows) {
     throw new Error(`${path}: elevation grid does not match cols x rows`)
   }
+
+  // voxcity reports "Dem complete" and hands back an all-zero grid when its DEM
+  // source needs credentials it does not have — AHN4 is served through Google
+  // Earth Engine. A substrate with no relief at all is that failure, not a flat
+  // country: real polder still varies by tens of centimetres.
+  const relief = Math.max(...loaded.elevation) - Math.min(...loaded.elevation)
+  const hasWater = loaded.surfaces.some((s) => s.kind === 'water')
+  if (relief < 0.01 && !process.argv.includes('--allow-flat')) {
+    throw new Error(
+      `${path}: elevation grid has zero relief across ${loaded.elevation.length} samples. ` +
+        'That is an unauthenticated DEM fetch, not flat terrain. Pass --allow-flat to override.',
+    )
+  }
+  if (!hasWater && waterRings(substrate).length > 0) {
+    log(
+      `      WARNING: replacement substrate has no water but the OSM one had ` +
+        `${waterRings(substrate).length} bodies — the canals would be lost`,
+    )
+  }
   substrate = loaded
-  log(`      substrate replaced from ${path} (voxcity)`)
+  log(
+    `      substrate replaced from ${path} (voxcity): ` +
+      `${loaded.surfaces.length} surfaces, ${relief.toFixed(2)} m relief`,
+  )
 }
 const parcels = deriveParcels(
   blocks,

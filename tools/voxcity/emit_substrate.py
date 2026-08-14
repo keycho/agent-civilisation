@@ -54,25 +54,24 @@ SURFACE_KINDS = {
     "rail",
 }
 
-# voxcity's land-cover classes -> our surface kinds. voxcity fuses several
-# sources; the class names below follow its OpenEarthMap/ESA WorldCover output.
+# voxcity converts every source's land cover to its own standard classes and
+# hands them back as 1-based integer codes, not names. The legend below is the
+# one it prints at voxelization time.
 LANDCOVER_TO_KIND = {
-    "water": "water",
-    "sea": "water",
-    "river": "water",
-    "wetland": "grass",
-    "tree": "wood",
-    "trees": "wood",
-    "forest": "wood",
-    "grass": "grass",
-    "rangeland": "grass",
-    "shrub": "grass",
-    "bareland": "paving",
-    "cropland": "farmland",
-    "agriculture": "farmland",
-    "developed_space": "paving",
-    "road": "paving",
-    "building": None,  # buildings are not the substrate's business (§1)
+    1: "paving",    # bareland
+    2: "grass",     # rangeland
+    3: "grass",     # shrub
+    4: "farmland",  # agriculture
+    5: "wood",      # tree
+    6: "grass",     # moss and lichen
+    7: "grass",     # wetland
+    8: "wood",      # mangrove
+    9: "water",     # water
+    10: "paving",   # snow and ice
+    11: "paving",   # developed space
+    12: "paving",   # road
+    13: None,       # building — not the substrate's business (§1)
+    14: None,       # no data
 }
 
 
@@ -81,6 +80,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--chunk", required=True, type=Path, help="emitted world seed JSON")
     p.add_argument("--out", required=True, type=Path, help="where to write the substrate JSON")
     p.add_argument("--cell", type=float, default=10.0, help="elevation sample spacing, metres")
+    # Defaults chosen for sources that need no Google Earth Engine credentials.
+    # "Netherlands 0.5m DTM" is AHN, which is the same lidar 3DBAG derives its
+    # building heights from, so the terrain and the buildings agree.
+    p.add_argument("--dem", default="Netherlands 0.5m DTM")
+    p.add_argument("--land-cover", default="OpenStreetMap")
+    p.add_argument("--canopy", default="Static")
     p.add_argument(
         "--dry-run",
         action="store_true",
@@ -123,18 +128,37 @@ def main() -> int:
     # voxcity provides the substrate and NOT the mutable entities, and a fused
     # grid cannot express "agent 41 acquires building 4821" anyway.
     rectangle = [(west, south), (east, south), (east, north), (west, north)]
-    voxcity_grid, building_height, canopy_height, land_cover, dem, *_ = get_voxcity(
+    print(
+        f"sources dem={args.dem!r} land_cover={args.land_cover!r} canopy={args.canopy!r}",
+        file=sys.stderr,
+    )
+    result = get_voxcity(
         rectangle,
         building_source="OpenStreetMap",
-        land_cover_source="OpenEarthMapJapan",
-        canopy_height_source="High Resolution 1m Global Canopy Height Maps",
-        dem_source="DeltaDTM",
+        land_cover_source=args.land_cover,
+        canopy_height_source=args.canopy,
+        dem_source=args.dem,
         meshsize=args.cell,
     )
-    del voxcity_grid, building_height  # explicitly discarded, see above
+    # voxcity >= 1.6 returns a VoxCity object rather than the tuple older
+    # examples unpack. `.voxels` and `.buildings` are deliberately unread: §1 is
+    # explicit that voxcity provides the substrate and not the mutable
+    # entities, and a fused grid cannot express "agent 41 acquires building
+    # 4821" in any case.
+    # Each grid is a small dataclass wrapping a numpy array plus metadata:
+    # DemGrid.elevation, LandCoverGrid.classes, CanopyGrid.top.
+    dem = result.dem.elevation
+    land_cover = result.land_cover.classes
+    canopy_height = result.tree_canopy.top
 
     elevation = resample(dem, cols, rows)
     surfaces = surfaces_from_landcover(land_cover, canopy_height, bounds, args.cell)
+    relief = max(elevation) - min(elevation)
+    print(
+        f"dem {len(dem)}x{len(dem[0])}  relief {relief:.2f} m  "
+        f"land cover {len(land_cover)}x{len(land_cover[0])}",
+        file=sys.stderr,
+    )
 
     substrate = {
         "cellSizeM": args.cell,
@@ -183,8 +207,7 @@ def surfaces_from_landcover(land_cover, canopy_height, bounds, cell: float) -> l
             kind = None
             if i < cols:
                 raw = land_cover[j][i]
-                name = raw if isinstance(raw, str) else str(raw)
-                kind = LANDCOVER_TO_KIND.get(name.lower())
+                kind = LANDCOVER_TO_KIND.get(int(raw))
                 # canopy overrides low vegetation where trees actually stand
                 if kind in ("grass", "farmland") and canopy_height is not None:
                     try:

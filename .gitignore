@@ -7,3 +7,9 @@ dist/
 # Importer scratch: raw upstream responses are cached here and are not committed.
 # The derived seed in packages/client/public/world/ IS committed.
 packages/importer/.cache/
+
+# voxcity is a build-time pipeline (§1); neither its venv nor its scratch
+# downloads belong in the repo. tools/voxcity/README.md has the invocation.
+.venv-voxcity/
+output/
+*.substrate.json
