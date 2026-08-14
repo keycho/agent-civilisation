@@ -649,6 +649,77 @@ assert(
 )
 
 // ---------------------------------------------------------------------------
+// §27.5: competitive pricing
+//
+// PRE-REGISTERED. These assertions and the prediction verdict below were
+// written and committed before the first 20-seed run of the mechanism, per
+// §28.5 and the standing discipline: write the assertion before you see the
+// distribution.
+//
+// The prediction under test is the user's, stated the same way §23.2's was:
+// "competitive pricing produces yield compression before it produces any
+// migration." Verified here in the single chunk, while agents have nowhere to
+// go, because pricing is the mechanism migration depends on — shipped alongside
+// multi-chunk, a null result could not be told apart from broken plumbing.
+//
+// Two measures, both registered in advance, because the obvious one is
+// confounded and saying so afterwards would be worthless:
+//
+//   cap rate over stock    yield / land value per locality. Confounded: the
+//                          dense centre has the highest rents AND the most
+//                          competition, so a cross-section cannot separate
+//                          "bid up" from "always was worth more".
+//   return on price paid   over transactions, against how contested that spot
+//                          was when the money went in. This is the quantity
+//                          §27.5's claim is actually about — what the marginal
+//                          agent gets, and therefore what would send capital
+//                          somewhere else once there is a somewhere else.
+//
+// The second is the one that decides the verdict. The first is reported beside
+// it so the confound is visible rather than argued about.
+// ---------------------------------------------------------------------------
+
+const capRatio = med2((x) => x.pricing.capRateRatio)
+const retRatio = med2((x) => x.pricing.returnRatio)
+
+console.log('\n§27.5 competitive pricing')
+console.log(
+  `  competition across localities: p10 ${med2((x) => x.pricing.competitionP10).toFixed(2)} ` +
+    `p90 ${med2((x) => x.pricing.competitionP90).toFixed(2)}`,
+)
+console.log(
+  `  land value across parcels:     p10 ${med2((x) => x.pricing.landValueP10).toFixed(2)} ` +
+    `p90 ${med2((x) => x.pricing.landValueP90).toFixed(2)}`,
+)
+console.log(
+  `  cap rate over stock, contested / quiet:      ${capRatio.toFixed(2)}x  (confounded, see above)`,
+)
+console.log(
+  `  return on price paid, contested / quiet:     ${retRatio.toFixed(2)}x  ` +
+    `over ${med2((x) => x.pricing.transactions)} transactions`,
+)
+console.log(
+  `  §27.5 predicted yield compression where agents concentrate. ` +
+    `${retRatio < 0.95 ? 'COMPRESSED' : retRatio > 1.05 ? 'INFLATED' : 'FLAT'}`,
+)
+
+// The mechanism has to do something spatially differentiated before its
+// consequences are worth testing. A flat competition surface means no locality
+// was ever bid up and the rest of the section is measuring nothing.
+assert(
+  med2((x) => x.pricing.competitionP90) > med2((x) => x.pricing.competitionP10) * 1.5,
+  'competition is not flat across the chunk',
+  `p90 ${med2((x) => x.pricing.competitionP90).toFixed(2)} vs p10 ${med2((x) => x.pricing.competitionP10).toFixed(2)}`,
+)
+// The claim itself. 0.95 rather than 1.0 so a coin-flip result cannot pass as
+// compression; the threshold is on the wrong side of neutral on purpose.
+assert(
+  retRatio < 0.95,
+  'return on price compresses where agents concentrate',
+  `${retRatio.toFixed(2)}x`,
+)
+
+// ---------------------------------------------------------------------------
 // §23.6 / §26.2: emergent districts
 // ---------------------------------------------------------------------------
 

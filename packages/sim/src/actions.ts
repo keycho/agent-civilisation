@@ -5,6 +5,7 @@ import {
   type Ring,
   type RoadEdge,
   DIVERGENCE,
+  RATE_WINDOW_TICKS,
   area as ringArea,
   centroid,
   constructionDuration,
@@ -24,8 +25,10 @@ import {
   developmentCost,
   expansionCost,
   parcelPrice,
+  competitionAt,
   parcelTakeoverPrice,
   receive,
+  recordDemand,
   renovationCost,
   spend,
   withDuty,
@@ -297,6 +300,19 @@ function acquireBuilding(
   b.ownerId = agent.id
   agent.holdings.add(b.id)
   world.lastTransfer.set(b.id, world.tick)
+  // §27.5: a bid that cleared. The engine records the ones that did not.
+  {
+    const at = world.parcelOf(b)
+    if (at) {
+      recordDemand(world, at.centroid[0], at.centroid[1])
+      // and what this buyer actually gets back per unit of capital committed,
+      // against how contested the spot was when they committed it
+      world.transactions.push({
+        competition: competitionAt(world, at.centroid[0], at.centroid[1]),
+        returnOnPrice: (b.yieldPerTick * RATE_WINDOW_TICKS) / Math.max(1e-9, cost),
+      })
+    }
+  }
   raiseDivergence(b, DIVERGENCE.owned)
 
   const parcel = world.parcelOf(b)
@@ -347,6 +363,7 @@ function acquireParcel(
   p.ownerId = agent.id
   agent.parcels.add(p.id)
   world.lastTransfer.set(p.id, world.tick)
+  recordDemand(world, p.centroid[0], p.centroid[1])
   emit(world, 'parcel_acquired', {
     agent,
     parcelId: p.id,

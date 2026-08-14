@@ -7,6 +7,7 @@ import {
   creditHeadroom,
   decayStep,
   receive,
+  recomputeCompetition,
   recomputeIntensity,
   recomputeLandValues,
   recomputeYields,
@@ -102,6 +103,8 @@ export class Simulation {
 
     buildAdjacency(this.world)
     recomputeIntensity(this.world)
+    // sizes the competition grid before the first land values are read
+    recomputeCompetition(this.world)
     recomputeLandValues(this.world)
     recomputeYields(this.world)
 
@@ -214,6 +217,10 @@ export class Simulation {
     if (w.tick % MARKET_EVERY === 0) {
       decayStep(w, MARKET_EVERY)
       recomputeIntensity(w)
+      // §27.5: competition before values — the price is demand against what is
+      // still there to buy, so the market term has to be current when land
+      // value reads it.
+      recomputeCompetition(w)
       recomputeLandValues(w)
       recomputeYields(w)
       w.siteResidualCache.clear()

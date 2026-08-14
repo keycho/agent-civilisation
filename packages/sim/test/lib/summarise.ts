@@ -16,6 +16,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Simulation } from '../../src/index.ts'
 import { DISTRICT_SPAN_M, findDistricts } from '../../src/divergence.ts'
+import type { World } from '../../src/state.ts'
 
 export { DISTRICT_SPAN_M }
 
@@ -129,6 +130,31 @@ export interface Summary {
    * now a load-bearing quantity rather than a label on a feed line.
    */
   districts: { count: number; largest: number; medianSize: number; maxExtentM: number }
+  /**
+   * §27.5: competitive pricing, measured in the single chunk before anything
+   * multi-region exists — while agents still have nowhere to go, so a failure
+   * here cannot be confused with a failure of the migration plumbing.
+   *
+   * `contestedCapRate` and `quietCapRate` are yield on land value, taken over
+   * the most and least bid-up quartile of localities. §27.5's claim is that the
+   * good place gets expensive and yields compress there, so contested must come
+   * out below quiet. Written before the first 20-seed run.
+   */
+  pricing: {
+    contestedCapRate: number
+    quietCapRate: number
+    /** contested / quiet — below 1 is compression */
+    capRateRatio: number
+    /** the same split over transactions: return on the price actually paid */
+    contestedReturn: number
+    quietReturn: number
+    returnRatio: number
+    transactions: number
+    competitionP10: number
+    competitionP90: number
+    landValueP10: number
+    landValueP90: number
+  }
   /** structural canaries over the emitted artifact (§21.4) */
   structural: SeedReport
   curve: Array<{ decisions: number; index: number; agentOrigin: number; cleared: number; generation: number }>
@@ -348,7 +374,90 @@ export async function runSeed(
     },
     structural: validateSeed(world),
     districts: districtsOf(sim.world),
+    pricing: pricingOf(sim.world),
     curve,
+  }
+}
+
+/**
+ * §27.5. Yield on land value, per locality, split by how bid-up the locality
+ * got. "The good place gets expensive, yields compress, and the marginal agent
+ * finds the cheap town is the better return" — the first two clauses are
+ * testable here, in one chunk, with nowhere to migrate to.
+ *
+ * Cap rate rather than rent, because rent alone does not compress: what
+ * compresses is what an agent earns per unit of capital committed. Cells need
+ * some stock before they count, for the same reason the sector index does — a
+ * cell holding one building reports its own noise.
+ */
+function pricingOf(w: World) {
+  const cols = w.intensityCols
+  const rows = w.intensityRows
+  const cell = w.intensityCell
+  const n = cols * rows
+  const yieldSum = new Float64Array(n)
+  const valueSum = new Float64Array(n)
+  const stock = new Float64Array(n)
+
+  const at = (x: number, y: number): number => {
+    const i = Math.round((x - w.bounds.minX) / cell)
+    const j = Math.round((y - w.bounds.minY) / cell)
+    if (i < 0 || j < 0 || i >= cols || j >= rows) return -1
+    return j * cols + i
+  }
+
+  for (const b of w.buildings.values()) {
+    if (b.state !== 'standing') continue
+    const c = centroid(b.footprint)
+    const k = at(c[0], c[1])
+    if (k < 0) continue
+    yieldSum[k] += b.yieldPerTick
+    stock[k] += 1
+  }
+  for (const p of w.parcels.values()) {
+    const k = at(p.centroid[0], p.centroid[1])
+    if (k < 0) continue
+    valueSum[k] += p.landValue * p.areaM2
+  }
+
+  const live: Array<{ comp: number; cap: number }> = []
+  for (let k = 0; k < n; k++) {
+    if (stock[k] < 6 || valueSum[k] <= 0) continue
+    live.push({ comp: w.competition?.[k] ?? 0, cap: yieldSum[k] / valueSum[k] })
+  }
+  live.sort((a, b) => a.comp - b.comp)
+
+  const q = Math.max(1, Math.floor(live.length / 4))
+  const quiet = live.slice(0, q)
+  const contested = live.slice(-q)
+  const mean = (xs: Array<{ cap: number }>): number =>
+    xs.length ? xs.reduce((s, x) => s + x.cap, 0) / xs.length : 0
+
+  const comps = live.map((x) => x.comp)
+  const lvs = [...w.parcels.values()].map((p) => p.landValue)
+  const contestedCapRate = mean(contested)
+  const quietCapRate = mean(quiet)
+
+  // the transaction-side measure, which is the one §27.5's claim is about
+  const tx = [...w.transactions].sort((a, b) => a.competition - b.competition)
+  const tq = Math.max(1, Math.floor(tx.length / 4))
+  const avg = (xs: typeof tx): number =>
+    xs.length ? xs.reduce((s, x) => s + x.returnOnPrice, 0) / xs.length : 0
+  const quietReturn = avg(tx.slice(0, tq))
+  const contestedReturn = avg(tx.slice(-tq))
+
+  return {
+    contestedCapRate,
+    quietCapRate,
+    capRateRatio: quietCapRate > 0 ? contestedCapRate / quietCapRate : 1,
+    contestedReturn,
+    quietReturn,
+    returnRatio: quietReturn > 0 ? contestedReturn / quietReturn : 1,
+    transactions: tx.length,
+    competitionP10: percentile(comps, 0.1),
+    competitionP90: percentile(comps, 0.9),
+    landValueP10: percentile(lvs, 0.1),
+    landValueP90: percentile(lvs, 0.9),
   }
 }
 

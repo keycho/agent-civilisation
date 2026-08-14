@@ -207,6 +207,42 @@ export class World {
   intensityRows = 0
   readonly intensityCell = 20
 
+  /**
+   * §27.5: competitive pricing.
+   *
+   * Land value has been `landBase * access * intensity` — built intensity
+   * inside a radius, which is a proxy for desirability and not a market. Under
+   * it, capital piles into the best place forever and nobody is ever priced out
+   * of anywhere, so the marginal agent has no reason to look elsewhere.
+   *
+   * `demand` accumulates bids per cell on the intensity grid, both the
+   * acquisitions that cleared and the ones an agent wanted and could not
+   * afford. `competition` is that demand against the supply still available
+   * there, smoothed. Two arrays rather than one because the raw flow is spiky
+   * and the price must not be: §28.4 warns that a price responding too fast
+   * makes capital oscillate, and calls damping a requirement rather than a
+   * polish item.
+   */
+  demand!: Float32Array
+  competition!: Float32Array
+
+  /**
+   * §27.5, measured on transactions rather than on stock.
+   *
+   * Cap rate over standing stock is confounded: the dense centre has both the
+   * highest rents and the highest competition, so a cross-section of it cannot
+   * separate "bid up" from "always was worth more". What §27.5 actually claims
+   * is about the *marginal agent* — that the return available on a purchase in
+   * a contested place falls below the return in a quiet one, which is what
+   * would eventually send capital elsewhere.
+   *
+   * So record the return on the price actually paid, against how bid-up that
+   * spot was when it was paid. Both halves of this are recorded before the
+   * first 20-seed run, so the metric cannot be chosen after seeing which one
+   * flatters the mechanism.
+   */
+  readonly transactions: Array<{ competition: number; returnOnPrice: number }> = []
+
   /** buildings created by agents, needing geometry on the client */
   readonly pendingGeometry: string[] = []
   /** road edges created by agents, needing a ribbon rebuild */

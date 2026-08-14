@@ -18,6 +18,7 @@ import {
   parcelTakeoverPrice,
   paybackWindows,
   portfolioValue,
+  recordDemand,
   renovationCost,
   renovationUplift,
   withDuty,
@@ -556,7 +557,15 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
       if (traded !== undefined && world.tick - traded < RESALE_LOCK_TICKS) continue
 
       const price = acquisitionPrice(world, b)
-      if (withDuty(price) > funds) continue
+      if (withDuty(price) > funds) {
+        // §27.5: an agent that wanted this and could not afford it is demand
+        // that did not clear, and it is the half of the signal that makes a
+        // place expensive *before* its supply runs out. Recording only
+        // completed purchases would price on absorption alone and always lag.
+        const at = world.parcelOf(b)
+        if (at) recordDemand(world, at.centroid[0], at.centroid[1])
+        continue
+      }
 
       /**
        * §21.1. A building is worth the better of what it earns and what its
@@ -612,7 +621,11 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
     // `assemble` and `build_road` are all unreachable.
     for (const p of shopping ? obs.candidates.vacantParcels : []) {
       if (p.ownedBySelf || p.hasBuilding || !p.developable) continue
-      if (withDuty(p.price) > funds * 0.6) continue
+      if (withDuty(p.price) > funds * 0.6) {
+        const at = world.parcels.get(p.id)
+        if (at) recordDemand(world, at.centroid[0], at.centroid[1])
+        continue
+      }
       const parcel = world.parcels.get(p.id)
       if (!parcel) continue
       const lastTraded = world.lastTransfer.get(p.id)

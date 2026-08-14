@@ -254,10 +254,111 @@ export function normalisedIntensity(world: World, x: number, y: number): number 
 // values
 // ---------------------------------------------------------------------------
 
+/**
+ * §27.5: "price must respond to competition — agents bidding, capital chasing a
+ * finite parcel supply. Then the good place gets expensive, yields compress,
+ * and the marginal agent finds the cheap town is the better return."
+ *
+ * These are shipped and verified in the single chunk, before anything
+ * multi-region, because pricing is the mechanism migration depends on. If it
+ * went in alongside multi-chunk and migration did not happen, there would be no
+ * way to tell whether the pricing was wrong or the plumbing was.
+ */
+export const COMPETITION = {
+  /** what a fully bid-up locality adds to its land value, as a multiplier */
+  gain: 0.85,
+  /**
+   * How fast the price tracks demand, per market step. Deliberately slow.
+   * §28.4: "if price responds too fast, capital oscillates between two
+   * settlements forever. Damping is a real requirement, not a polish item."
+   */
+  smoothing: 0.11,
+  /** bids per still-available parcel at which the pressure term saturates */
+  saturationRatio: 2.5,
+  /** share of accumulated demand that survives each market step */
+  decay: 0.72,
+}
+
+/** §27.5: one agent wanting one parcel here, cleared or priced out. */
+export function recordDemand(world: World, x: number, y: number, n = 1): void {
+  if (!world.demand) return
+  const cell = world.intensityCell
+  const i = Math.round((x - world.bounds.minX) / cell)
+  const j = Math.round((y - world.bounds.minY) / cell)
+  if (i < 0 || j < 0 || i >= world.intensityCols || j >= world.intensityRows) return
+  world.demand[j * world.intensityCols + i] += n
+}
+
+/** 0..1 — how bid-up this locality is. */
+export function competitionAt(world: World, x: number, y: number): number {
+  if (!world.competition) return 0
+  const cell = world.intensityCell
+  const i = Math.round((x - world.bounds.minX) / cell)
+  const j = Math.round((y - world.bounds.minY) / cell)
+  if (i < 0 || j < 0 || i >= world.intensityCols || j >= world.intensityRows) return 0
+  return world.competition[j * world.intensityCols + i]
+}
+
+/**
+ * Demand against the supply that is still there to buy. A locality where ten
+ * agents bid on the last two parcels prices very differently from one where ten
+ * agents bid across forty, which is the whole point: scarcity, not popularity.
+ *
+ * Supply is counted over a 3x3 neighbourhood so a single-parcel cell does not
+ * saturate on one bid. Demand decays, so a place that was fought over and then
+ * abandoned becomes cheap again — §28.4's "falling prices in an abandoned place
+ * should eventually make it attractive again", reachable here without a second
+ * chunk.
+ */
+export function recomputeCompetition(world: World): void {
+  const cols = world.intensityCols
+  const rows = world.intensityRows
+  if (!cols || !rows) return
+  if (!world.demand || world.demand.length !== cols * rows) {
+    world.demand = new Float32Array(cols * rows)
+    world.competition = new Float32Array(cols * rows)
+  }
+
+  const supply = new Float32Array(cols * rows)
+  const cell = world.intensityCell
+  for (const p of world.parcels.values()) {
+    // still on the market: nobody owns it, or it is owned but undeveloped
+    const standing = p.buildingId ? world.standing(p.buildingId) : undefined
+    if (p.ownerId && standing) continue
+    if (!p.developable) continue
+    const i = Math.round((p.centroid[0] - world.bounds.minX) / cell)
+    const j = Math.round((p.centroid[1] - world.bounds.minY) / cell)
+    if (i < 0 || j < 0 || i >= cols || j >= rows) continue
+    supply[j * cols + i] += 1
+  }
+
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      let near = 0
+      for (let dj = -1; dj <= 1; dj++) {
+        for (let di = -1; di <= 1; di++) {
+          const a = i + di
+          const b = j + dj
+          if (a < 0 || b < 0 || a >= cols || b >= rows) continue
+          near += supply[b * cols + a]
+        }
+      }
+      const k = j * cols + i
+      const ratio = world.demand[k] / Math.max(1, near)
+      const target = clamp01(ratio / COMPETITION.saturationRatio)
+      world.competition[k] += (target - world.competition[k]) * COMPETITION.smoothing
+      world.demand[k] *= COMPETITION.decay
+    }
+  }
+}
+
 export function landValuePerM2(world: World, p: Parcel): number {
   const access = 0.35 + 0.65 * clamp01(p.accessScore)
   const intensity = 0.45 + 1.35 * normalisedIntensity(world, p.centroid[0], p.centroid[1])
-  return ECONOMY.landBase * access * intensity
+  // §27.5: the market term. Desirability sets the level, competition for what
+  // is left sets how far above it the price actually goes.
+  const bid = 1 + COMPETITION.gain * competitionAt(world, p.centroid[0], p.centroid[1])
+  return ECONOMY.landBase * access * intensity * bid
 }
 
 export function recomputeLandValues(world: World): void {
