@@ -183,6 +183,23 @@ export const BLOCK_BOUNDING_CLASSES: ReadonlySet<RoadClass> = new Set<RoadClass>
   'pedestrian',
 ])
 
+/**
+ * Where along a road segment to test whether a parcel has swallowed it.
+ *
+ * §21.4 generalises past "the validator reads the emitter's output file": the
+ * validator and the emitter must also run *the same test*. They did not. The
+ * importer's drop pass sampled each segment at 0.2/0.4/0.6/0.8 and the seed
+ * validator sampled at 0.25/0.5/0.75, so a parcel covering a road at midspan
+ * was invisible to the one that could have dropped it and caught by the one
+ * that could only complain. It surfaced under §24.2 — the rotated cut produced
+ * two such parcels where the north cut happened to produce none — which means
+ * the north cut was passing by luck rather than by construction.
+ *
+ * One set, imported by both. Denser than either was, because the cost of an
+ * extra sample is nothing next to a parcel that owns the street.
+ */
+export const CARRIAGEWAY_SAMPLE_TS = [0.15, 0.25, 0.35, 0.5, 0.65, 0.75, 0.85] as const
+
 /** Metres. Drives ribbon generation and access scoring. */
 export const ROAD_WIDTH: Record<RoadClass, number> = {
   primary: 12,

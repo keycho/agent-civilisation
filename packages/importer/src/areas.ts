@@ -55,16 +55,15 @@ export const AREAS: Record<string, AreaDef> = {
      * corners came from, and it confirms §24.2: the rotation was never a camera
      * choice.
      *
-     * Setting `bearingDeg: 45.4` here cuts along the canals and the whole
-     * pipeline handles it — the re-import runs clean through parcel derivation
-     * and emits 936 buildings against the current 925. It is off because the
-     * emitted artifact then fails a structural canary: 2 derived parcels land
-     * over a carriageway where the north-cut chunk has 0. §21.4 says the canary
-     * reads the emitted file, and the importer refused to let it be committed,
-     * which is the discipline working. Turning the cut on means clearing that
-     * first, and it is a parcel-derivation question rather than a framing one.
+     * The 2 carriageway overlaps this first tripped were not caused by the
+     * rotation. The drop pass and the seed validator were sampling road
+     * segments at different points along their length, so a parcel covering a
+     * road at midspan could be missed by the one that could drop it and caught
+     * by the one that could only complain. Under one shared sample set the
+     * north cut turns out to carry one such parcel too — it was passing by luck
+     * rather than by construction. See CARRIAGEWAY_SAMPLE_TS.
      */
-    // bearingDeg: 45.4,
+    bearingDeg: 45.4,
     note: 'Historic harbour district: Lange Haven and Nieuwe Haven, distillery warehouses, post-industrial edge.',
   },
   'schiedam-wide': {

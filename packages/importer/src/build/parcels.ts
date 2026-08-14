@@ -6,6 +6,7 @@ import {
   type RoadEdge,
   type RoadNode,
   BLOCK_BOUNDING_CLASSES,
+  CARRIAGEWAY_SAMPLE_TS,
   ROAD_ACCESS_VALUE,
   type Vec2,
   area as ringArea,
@@ -327,7 +328,7 @@ function overlapsCarriageway(
   for (const v of ring) radius = Math.max(radius, Math.hypot(v[0] - c[0], v[1] - c[1]))
   for (const seg of index.queryRadius(c, radius + 6)) {
     if (!BLOCK_BOUNDING_CLASSES.has(seg.edge.class)) continue
-    for (const t of [0.2, 0.4, 0.6, 0.8]) {
+    for (const t of CARRIAGEWAY_SAMPLE_TS) {
       const x = seg.a[0] + (seg.b[0] - seg.a[0]) * t
       const y = seg.a[1] + (seg.b[1] - seg.a[1]) * t
       if (containsPoint(ring, [x, y])) return true

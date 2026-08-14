@@ -1,5 +1,5 @@
 import { ringSelfIntersects } from './geo/polygon.ts'
-import { BLOCK_BOUNDING_CLASSES, type Ring } from './types.ts'
+import { BLOCK_BOUNDING_CLASSES, CARRIAGEWAY_SAMPLE_TS, type Ring } from './types.ts'
 import type { Parcel, WorldSeed } from './world.ts'
 
 /**
@@ -153,7 +153,7 @@ function countParcelsOverCarriageway(
     const a = nodes.get(e.a)
     const b = nodes.get(e.b)
     if (!a || !b) continue
-    for (const t of [0.25, 0.5, 0.75]) {
+    for (const t of CARRIAGEWAY_SAMPLE_TS) {
       const x = a.x + (b.x - a.x) * t
       const y = a.y + (b.y - a.y) * t
       for (const p of grid.get(key(x, y)) ?? []) {
