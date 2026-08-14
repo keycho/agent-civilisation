@@ -40,11 +40,13 @@ export class BuildingDataTexture {
     this.texture = makeTexture(this.data, this.width, this.height)
     this.staticTexture = makeTexture(this.staticData, this.width, this.height)
 
-    // sane defaults: complete, untouched, residential, perfect condition
+    // Every slot starts at progress 0 — "does not exist" — and the caller sets
+    // the baseline stock to 1. That default is what makes the year scrub honest:
+    // a slot allocated in 2038 reads as 0 in the 2031 snapshot, so restoring
+    // that snapshot sinks the building back under the ground it was built on.
+    // Defaulting to 1 instead leaves every future structure standing in the
+    // past, which looks like a working scrub and is not one.
     for (let i = 0; i < count; i++) {
-      this.data[i * 4] = 255
-      this.data[i * 4 + 1] = 0
-      this.data[i * 4 + 2] = 0
       this.data[i * 4 + 3] = 255
     }
   }

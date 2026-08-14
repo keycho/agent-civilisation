@@ -8,7 +8,7 @@
  * This is a build-time pipeline. Nothing here ships in the runtime image; the
  * committed output in packages/client/public/world is what the app loads.
  */
-import type { ChunkMeta, Provenance, WorldSeed } from '@civ/core'
+import type { ChunkMeta, Provenance, Substrate, WorldSeed } from '@civ/core'
 import { boundsOfMany, rdFrame } from '@civ/core'
 import { AREAS, rdBboxOf, wgsBboxOf } from './areas.ts'
 import { extractBlocks } from './build/blocks.ts'
@@ -17,6 +17,7 @@ import { deriveParcels } from './build/parcels.ts'
 import { buildRoadGraph } from './build/roads.ts'
 import { buildSubstrate, waterRings } from './build/substrate.ts'
 import { emitSeed, emitSql } from './emit.ts'
+import { readFile } from 'node:fs/promises'
 import {
   overpass,
   queryBuildings,
@@ -77,13 +78,30 @@ const localBounds = boundsOfMany([
     [clip.maxX, clip.maxY],
   ],
 ])
-const substrate = buildSubstrate(
+let substrate = buildSubstrate(
   osmWater.elements,
   osmLand.elements,
   built.buildings,
   frame,
   localBounds,
 )
+
+// §12 stage 10: the substrate is a swap, not a rewrite. If a voxcity run has
+// emitted one (tools/voxcity/emit_substrate.py), it replaces the flat datum
+// here and nothing downstream is aware of the difference.
+const substrateArg = process.argv.indexOf('--substrate')
+if (substrateArg >= 0 && process.argv[substrateArg + 1]) {
+  const path = process.argv[substrateArg + 1]
+  const loaded = JSON.parse(await readFile(path, 'utf8')) as Substrate
+  if (loaded.provider !== 'voxcity') {
+    throw new Error(`${path}: expected provider "voxcity", got "${loaded.provider}"`)
+  }
+  if (!Array.isArray(loaded.elevation) || loaded.elevation.length !== loaded.cols * loaded.rows) {
+    throw new Error(`${path}: elevation grid does not match cols x rows`)
+  }
+  substrate = loaded
+  log(`      substrate replaced from ${path} (voxcity)`)
+}
 const parcels = deriveParcels(
   blocks,
   built.buildings,
@@ -111,6 +129,15 @@ const provenance: Provenance[] = [
     layer: 'building purpose tags, road graph, water, landcover',
     source: 'OpenStreetMap via Overpass API',
     licence: 'ODbL 1.0 — share-alike applies to published derived databases',
+    retrieved: today,
+  },
+  {
+    layer: 'terrain, landcover, water (substrate)',
+    source:
+      substrate.provider === 'voxcity'
+        ? 'voxcity (build-time pipeline, tools/voxcity)'
+        : 'OSM landcover + datum interpolated from BAG ground heights',
+    licence: substrate.provider === 'voxcity' ? 'per voxcity source layers' : 'ODbL 1.0 / CC BY 4.0',
     retrieved: today,
   },
   {

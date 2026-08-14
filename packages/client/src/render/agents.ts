@@ -1,0 +1,134 @@
+import { AGENT_MOTION_MAX_TPS } from '@civ/core'
+import type { Agent } from '@civ/sim'
+import {
+  BufferAttribute,
+  BufferGeometry,
+  Color,
+  ConeGeometry,
+  CylinderGeometry,
+  DynamicDrawUsage,
+  InstancedMesh,
+  MeshLambertMaterial,
+  Object3D,
+} from 'three'
+
+/**
+ * §16.6: "agents are instanced, and here instancing does work because they
+ * share one mesh."
+ *
+ * §15 is specific about what they must not be: no realistic human models. These
+ * are small stylized entities that read as inhabitants of a miniature world —
+ * at 8 to 20 pixels the silhouette and the colour carry everything and geometry
+ * detail carries nothing.
+ *
+ * §3: above about a week per second, continuous motion is nonsense, so agents
+ * stop interpolating and become static presence markers with an activity pulse.
+ */
+
+const OCCUPATION_COLOR: Record<string, string> = {
+  consolidator: '#d8b36a',
+  renovator: '#8fbe86',
+  developer: '#7fe3e0',
+  converter: '#b57ad0',
+}
+
+const MARKER_HEIGHT = 5.2
+
+export class AgentMarkers {
+  readonly mesh: InstancedMesh
+  private dummy = new Object3D()
+  private colour = new Color()
+  private capacity: number
+
+  constructor(capacity: number) {
+    this.capacity = capacity
+    const geometry = markerGeometry()
+    const material = new MeshLambertMaterial({ vertexColors: false })
+    this.mesh = new InstancedMesh(geometry, material, capacity)
+    this.mesh.instanceMatrix.setUsage(DynamicDrawUsage)
+    this.mesh.frustumCulled = false
+    this.mesh.castShadow = false
+    this.mesh.count = 0
+  }
+
+  /**
+   * `interpolate` is false above the motion threshold: markers snap to where
+   * the agent is working rather than sliding around at a month a second.
+   */
+  update(agents: Iterable<Agent>, groundY: number, dt: number, ticksPerSecond: number, time: number): void {
+    const interpolate = ticksPerSecond > 0 && ticksPerSecond <= AGENT_MOTION_MAX_TPS
+    let i = 0
+    for (const a of agents) {
+      if (a.diedTick) continue
+      if (i >= this.capacity) break
+
+      if (interpolate) {
+        const k = 1 - Math.pow(0.02, dt)
+        a.x += (a.targetX - a.x) * k
+        a.y += (a.targetY - a.y) * k
+      } else {
+        a.x = a.targetX
+        a.y = a.targetY
+      }
+
+      // activity pulse: the marker breathes while the agent is doing something
+      const busy = a.activity !== 'idle'
+      const pulse = busy ? 1 + 0.18 * Math.sin(time * 4 + a.colourIndex) : 1
+
+      this.dummy.position.set(a.x, groundY + MARKER_HEIGHT * 0.5 * pulse, -a.y)
+      this.dummy.scale.set(1, pulse, 1)
+      this.dummy.rotation.y = a.colourIndex * 0.5
+      this.dummy.updateMatrix()
+      this.mesh.setMatrixAt(i, this.dummy.matrix)
+
+      this.colour.set(OCCUPATION_COLOR[a.strategy] ?? '#c8c8c8')
+      // a stable per-agent value shift so recurring characters stay recognisable
+      this.colour.offsetHSL(0, 0, ((a.colourIndex % 6) - 3) * 0.028)
+      this.mesh.setColorAt(i, this.colour)
+      i++
+    }
+    this.mesh.count = i
+    this.mesh.instanceMatrix.needsUpdate = true
+    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true
+  }
+}
+
+/** A pin: a tapered body under a marker cap. Reads as a presence, not a person. */
+function markerGeometry(): BufferGeometry {
+  const body = new CylinderGeometry(0.55, 1.15, MARKER_HEIGHT * 0.62, 6)
+  body.translate(0, -MARKER_HEIGHT * 0.19, 0)
+  const cap = new ConeGeometry(1.5, MARKER_HEIGHT * 0.44, 6)
+  cap.translate(0, MARKER_HEIGHT * 0.28, 0)
+  return mergeGeometries([body, cap])
+}
+
+/** Minimal merge — three's BufferGeometryUtils lives in examples and is not worth the import here. */
+function mergeGeometries(parts: BufferGeometry[]): BufferGeometry {
+  let vertexCount = 0
+  for (const g of parts) vertexCount += g.getAttribute('position').count
+
+  const position = new Float32Array(vertexCount * 3)
+  const normal = new Float32Array(vertexCount * 3)
+  let offset = 0
+  for (const g of parts) {
+    const nonIndexed = g.index ? g.toNonIndexed() : g
+    const p = nonIndexed.getAttribute('position')
+    const n = nonIndexed.getAttribute('normal')
+    for (let i = 0; i < p.count; i++) {
+      position[(offset + i) * 3] = p.getX(i)
+      position[(offset + i) * 3 + 1] = p.getY(i)
+      position[(offset + i) * 3 + 2] = p.getZ(i)
+      normal[(offset + i) * 3] = n.getX(i)
+      normal[(offset + i) * 3 + 1] = n.getY(i)
+      normal[(offset + i) * 3 + 2] = n.getZ(i)
+    }
+    offset += p.count
+    if (nonIndexed !== g) nonIndexed.dispose()
+    g.dispose()
+  }
+
+  const out = new BufferGeometry()
+  out.setAttribute('position', new BufferAttribute(position, 3))
+  out.setAttribute('normal', new BufferAttribute(normal, 3))
+  return out
+}

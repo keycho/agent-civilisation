@@ -91,6 +91,15 @@
       #feed .e .t { flex: 1; }
       #feed .e .dot { flex: 0 0 6px; height: 6px; width: 6px; border-radius: 50%; margin-top: 6px; }
 
+      #shot {
+        position: fixed; top: 76px; left: 50%; transform: translateX(-50%);
+        padding: 4px 11px; border-radius: 999px; font-size: 10.5px;
+        letter-spacing: 0.09em; text-transform: uppercase; font-weight: 600;
+        background: rgba(30, 34, 38, 0.82); color: #f5f3ee;
+        opacity: 0; transition: opacity 0.4s ease; pointer-events: none;
+      }
+      #shot.on { opacity: 1; }
+
       #loading {
         position: fixed; inset: 0; display: grid; place-items: center;
         background: #c9d3d8; color: var(--muted); font-size: 12.5px; z-index: 10;
@@ -114,7 +123,10 @@
     <div class="panel" id="clock">
       <span class="date" id="date">—</span>
       <span class="speeds" id="speeds"></span>
+      <button id="ambient" aria-pressed="true" title="ambient mode — the director drives the camera (a)">ambient</button>
     </div>
+
+    <div id="shot"></div>
 
     <div class="panel" id="modes">
       <div class="row">
@@ -149,7 +161,7 @@
       <div id="feedList"></div>
     </div>
 
-    <div id="hint">drag orbit · shift-drag pan · wheel zoom · click a building · <a href="/preview/">archetype harness</a></div>
+    <div id="hint">drag orbit · shift-drag pan · wheel zoom · click a building · <b>a</b> for ambient · <a href="/preview/">archetype harness</a></div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>
