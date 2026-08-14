@@ -124,11 +124,18 @@ reports `uptimeSeconds` and the actual `decisionsPerSecond`: if that sits below
 the configured pace, the loop is not running when nobody is asking and the
 deployment is wrong.
 
-Retention is by season, decided now rather than at 150 million rows. At
-`normal` throughput this world writes roughly one event per decision and 14
-decisions a second — about 1.2 million rows a day, so 150 million is four
-months of uptime. `RETAIN_SEASONS` keeps the last N seasons whole and drops the
-ones before them, snapshots with their events.
+Retention is by season, decided now rather than at 150 million rows. Measured
+rather than guessed: this world writes **0.275 events per decision** — most
+decisions are a pass or an unaffordable option — which at `normal` throughput is
+3.8 events a second, or about 330,000 rows a day if it never stopped.
+
+But it does stop. A season saturates at roughly 65,000 decisions, which is
+around 18,000 events and ~77 minutes at `normal`; `RETAIN_SEASONS` keeps the
+last N whole and drops the ones before them, snapshots with their events. At the
+default of 4 the steady state is on the order of 70,000 rows and a few hundred
+megabytes of snapshot bytea — measured at 1.9 MB per 6,200 events and 8.4 kB per
+snapshot. Seasons are what make retention easy: the table is bounded by the
+horizon rather than by uptime.
 
 That collides with append-only, and the resolution is to say what append-only
 actually means: the simulation must never rewrite what happened. The trigger now
