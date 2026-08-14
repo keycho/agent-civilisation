@@ -21,10 +21,11 @@ import {
 /**
  * The ground, drawn from the §10 substrate contract and nothing else.
  *
- * Today the contract is filled by the importer from OSM landcover plus a datum
- * interpolated from BAG ground heights. At stage 10 voxcity fills the same
- * struct and this file does not change — that is the entire point of writing
- * the contract at stage 1.
+ * The contract was written at stage 1 and has now been filled three ways
+ * without this file learning where the ground came from: a datum interpolated
+ * from BAG heights, a voxcity run, and AHN lidar via PDOK. That is the entire
+ * point of writing it early — §21.5 swapped the terrain source out and the
+ * renderer only had to start believing the elevation grid.
  */
 
 /**
@@ -83,19 +84,6 @@ export function createSubstrateView(substrate: Substrate, halfExtentM: number): 
     [-halfExtentM, halfExtentM],
   ]
 
-  // §15: bounded, not infinite. A ground plane running to the horizon reads as
-  // a map viewport; a plate that ends just past the chunk reads as an object
-  // sitting in space, which is most of what makes the world feel handmade.
-  const base = new Mesh(
-    new PlaneGeometry(halfExtentM * 2, halfExtentM * 2),
-    new MeshLambertMaterial({ color: new Color(ENVIRONMENT.ground) }),
-  )
-  base.rotation.x = -Math.PI / 2
-  base.position.y = groundY - PLATE_DROP
-  base.receiveShadow = true
-  base.renderOrder = -4
-  group.add(base)
-
   // one merged mesh per kind: a handful of draw calls for the whole ground
   const byKind = new Map<SubstrateSurface['kind'], Ring[]>()
   for (const s of substrate.surfaces) {
@@ -106,11 +94,60 @@ export function createSubstrateView(substrate: Substrate, halfExtentM: number): 
     else byKind.set(s.kind, [clipped])
   }
 
+  /**
+   * A canal is level, and AHN has no returns off water at all — the cells under
+   * one were filled from the quays on either side, so the terrain grid says the
+   * ground there is at quay height. Taking the lowest ground each body touches
+   * puts the surface where the water actually is; carving the plate to match is
+   * what stops the quay-level ground poking through it in a grid-shaped
+   * staircase. §15 wants the canal cut into the ground, and this is that.
+   */
+  const water = (byKind.get('water') ?? []).map((ring) => {
+    let lo = Infinity
+    for (const [x, y] of ring) lo = Math.min(lo, sampleElevation(substrate, x, y))
+    return { ring, level: lo + LAYER.water }
+  })
+  const groundOrWater = (x: number, y: number): number => {
+    for (const w of water) if (pointInRing(w.ring, x, y)) return w.level
+    return sampleElevation(substrate, x, y)
+  }
+
+  // §15: bounded, not infinite. A ground plane running to the horizon reads as
+  // a map viewport; a plate that ends just past the chunk reads as an object
+  // sitting in space, which is most of what makes the world feel handmade.
+  //
+  // §21.5: it is also displaced now rather than flat. Under `flat-datum` there
+  // was nothing to displace by and a plane was honest; with AHN under it there
+  // are 3.5 m of real quay-and-canal relief, and drawing that away would repeat
+  // the complaint that retired voxcity — a substrate swap you cannot see.
+  const segments = Math.max(1, Math.min(160, Math.round((halfExtentM * 2) / substrate.cellSizeM) * 2))
+  const plate = new PlaneGeometry(halfExtentM * 2, halfExtentM * 2, segments, segments)
+  const pos = plate.getAttribute('position')
+  for (let i = 0; i < pos.count; i++) {
+    // still in plane space here: x is x, y is +north, z becomes height
+    pos.setZ(i, groundOrWater(pos.getX(i), pos.getY(i)) - groundY - PLATE_DROP)
+  }
+  plate.computeVertexNormals()
+  const base = new Mesh(plate, new MeshLambertMaterial({ color: new Color(ENVIRONMENT.ground) }))
+  base.rotation.x = -Math.PI / 2
+  base.position.y = groundY
+  base.receiveShadow = true
+  base.renderOrder = -4
+  group.add(base)
+
   for (const [kind, rings] of byKind) {
     // Overlapping polygons of the same kind — a river drawn over its harbours —
     // are exactly coplanar and z-fight into stripes. A per-ring micro-stagger
     // is below the eye and above the depth buffer.
-    const geo = triangulateRings(rings, groundY + LAYER[kind], 0.03)
+    // Land follows the ground; water is level, at the height computed above.
+    const heightFor =
+      kind === 'water'
+        ? (ring: Ring) => {
+            const level = water.find((w) => w.ring === ring)?.level ?? groundY + LAYER.water
+            return () => level
+          }
+        : () => (x: number, y: number) => sampleElevation(substrate, x, y) + LAYER[kind]
+    const geo = triangulateRings(rings, heightFor, 0.03)
     if (!geo) continue
     const mesh = new Mesh(
       geo,
@@ -140,18 +177,25 @@ export function createSubstrateView(substrate: Substrate, halfExtentM: number): 
   }
 }
 
-function triangulateRings(rings: Ring[], y: number, stagger = 0): BufferGeometry | null {
+/** `heightFor` returns a per-vertex height function for each ring. */
+function triangulateRings(
+  rings: Ring[],
+  heightFor: (ring: Ring) => (x: number, y: number) => number,
+  stagger = 0,
+): BufferGeometry | null {
   const positions: number[] = []
   let n = 0
   for (const ring of rings) {
     if (ring.length < 3) continue
-    const yr = y + n++ * stagger
+    const height = heightFor(ring)
+    const lift = n++ * stagger
     const flat: number[] = []
     for (const p of ring) flat.push(p[0], p[1])
     const tris = earcut(flat)
     for (let i = 0; i < tris.length; i += 3) {
       for (const k of [tris[i], tris[i + 1], tris[i + 2]]) {
-        positions.push(ring[k][0], yr, -ring[k][1])
+        const [x, y] = ring[k]
+        positions.push(x, height(x, y) + lift, -y)
       }
     }
   }
@@ -161,6 +205,16 @@ function triangulateRings(rings: Ring[], y: number, stagger = 0): BufferGeometry
   geo.computeVertexNormals()
   geo.computeBoundingSphere()
   return geo
+}
+
+function pointInRing(ring: Ring, x: number, y: number): boolean {
+  let inside = false
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i]
+    const [xj, yj] = ring[j]
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside
+  }
+  return inside
 }
 
 function meanElevation(s: Substrate): number {

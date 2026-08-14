@@ -144,7 +144,13 @@ export interface Substrate {
   originX: number
   originY: number
   surfaces: SubstrateSurface[]
-  provider: 'flat-datum' | 'voxcity'
+  /**
+   * Where the ground came from. §21.5 retires voxcity for chunks in countries
+   * with a national lidar product and keeps the seam: `ahn` carries elevation
+   * only and leaves `surfaces` to the importer, because AHN is a terrain model
+   * and the canals already arrive through OSM.
+   */
+  provider: 'flat-datum' | 'voxcity' | 'ahn'
 }
 
 // ---------------------------------------------------------------------------

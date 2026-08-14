@@ -49,7 +49,7 @@ seed.buildings.forEach((b, i) => {
 buildings.flush()
 scene.add(buildings.group)
 
-const roads = createRoadMeshes(seed.roads.nodes, seed.roads.edges, substrate.groundY, HALF_EXTENT)
+const roads = createRoadMeshes(seed.roads.nodes, seed.roads.edges, substrate.heightAt, HALF_EXTENT)
 scene.add(roads.baseline)
 scene.add(roads.agent)
 
@@ -78,7 +78,7 @@ const sim = new Simulation(seed as WorldSeed, store, {
     refreshReadouts()
   },
 })
-const bridge = new SimBridge(sim, buildings, roads.agent, substrate.groundY, store)
+const bridge = new SimBridge(sim, buildings, roads.agent, substrate.heightAt, store)
 bridge.captureSnapshot(0, 1, 0, {})
 
 // ---------------------------------------------------------------------------

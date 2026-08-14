@@ -86,15 +86,22 @@ let substrate = buildSubstrate(
   localBounds,
 )
 
-// §12 stage 10: the substrate is a swap, not a rewrite. If a voxcity run has
-// emitted one (tools/voxcity/emit_substrate.py), it replaces the flat datum
-// here and nothing downstream is aware of the difference.
+// §12 stage 10: the substrate is a swap, not a rewrite. An external pipeline
+// emits the same contract to a file and it replaces the flat datum here, with
+// nothing downstream aware of the difference.
+//
+// §21.5: two providers now sit behind that seam and they carry different
+// amounts. voxcity fuses terrain *and* land cover, so it replaces the whole
+// struct. AHN is a terrain model, so it replaces the ground and leaves the
+// surfaces alone — which is the fix for the finding that retired voxcity here,
+// that its land cover has no water in it and adopting it deletes every canal in
+// a canal town.
 const substrateArg = process.argv.indexOf('--substrate')
 if (substrateArg >= 0 && process.argv[substrateArg + 1]) {
   const path = process.argv[substrateArg + 1]
   const loaded = JSON.parse(await readFile(path, 'utf8')) as Substrate
-  if (loaded.provider !== 'voxcity') {
-    throw new Error(`${path}: expected provider "voxcity", got "${loaded.provider}"`)
+  if (loaded.provider !== 'voxcity' && loaded.provider !== 'ahn') {
+    throw new Error(`${path}: expected provider "voxcity" or "ahn", got "${loaded.provider}"`)
   }
   if (!Array.isArray(loaded.elevation) || loaded.elevation.length !== loaded.cols * loaded.rows) {
     throw new Error(`${path}: elevation grid does not match cols x rows`)
@@ -103,25 +110,30 @@ if (substrateArg >= 0 && process.argv[substrateArg + 1]) {
   // voxcity reports "Dem complete" and hands back an all-zero grid when its DEM
   // source needs credentials it does not have — AHN4 is served through Google
   // Earth Engine. A substrate with no relief at all is that failure, not a flat
-  // country: real polder still varies by tens of centimetres.
+  // country: real polder still varies by tens of centimetres. The canary stays
+  // whatever the provider is, because the failure shape is not voxcity's alone.
   const relief = Math.max(...loaded.elevation) - Math.min(...loaded.elevation)
-  const hasWater = loaded.surfaces.some((s) => s.kind === 'water')
   if (relief < 0.01 && !process.argv.includes('--allow-flat')) {
     throw new Error(
       `${path}: elevation grid has zero relief across ${loaded.elevation.length} samples. ` +
         'That is an unauthenticated DEM fetch, not flat terrain. Pass --allow-flat to override.',
     )
   }
-  if (!hasWater && waterRings(substrate).length > 0) {
+
+  const elevationOnly = loaded.provider === 'ahn'
+  if (!elevationOnly && !loaded.surfaces.some((s) => s.kind === 'water') && waterRings(substrate).length > 0) {
     log(
       `      WARNING: replacement substrate has no water but the OSM one had ` +
         `${waterRings(substrate).length} bodies — the canals would be lost`,
     )
   }
-  substrate = loaded
+  substrate = elevationOnly ? { ...loaded, surfaces: substrate.surfaces } : loaded
   log(
-    `      substrate replaced from ${path} (voxcity): ` +
-      `${loaded.surfaces.length} surfaces, ${relief.toFixed(2)} m relief`,
+    `      substrate replaced from ${path} (${loaded.provider}): ` +
+      `${relief.toFixed(2)} m relief, ` +
+      (elevationOnly
+        ? `elevation only, keeping ${substrate.surfaces.length} OSM surfaces`
+        : `${loaded.surfaces.length} surfaces`),
   )
 }
 const parcels = deriveParcels(
@@ -141,6 +153,17 @@ log(
 )
 log(`      substrate: ${substrate.surfaces.length} surfaces, ${substrate.cols}x${substrate.rows} elevation grid`)
 
+const SUBSTRATE_SOURCE: Record<Substrate['provider'], string> = {
+  'flat-datum': 'OSM landcover + datum interpolated from BAG ground heights',
+  voxcity: 'voxcity (build-time pipeline, tools/voxcity)',
+  ahn: 'AHN dtm_05m via PDOK WCS (build-time pipeline, tools/ahn)',
+}
+const SUBSTRATE_LICENCE: Record<Substrate['provider'], string> = {
+  'flat-datum': 'ODbL 1.0 / CC BY 4.0',
+  voxcity: 'per voxcity source layers',
+  ahn: 'CC BY 4.0 (Rijkswaterstaat / AHN)',
+}
+
 const today = new Date().toISOString().slice(0, 10)
 const provenance: Provenance[] = [
   {
@@ -156,12 +179,12 @@ const provenance: Provenance[] = [
     retrieved: today,
   },
   {
-    layer: 'terrain, landcover, water (substrate)',
-    source:
-      substrate.provider === 'voxcity'
-        ? 'voxcity (build-time pipeline, tools/voxcity)'
-        : 'OSM landcover + datum interpolated from BAG ground heights',
-    licence: substrate.provider === 'voxcity' ? 'per voxcity source layers' : 'ODbL 1.0 / CC BY 4.0',
+    layer:
+      substrate.provider === 'ahn'
+        ? 'terrain (substrate elevation)'
+        : 'terrain, landcover, water (substrate)',
+    source: SUBSTRATE_SOURCE[substrate.provider],
+    licence: SUBSTRATE_LICENCE[substrate.provider],
     retrieved: today,
   },
   {

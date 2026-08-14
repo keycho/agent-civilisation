@@ -1,7 +1,12 @@
 # voxcity substrate pipeline (§1, §10, §19)
 
-Build-time only. Nothing here ships in the runtime image, and the committed seed
-carries `provider: "flat-datum"`.
+> **Retired for this chunk (§21.5).** Schiedam's terrain now comes from AHN
+> directly — see `../ahn/README.md`. This is kept because it runs, because the
+> seam it proved is the one AHN now uses, and because the account below is what
+> the retirement was decided on. voxcity is worth revisiting on a chunk in a
+> country with no national lidar product.
+
+Build-time only. Nothing here ships in the runtime image.
 
 ```bash
 python3 -m venv .venv-voxcity
@@ -53,7 +58,17 @@ every canal in a canal district and takes `undevelopable` parcels from 140 to 0,
 because water is what makes a parcel undevelopable. The importer warns about
 exactly this before proceeding.
 
-So: plumbing proven, output not adopted. The committed seed stays `flat-datum`.
-Stage 10 becomes worth doing on a chunk with real relief and with Earth Engine
-credentials available — which is the same second chunk §18.5 wants for
-cross-area validation.
+So: plumbing proven, output not adopted.
+
+## What that argued for
+
+§21.5 read the two findings together and retired voxcity for this chunk. The
+seam is right and the source is wrong: AHN is downloadable as GeoTIFF from PDOK
+without Earth Engine, the canals already come through the importer's own OSM
+query, and both problems disappear. The same `--substrate` swap now takes an
+`ahn` substrate carrying elevation only, and the committed seed uses it —
+3.54 m of real relief where this pipeline reported 0.00.
+
+That retires an assumption the spec carried from v1 through v3. voxcity's value
+is fusing many global sources behind one API, which is worth something for a
+chunk in a country with no national dataset and nothing at all here.

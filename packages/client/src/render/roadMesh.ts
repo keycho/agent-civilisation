@@ -43,10 +43,15 @@ export interface RoadMeshes {
   agent: Mesh
 }
 
+/**
+ * §21.5: the ground is no longer a plane, so `ground(x, y)` is sampled per
+ * vertex rather than taken once. A ribbon laid at the mean datum floats over
+ * the quay and sinks into the canal the moment there is real relief under it.
+ */
 export function createRoadMeshes(
   nodes: RoadNode[],
   edges: RoadEdge[],
-  groundY: number,
+  ground: (x: number, y: number) => number,
   halfExtentM: number,
 ): RoadMeshes {
   const byId = new Map<string, RoadNode>()
@@ -66,7 +71,7 @@ export function createRoadMeshes(
   const baselineGeo = buildRibbons(
     edges.filter((e) => !e.agentBuilt && inside(e)),
     byId,
-    groundY,
+    ground,
     () => 1,
   )
   const baseline = new Mesh(baselineGeo, roadMaterial())
@@ -89,17 +94,17 @@ export function updateAgentRoads(
   mesh: Mesh,
   nodes: Map<string, RoadNode>,
   edges: RoadEdge[],
-  groundY: number,
+  ground: (x: number, y: number) => number,
   growth: (e: RoadEdge) => number,
 ): void {
   mesh.geometry.dispose()
-  mesh.geometry = buildRibbons(edges, nodes, groundY, growth)
+  mesh.geometry = buildRibbons(edges, nodes, ground, growth)
 }
 
 function buildRibbons(
   edges: RoadEdge[],
   nodes: Map<string, RoadNode>,
-  groundY: number,
+  ground: (x: number, y: number) => number,
   growth: (e: RoadEdge) => number,
 ): BufferGeometry {
   const positions: number[] = []
@@ -128,7 +133,7 @@ function buildRibbons(
     const ux = dx / len
     const uy = dy / len
     const hw = ROAD_WIDTH[e.class] / 2
-    const y = groundY + CLASS_LAYER[e.class]
+    const lift = CLASS_LAYER[e.class]
 
     // length clip: the ribbon grows outward from `a`
     const ex = a.x + ux * len * g
@@ -137,14 +142,18 @@ function buildRibbons(
     tmp.set(CLASS_COLOR[e.class])
     if (e.agentBuilt) tmp.lerp(new Color(ENVIRONMENT.roadAgent), 0.75)
 
+    // Both ends take their own ground height; a carriageway is a plane across
+    // its width, which is why the two corners at each end share one sample.
+    const ya = ground(a.x, a.y) + lift
+    const yb = ground(ex, ey) + lift
     quad(
       positions,
       colors,
       tmp,
-      [a.x - uy * hw, y, -(a.y + ux * hw)],
-      [a.x + uy * hw, y, -(a.y - ux * hw)],
-      [ex + uy * hw, y, -(ey - ux * hw)],
-      [ex - uy * hw, y, -(ey + ux * hw)],
+      [a.x - uy * hw, ya, -(a.y + ux * hw)],
+      [a.x + uy * hw, ya, -(a.y - ux * hw)],
+      [ex + uy * hw, yb, -(ey - ux * hw)],
+      [ex - uy * hw, yb, -(ey + ux * hw)],
     )
   }
 
@@ -153,7 +162,7 @@ function buildRibbons(
     if (!n) continue
     const r = width / 2
     const cls = 'residential' as RoadClass
-    const y = groundY + CLASS_LAYER[cls] + 0.01
+    const y = ground(n.x, n.y) + CLASS_LAYER[cls] + 0.01
     tmp.set(CLASS_COLOR.residential)
     const seg = 6
     for (let i = 0; i < seg; i++) {

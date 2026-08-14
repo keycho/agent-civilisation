@@ -6,7 +6,7 @@ This is the index: what each section asks for, and where it lives.
 | § | Asks for | Implemented in |
 |---|---|---|
 | **0** | Thesis lock; the two governing questions | README "the two questions"; the divergence overlay and event scrub answer the first |
-| **1** | Split the import by mutability; voxcity is substrate only | `packages/importer` (buildings/roads/parcels as discrete rows), `tools/voxcity` (substrate only, build-time) |
+| **1** | Split the import by mutability; substrate is build-time only | `packages/importer` (buildings/roads/parcels as discrete rows), `tools/ahn` and `tools/voxcity` (substrate only, build-time) |
 | **2** | The ratio problem; 400–1,500 baseline buildings; NL/3DBAG | `packages/importer/src/areas.ts`, `probe.ts`; ratio check printed by `main.ts` |
 | **3** | Tick granularity; speed control; agent motion threshold | superseded by §20: `core/src/types.ts` (`THROUGHPUT`, `AGENT_MOTION_MAX_THROUGHPUT`) |
 | **4** | Property economy; nine actions; four gradients; tune to >30% | `packages/sim/src/economy.ts`, `actions.ts`; measured by `packages/sim/test/tune.ts` |
@@ -34,6 +34,11 @@ This is the index: what each section asks for, and where it lives.
 | **20** | Remove calendar time | `core/src/types.ts` (`THROUGHPUT`, `RATE_WINDOW_TICKS`), `sim/src/tick.ts`, `client/src/main.ts` |
 | **20.5** | Lifespan as an action budget | `sim/src/state.ts` (`EFFORT_COST`), `tick.ts` `retire()` |
 | **20.9** | Frozen action budget, calibrated once | `test/lib/summarise.ts` `DECISION_BUDGET`, provenance in `test/calibrate.ts` |
+| **21.1** | Site value + a capital constraint, shipped together | `sim/src/engine.ts` (`siteValue`, acquire branch), `sim/src/economy.ts` (credit) |
+| **21.2** | One recalibration, then refrozen | `test/calibrate.ts` rule, `DECISION_BUDGET` = 65,000 |
+| **21.3** | Divergence-class entropy across seeds | `test/tune.ts` §21.3 sections |
+| **21.4** | Validators read the emitter's output | `core/src/validate.ts`, `importer/src/emit.ts` (`emitSeed` returns the re-read file, `checkSql`), `importer/test/artifacts.test.ts` |
+| **21.5** | AHN direct, voxcity retired, seam kept | `tools/ahn/`, `importer/src/main.ts` substrate swap, `client/src/render/substrateMesh.ts` |
 
 ## Where the spec was not followed literally
 
@@ -52,20 +57,14 @@ Each of these is argued in the README and in the commit that introduced it.
 
 ## Where the seam exists but the output is not adopted
 
-- **§10 / stage 10.** voxcity has now been run end to end and the swap works in
-  both directions. Its output is not adopted: the Netherlands DEM is AHN4 via
-  Google Earth Engine and returns zeros without credentials while reporting
-  success, and its land cover carries no water, which would delete every canal.
-  The committed seed stays `flat-datum`. Full account in
-  `tools/voxcity/README.md`.
 - **§9's `LLMDecisionEngine`** is a throwing stub satisfying the interface, as
   the spec asks.
 
 ## Known, measured, and deliberately unfixed
 
-- **Acquisition ignores site value** (§18.2 finding). Stock that does not earn —
-  every utility and industrial building — is invisible to every agent under
-  every seed. The fix was implemented and measured at median index 35.9% ->
-  54.9%; it is a model decision that collides with a frozen budget, so it waits
-  for §18.4's yield rework on chunk two. `tune.ts` reports it as KNOWN.
-- **Era gating** remains a proxy for that same mispriced yield model, per §18.4.
+- **Era gating** remains a proxy for a mispriced yield model, per §18.4. §21.1
+  removed the other half of that argument — acquisition is priced on site value
+  now — but a floor added to a 1909 building is still 1909-quality space on a
+  1909 decay curve, and nothing prices that yet. Revisit on chunk two.
+- Nothing is reported as KNOWN by `tune.ts` any more. The one entry — acquisition
+  ignoring site value — was fixed by §21.1 and both of its checks are assertions.

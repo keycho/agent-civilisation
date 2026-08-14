@@ -36,20 +36,20 @@ export class SimBridge {
   private readonly sim: Simulation
   private readonly renderer: BuildingRenderer
   private readonly agentRoadMesh: Mesh
-  private readonly groundY: number
+  private readonly ground: (x: number, y: number) => number
   private readonly store: WorldStore
 
   constructor(
     sim: Simulation,
     renderer: BuildingRenderer,
     agentRoadMesh: Mesh,
-    groundY: number,
+    ground: (x: number, y: number) => number,
     store: WorldStore,
   ) {
     this.sim = sim
     this.renderer = renderer
     this.agentRoadMesh = agentRoadMesh
-    this.groundY = groundY
+    this.ground = ground
     this.store = store
     this.nodeIndex = indexNodes([...sim.world.nodes.values()])
   }
@@ -91,7 +91,7 @@ export class SimBridge {
       for (const n of world.nodes.values()) {
         if (!this.nodeIndex.has(n.id)) this.nodeIndex.set(n.id, n)
       }
-      updateAgentRoads(this.agentRoadMesh, this.nodeIndex, agentEdges, this.groundY, (e) =>
+      updateAgentRoads(this.agentRoadMesh, this.nodeIndex, agentEdges, this.ground, (e) =>
         clamp01((world.tick - (e.builtTick ?? 0)) / ROAD_GROWTH_TICKS),
       )
     }

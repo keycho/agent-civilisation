@@ -45,7 +45,7 @@ npm test
 | 6 | persistence | `packages/persistence` |
 | 7 | divergence | `divergence.ts`, `buildingMaterial.ts`, event scrub |
 | 8-9 | spectator and inspection | `packages/client/src/main.ts`, `index.html` |
-| 10 | substrate | `packages/core/src/world.ts` (contract), `tools/voxcity` |
+| 10 | substrate | `packages/core/src/world.ts` (contract), `tools/ahn`, `tools/voxcity` |
 | 11 | director | `packages/client/src/camera/director.ts` |
 | 12 | generations | `packages/sim/src/tick.ts` |
 
@@ -332,10 +332,24 @@ asked for. Two findings came out of running it (full account in
 `tools/voxcity/README.md`): the Netherlands DEM is AHN4 via Google Earth Engine
 and returns an all-zero grid without credentials *while reporting success*, and
 its OSM land cover yields no water at all — swapping it in loses every canal in
-a canal district. For a Dutch chunk the direct path is better in every respect,
-so terrain comes from AHN GeoTIFF (`tools/ahn`) and water keeps coming from the
-importer. voxcity is worth revisiting on a chunk in a country with no national
-lidar product.
+a canal district.
+
+For a Dutch chunk the direct path is better in every respect, so terrain now
+comes from AHN as GeoTIFF (`tools/ahn`), through the same `--substrate` seam,
+and the surfaces keep coming from the importer:
+
+```
+                 voxcity     AHN via PDOK
+relief            0.00 m     3.54 m  (-0.43 to 3.10 m NAP)
+water bodies           0     12
+undevelopable          0     140 parcels
+credentials      Earth Engine   none
+```
+
+The committed seed carries `provider: "ahn"`. voxcity is worth revisiting on a
+chunk in a country with no national lidar product — fusing many global sources
+behind one API is its actual value, and for the Netherlands it is strictly worse
+than a URL.
 
 **Parcels are seeded on open ground as well as on buildings.** §6's recipe
 seeds Voronoi cells on building centroids alone, which gives every cell a

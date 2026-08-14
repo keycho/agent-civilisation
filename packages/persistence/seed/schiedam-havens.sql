@@ -2,7 +2,7 @@
 -- chunk: schiedam-havens (Schiedam — Havens)
 -- buildings (footprint, height, levels, construction year, roof type): 3DBAG v2023.10.08 via api.3dbag.nl — CC BY 4.0 (retrieved 2026-08-14)
 -- building purpose tags, road graph, water, landcover: OpenStreetMap via Overpass API — ODbL 1.0 — share-alike applies to published derived databases (retrieved 2026-08-14)
--- terrain, landcover, water (substrate): OSM landcover + datum interpolated from BAG ground heights — ODbL 1.0 / CC BY 4.0 (retrieved 2026-08-14)
+-- terrain (substrate elevation): AHN dtm_05m via PDOK WCS (build-time pipeline, tools/ahn) — CC BY 4.0 (Rijkswaterstaat / AHN) (retrieved 2026-08-14)
 -- blocks, parcels: derived from the road graph (§6) — follows the ODbL road graph it is derived from (retrieved 2026-08-14)
 
 begin;
