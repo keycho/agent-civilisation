@@ -8,8 +8,17 @@ export interface AreaDef {
   /** anchor for the chunk-local frame */
   lat: number
   lon: number
-  /** half-extent in metres; the chunk is a 2r x 2r square in RD metres */
+  /** half-extent in metres; the chunk is a 2r x 2r square in the local frame */
   radiusM: number
+  /**
+   * §24.2: the axis of the fabric, in degrees clockwise from grid north. The
+   * chunk is cut along this rather than along north, so the same building count
+   * fills a rectangle instead of a diamond and the corners stop being dead grey.
+   *
+   * Measured, not chosen: bin the road graph's edge bearings mod 90, weight
+   * each by its length so arterials outvote alleys, and take the peak.
+   */
+  bearingDeg?: number
   note: string
 }
 
@@ -38,6 +47,24 @@ export const AREAS: Record<string, AreaDef> = {
     lat: 51.9159,
     lon: 4.3959,
     radiusM: 280,
+    /**
+     * §24.2, MEASURED AND NOT YET APPLIED. The fabric axis here is 45.4 degrees,
+     * binned off the emitted seed's road graph and weighted by edge length —
+     * which is the worst case available, since a square cut against a 45-degree
+     * fabric projects to a diamond of sqrt(2) its width. That is where the dead
+     * corners came from, and it confirms §24.2: the rotation was never a camera
+     * choice.
+     *
+     * Setting `bearingDeg: 45.4` here cuts along the canals and the whole
+     * pipeline handles it — the re-import runs clean through parcel derivation
+     * and emits 936 buildings against the current 925. It is off because the
+     * emitted artifact then fails a structural canary: 2 derived parcels land
+     * over a carriageway where the north-cut chunk has 0. §21.4 says the canary
+     * reads the emitted file, and the importer refused to let it be committed,
+     * which is the discipline working. Turning the cut on means clearing that
+     * first, and it is a parcel-derivation question rather than a framing one.
+     */
+    // bearingDeg: 45.4,
     note: 'Historic harbour district: Lange Haven and Nieuwe Haven, distillery warehouses, post-industrial edge.',
   },
   'schiedam-wide': {
@@ -58,9 +85,22 @@ export const AREAS: Record<string, AreaDef> = {
   },
 }
 
+/**
+ * §24.2: the source query is axis-aligned in RD whatever the chunk's bearing
+ * is, so a rotated chunk needs a wider fetch — the bounding box of the rotated
+ * square, which is r*(|cos| + |sin|) on each side and worst at 45 degrees,
+ * where it is r*sqrt(2). The surplus is clipped against the local bounds after
+ * import; fetching it is the price of cutting on the fabric.
+ */
+export function rotatedReach(a: AreaDef): number {
+  const t = ((a.bearingDeg ?? 0) * Math.PI) / 180
+  return a.radiusM * (Math.abs(Math.cos(t)) + Math.abs(Math.sin(t)))
+}
+
 export function rdBboxOf(a: AreaDef): RdBbox {
   const c = wgsToRd(a.lat, a.lon)
-  return [c.x - a.radiusM, c.y - a.radiusM, c.x + a.radiusM, c.y + a.radiusM]
+  const r = rotatedReach(a)
+  return [c.x - r, c.y - r, c.x + r, c.y + r]
 }
 
 /**
@@ -69,7 +109,8 @@ export function rdBboxOf(a: AreaDef): RdBbox {
  * chunk boundary would leave the outer ring of parcels unbounded.
  */
 export function wgsBboxOf(a: AreaDef, marginM = 220): Bbox {
-  const dLat = (a.radiusM + marginM) / 111_320
-  const dLon = (a.radiusM + marginM) / (111_320 * Math.cos((a.lat * Math.PI) / 180))
+  const reach = rotatedReach(a) + marginM
+  const dLat = reach / 111_320
+  const dLon = reach / (111_320 * Math.cos((a.lat * Math.PI) / 180))
   return [a.lat - dLat, a.lon - dLon, a.lat + dLat, a.lon + dLon]
 }

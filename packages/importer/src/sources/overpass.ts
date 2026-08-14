@@ -13,6 +13,7 @@ import { cached, fetchWithRetry, sleep } from '../util/http.ts'
 const MIRRORS = [
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass-api.de/api/interpreter',
+  'https://overpass.osm.ch/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
 ]
 

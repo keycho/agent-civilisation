@@ -32,19 +32,41 @@ export function enuFrame(lat0: number, lon0: number): ChunkFrame {
 /**
  * Netherlands frame: local metres are RD metres offset by the origin, so
  * 3DBAG geometry needs no reprojection to reach the renderer.
+ *
+ * §24.2: optionally rotated. The chunk is a square in *this* frame, so giving
+ * the frame the bearing of the fabric cuts the chunk along the canals instead
+ * of along grid north. Everything downstream — parcel derivation, the local
+ * bounds, the plate, the camera — is already expressed in local metres and does
+ * not need to know.
+ *
+ * Schiedam's road graph runs at 45.4 degrees to north, measured off the emitted
+ * seed by binning edge bearings weighted by length. That is close to the worst
+ * case available: a square cut against a 45-degree fabric projects to a diamond
+ * whose width is sqrt(2) times its side, which is where the dead corners and
+ * the rotated plate came from. It was never a camera choice.
  */
-export function rdFrame(lat0: number, lon0: number): ChunkFrame {
+export function rdFrame(lat0: number, lon0: number, bearingDeg = 0): ChunkFrame {
   const o = wgsToRd(lat0, lon0)
+  const t = (-bearingDeg * Math.PI) / 180
+  const c = Math.cos(t)
+  const s = Math.sin(t)
   return {
-    origin: { lat: lat0, lon: lon0, rdX: o.x, rdY: o.y },
+    origin: { lat: lat0, lon: lon0, rdX: o.x, rdY: o.y, bearingDeg },
     toLocal(lat, lon) {
       const p = wgsToRd(lat, lon)
-      return [p.x - o.x, p.y - o.y]
+      return rotate(p.x - o.x, p.y - o.y, c, s)
     },
     toWgs(x, y) {
-      return rdToWgs(x + o.x, y + o.y)
+      // the inverse rotation is the transpose, so -s rather than a second cos/sin
+      const dx = x * c + y * s
+      const dy = -x * s + y * c
+      return rdToWgs(dx + o.x, dy + o.y)
     },
   }
+}
+
+function rotate(dx: number, dy: number, c: number, s: number): Vec2 {
+  return [dx * c - dy * s, dx * s + dy * c]
 }
 
 /** Local metres straight from RD, skipping the WGS84 round trip. */
@@ -55,7 +77,8 @@ export function rdToLocal(frame: ChunkFrame, rdX: number, rdY: number): Vec2 {
     const ll = rdToWgs(rdX, rdY)
     return frame.toLocal(ll.lat, ll.lon)
   }
-  return [rdX - ox, rdY - oy]
+  const t = (-(frame.origin.bearingDeg ?? 0) * Math.PI) / 180
+  return rotate(rdX - ox, rdY - oy, Math.cos(t), Math.sin(t))
 }
 
 export function ringToWgs(frame: ChunkFrame, ring: Ring): Array<[number, number]> {

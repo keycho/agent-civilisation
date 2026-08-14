@@ -35,7 +35,7 @@ const t0 = Date.now()
 const log = (s: string) => console.log(s)
 
 log(`# importing ${area.name}`)
-const frame = rdFrame(area.lat, area.lon)
+const frame = rdFrame(area.lat, area.lon, area.bearingDeg ?? 0)
 const rd = rdBboxOf(area)
 const wgs = wgsBboxOf(area)
 const r = area.radiusM

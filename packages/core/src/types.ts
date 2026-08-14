@@ -238,6 +238,12 @@ export interface ChunkOrigin {
   /** RD New (EPSG:28992) easting/northing of the same anchor, when in NL */
   rdX?: number
   rdY?: number
+  /**
+   * §24.2: how far the chunk's local +y is rotated from grid north, in degrees
+   * clockwise. The chunk is cut along the axis of the fabric rather than along
+   * north, so the same building count fills a rectangle instead of a diamond.
+   */
+  bearingDeg?: number
 }
 
 export interface ChunkMeta {
