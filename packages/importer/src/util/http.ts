@@ -7,6 +7,23 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 export const CACHE_DIR = join(HERE, '..', '..', '.cache')
 
 /**
+ * Node's global `fetch` ignores HTTPS_PROXY unless NODE_USE_ENV_PROXY is set,
+ * and the flag is read when the process starts rather than when it is assigned,
+ * so setting it here would be too late. Some hosts are reachable direct and
+ * some are not — CBS answers curl (which uses the proxy) with 200 and an
+ * unproxied fetch with 406 — so a run without it fails in a way that looks like
+ * content negotiation rather than like a network policy.
+ *
+ * Fail loudly at import instead of letting a source half-work.
+ */
+if (!process.env.NODE_USE_ENV_PROXY && (process.env.HTTPS_PROXY || process.env.https_proxy)) {
+  console.warn(
+    '  ! HTTPS_PROXY is set but NODE_USE_ENV_PROXY is not, so fetch will bypass the proxy.\n' +
+      '    Re-run with NODE_USE_ENV_PROXY=1, or use the npm scripts, which set it.',
+  )
+}
+
+/**
  * Every upstream response is cached on disk keyed by request. Overpass mirrors
  * are heavily loaded and a full import is dozens of requests; without this,
  * iterating on the derivation steps means re-hammering someone else's server.

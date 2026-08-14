@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "import": "node --no-warnings src/main.ts",
-    "probe": "node --no-warnings src/probe.ts"
+    "import": "NODE_USE_ENV_PROXY=1 node --no-warnings src/main.ts",
+    "coarse": "NODE_USE_ENV_PROXY=1 node --no-warnings src/coarse.ts",
+    "probe": "NODE_USE_ENV_PROXY=1 node --no-warnings src/probe.ts"
   },
   "dependencies": {
     "@civ/core": "*",
