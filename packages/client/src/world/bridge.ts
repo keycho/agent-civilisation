@@ -118,7 +118,7 @@ export class SimBridge {
     const index = this.renderer.setGeometry(b.id, out.mesh, b.groundM)
     this.renderer.data.setStatic(
       index,
-      roofToneFor(b.archetype, out.roof, b.constructionYear ?? 2030, out.metrics.area),
+      roofToneFor(b.archetype, out.roof, b.constructionYear, out.metrics.area),
       jitterFor(b.id),
       b.source === 'agent_built' ? 0 : eraTint(b.constructionYear),
       isAgentArchetype(b.archetype),
@@ -126,14 +126,20 @@ export class SimBridge {
   }
 
   /**
-   * §5: a snapshot every sim year. §16.2: "the year scrub is a texture swap
-   * from a snapshot" — so what is stored is literally the data texture, and
-   * scrubbing is an upload rather than a query over millions of events.
+   * §20.4: snapshots key on event ordinal. §16.2: "the scrub is a texture swap
+   * from a snapshot" — what is stored is literally the data texture, so
+   * travelling the history is an upload rather than a replay of the log.
    */
-  captureSnapshot(year: number, divergenceIndex: number, stats: Record<string, number>): void {
+  captureSnapshot(
+    ordinal: number,
+    generation: number,
+    divergenceIndex: number,
+    stats: Record<string, number>,
+  ): void {
     this.store.putSnapshot({
       chunkId: this.sim.world.chunkId,
-      year,
+      ordinal,
+      generation,
       tick: this.sim.world.tick,
       buildingData: this.renderer.data.snapshot(),
       divergenceIndex,
@@ -141,12 +147,13 @@ export class SimBridge {
     })
   }
 
-  restoreSnapshot(year: number): boolean {
-    const snap = this.store.snapshot(this.sim.world.chunkId, year)
-    if (!snap) return false
+  /** Travel to the nearest snapshot at or before `ordinal`. */
+  restoreSnapshot(ordinal: number): { generation: number; divergenceIndex: number } | null {
+    const snap = this.store.snapshotAt(this.sim.world.chunkId, ordinal)
+    if (!snap) return null
     this.renderer.data.loadFrame(snap.buildingData)
     this.renderer.flush()
-    return true
+    return { generation: snap.generation, divergenceIndex: snap.divergenceIndex }
   }
 }
 

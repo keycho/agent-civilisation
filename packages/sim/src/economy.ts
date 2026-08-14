@@ -1,5 +1,5 @@
 import type { Building, Parcel, Purpose } from '@civ/core'
-import { DAYS_PER_YEAR, clamp, clamp01 } from '@civ/core'
+import { RATE_WINDOW_TICKS, clamp, clamp01 } from '@civ/core'
 import { type World, floorArea } from './state.ts'
 
 /**
@@ -28,7 +28,8 @@ export const ECONOMY = {
   /** replacement value per m² of floor area at condition 1 */
   replacementValue: 1.35,
 
-  rentPerM2Year: {
+  /** rent per m² of floor area per RATE_WINDOW_TICKS */
+  rentPerM2: {
     residential: 0.135,
     retail: 0.225,
     commercial: 0.185,
@@ -39,10 +40,14 @@ export const ECONOMY = {
     utility: 0.045,
   } as Record<Purpose, number>,
 
-  /** annual maintenance as a fraction of replacement value */
+  /** maintenance per rate window, as a fraction of replacement value */
   maintenanceRate: 0.012,
-  /** condition lost per simulated year */
-  decayPerYear: 0.021,
+  /**
+   * Condition lost per rate window. §20.2: decay stays per internal tick and
+   * the ratio of decay to agent throughput is a model constant, not a
+   * spectator control. This is what keeps quiet districts under pressure.
+   */
+  decayPerWindow: 0.021,
   /** premium a seller extracts over assessed value */
   acquisitionPremium: 0.12,
 
@@ -54,8 +59,11 @@ export const ECONOMY = {
 
   /** starting capital range for a first-generation agent */
   startingCapital: [1400, 4200] as [number, number],
-  /** capital an agent draws from outside the chunk each year (financing) */
-  annualFinancing: 260,
+  /**
+   * Capital an agent draws from outside the chunk, per rate window. Financing
+   * is what keeps the economy from stalling once the cheap stock is bought.
+   */
+  financingPerWindow: 260,
 
   /** radius over which built intensity is felt, metres */
   intensityRadius: 80,
@@ -282,10 +290,10 @@ export function demandFactor(world: World, b: Building): number {
 
 export function yieldPerTick(world: World, b: Building): number {
   if (b.state !== 'standing') return 0
-  const rent = ECONOMY.rentPerM2Year[b.purpose] ?? 0.1
+  const rent = ECONOMY.rentPerM2[b.purpose] ?? 0.1
   const gross = floorArea(b) * rent * clamp(b.condition, 0.1, 1) * demandFactor(world, b)
   const maintenance = floorArea(b) * ECONOMY.replacementValue * ECONOMY.maintenanceRate
-  return (gross - maintenance) / DAYS_PER_YEAR
+  return (gross - maintenance) / RATE_WINDOW_TICKS
 }
 
 export function recomputeYields(world: World): void {
@@ -323,17 +331,17 @@ export function expansionCost(b: Building, addLevels: number): number {
 }
 
 /**
- * Simple payback test used by every improvement decision: the years of net
- * yield needed to repay the cost. Agents accept different thresholds by
- * strategy, which is most of what makes them behave differently.
+ * Simple payback test used by every improvement decision: how many rate
+ * windows of net yield are needed to repay the cost. Agents accept different
+ * thresholds by strategy, which is most of what makes them behave differently.
  */
-export function paybackYears(cost: number, upliftPerTick: number): number {
+export function paybackWindows(cost: number, upliftPerTick: number): number {
   if (upliftPerTick <= 0) return Infinity
-  return cost / (upliftPerTick * DAYS_PER_YEAR)
+  return cost / (upliftPerTick * RATE_WINDOW_TICKS)
 }
 
 export function decayStep(world: World, ticks: number): void {
-  const d = (ECONOMY.decayPerYear * ticks) / DAYS_PER_YEAR
+  const d = (ECONOMY.decayPerWindow * ticks) / RATE_WINDOW_TICKS
   for (const b of world.buildings.values()) {
     if (b.state !== 'standing') continue
     b.condition = Math.max(0.05, b.condition - d)

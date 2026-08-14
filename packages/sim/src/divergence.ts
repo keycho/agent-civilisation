@@ -2,10 +2,13 @@ import { DIVERGENCE, DIVERGENCE_WEIGHT, centroid } from '@civ/core'
 import type { World } from './state.ts'
 
 /**
- * §8. "Divergence index: scalar per district per year, percentage of baseline
- * stock touched weighted by intensity of change. The number that tells you
- * whether the economy constants are tuned, and the most quotable stat in the
- * product."
+ * §8 as amended by §20.7: the divergence index loses its denominator. It never
+ * needed a time one — it is a scalar of current state: the percentage of
+ * baseline stock touched, weighted by intensity of change. The curve plots
+ * against cumulative agent decisions, not against a calendar.
+ *
+ * It is the number that says whether the economy constants are tuned, and the
+ * most quotable stat in the product.
  */
 
 export interface DivergenceReport {
@@ -17,7 +20,7 @@ export interface DivergenceReport {
   agentOrigin: number
   demolished: number
   replaced: number
-  /** the most-changed sector, which is what "one district unlike its 2026 self" means */
+  /** the most-changed sector — "one district unlike its baseline" (§20.8) */
   peakSector: { index: number; x: number; y: number } | null
   sectors: number[]
   sectorGrid: number

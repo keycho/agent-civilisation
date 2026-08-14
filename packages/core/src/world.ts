@@ -102,6 +102,13 @@ export interface Block {
   polygon: Ring
   areaM2: number
   parcelIds: string[]
+  /**
+   * Half the width of the widest road bounding this face. A block face runs to
+   * the road centreline, so parcels have to be set back by at least this or
+   * they sit on the carriageway — a 12 m primary needs 6 m, not the 3.5 m that
+   * a residential street needs.
+   */
+  roadHalfWidthM: number
 }
 
 export interface DistrictSeed {

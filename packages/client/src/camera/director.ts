@@ -19,7 +19,7 @@ export type CameraIntent =
   | { kind: 'follow_road'; edgeId: string }
   | { kind: 'follow_agent'; agentId: string }
   | { kind: 'district_pullback'; districtId: string }
-  | { kind: 'before_after'; districtId: string; yearA: number; yearB: number }
+  | { kind: 'before_after'; districtId: string; ordinalA: number; ordinalB: number }
 
 interface QueuedIntent {
   intent: CameraIntent

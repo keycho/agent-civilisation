@@ -5,6 +5,7 @@ import {
   type Ring,
   type RoadEdge,
   type RoadNode,
+  BLOCK_BOUNDING_CLASSES,
   ROAD_ACCESS_VALUE,
   type Vec2,
   area as ringArea,
@@ -15,7 +16,10 @@ import {
   distanceToRing,
   distanceToSegment,
   insetRing,
+  convexHull,
   makeRng,
+  quantiseRing,
+  ringSelfIntersects,
 } from '@civ/core'
 import { Delaunay } from 'd3-delaunay'
 import { GridIndex, ringBounds } from '../util/grid.ts'
@@ -40,16 +44,21 @@ export interface ParcelsResult {
   occupied: number
   undevelopable: number
   orphanBuildings: number
+  selfIntersectingDropped: number
+  overCarriagewayDropped: number
 }
 
 const OPEN_SEED_SPACING_M = 15
 const OPEN_SEED_CLEARANCE_M = 7.5
 /**
- * A block face runs to the road centreline, so its outer few metres are
- * carriageway. Parcels are cut from the block inset by this much, which keeps
- * `develop` from putting a building in the street.
+ * A block face runs to the road centreline, so its outer metres are
+ * carriageway. Parcels are cut from the block inset by at least this much — but
+ * a fixed inset is wrong: a 12 m primary needs 6 m of setback and a fixed 3.5
+ * put 188 parcels on the tarmac. The real inset is the half-width of the widest
+ * road bounding that particular block, which extractBlocks now records.
  */
-const ROAD_CORRIDOR_M = 3.5
+const ROAD_CORRIDOR_MIN_M = 3.5
+const KERB_CLEARANCE_M = 0.75
 const BLOCK_INSET_M = 1.6
 /** Below this a vacant cell is a gap between buildings, not a development site. */
 const MIN_VACANT_AREA_M2 = 40
@@ -99,10 +108,13 @@ export function deriveParcels(
 
   const parcels: Parcel[] = []
   const claimed = new Set<string>()
+  let selfIntersecting = 0
+  let overCarriageway = 0
 
   for (const block of blocks) {
     // the developable interior of the block, off the carriageway
-    const domain = insetRing(block.polygon, ROAD_CORRIDOR_M)
+    const corridor = Math.max(ROAD_CORRIDOR_MIN_M, block.roadHalfWidthM + KERB_CLEARANCE_M)
+    const domain = insetRing(block.polygon, corridor)
     if (!domain || ringArea(domain) < 25) continue
     const inner = insetRing(domain, BLOCK_INSET_M) ?? domain
     const bb = ringBounds(domain)
@@ -161,8 +173,10 @@ export function deriveParcels(
         if (!poly) return null
         const ring = poly.slice(0, -1).map(([x, y]) => [x, y] as Vec2)
         // Voronoi cells are convex, so they are legal Sutherland-Hodgman clips
-        // and the concave block can safely be the subject.
-        return cleanRing(clipByConvex(domain, ring))
+        // and the concave block can safely be the subject. Quantise here, at
+        // the point of creation, so what gets validated below is exactly what
+        // gets serialised.
+        return quantiseRing(cleanRing(clipByConvex(domain, ring)))
       })
     }
 
@@ -174,7 +188,27 @@ export function deriveParcels(
 
       const seed = seeds[i]
       if (!seed.building && a < MIN_VACANT_AREA_M2) continue
-      const c = centroid(ring)
+
+      // A service road can dead-end inside a block: it has a degree-1 tip, so
+      // it never forms a face and never bounds the block, but it is physically
+      // there and a parcel must not be laid over it.
+      let ring2 = ring
+      if (overlapsCarriageway(roadIndex, nodeById, ring2)) {
+        const pulled = insetRing(ring2, 3)
+        if (!pulled || overlapsCarriageway(roadIndex, nodeById, pulled)) {
+          overCarriageway++
+          continue
+        }
+        ring2 = quantiseRing(pulled)
+      }
+      // Sutherland-Hodgman bridges disconnected pieces of a concave block with
+      // a zero-width neck; the result is a legal-looking vertex list and an
+      // illegal parcel.
+      if (ringSelfIntersects(ring2)) {
+        selfIntersecting++
+        continue
+      }
+      const c = centroid(ring2)
       if (!inChunk(c)) continue
       const { distance, value } = nearestRoad(roadIndex, c)
       const inWater = isInWater(waterIndex, ring, c)
@@ -185,8 +219,8 @@ export function deriveParcels(
         id: `p-${parcels.length}`,
         chunkId,
         blockId: block.id,
-        polygon: ring,
-        areaM2: a,
+        polygon: ring2,
+        areaM2: ringArea(ring2),
         buildingId: seed.building?.id,
         accessScore: accessScore(distance, value),
         roadDistanceM: distance,
@@ -205,7 +239,22 @@ export function deriveParcels(
   for (const b of buildings) {
     if (claimed.has(b.id)) continue
     orphanBuildings++
-    const ring = insetRing(b.footprint, -1.2) ?? b.footprint
+    // Outsetting a concave footprint can fold a corner through an edge. The
+    // hull is the last resort: always simple, and a plot boundary drawn around
+    // a building is a reasonable thing for it to be.
+    const grown = insetRing(b.footprint, -1.2)
+    const candidate =
+      grown && !ringSelfIntersects(quantiseRing(grown)) ? grown : b.footprint
+    // An outset ring can cross the kerb of the street the building fronts on.
+    // The building's own footprint cannot be on the carriageway, so that is the
+    // fallback.
+    const ring = quantiseRing(
+      overlapsCarriageway(roadIndex, nodeById, candidate) ? b.footprint : candidate,
+    )
+    if (ringSelfIntersects(ring)) {
+      selfIntersecting++
+      continue
+    }
     const c = centroid(ring)
     const { distance, value } = nearestRoad(roadIndex, c)
     parcels.push({
@@ -231,6 +280,8 @@ export function deriveParcels(
     occupied,
     undevelopable: parcels.filter((p) => !p.developable).length,
     orphanBuildings,
+    selfIntersectingDropped: selfIntersecting,
+    overCarriagewayDropped: overCarriageway,
   }
 }
 
@@ -260,6 +311,29 @@ function nearestRoad(
  */
 function accessScore(distanceM: number, classValue: number): number {
   return classValue * Math.exp(-Math.max(0, distanceM - 6) / 34)
+}
+
+/**
+ * Does this ring contain a vehicular road centreline? Footways run through
+ * courtyards and alleys legitimately; carriageways do not run through plots.
+ */
+function overlapsCarriageway(
+  index: GridIndex<{ a: Vec2; b: Vec2; edge: RoadEdge }>,
+  _nodes: Map<string, RoadNode>,
+  ring: Ring,
+): boolean {
+  const c = centroid(ring)
+  let radius = 0
+  for (const v of ring) radius = Math.max(radius, Math.hypot(v[0] - c[0], v[1] - c[1]))
+  for (const seg of index.queryRadius(c, radius + 6)) {
+    if (!BLOCK_BOUNDING_CLASSES.has(seg.edge.class)) continue
+    for (const t of [0.2, 0.4, 0.6, 0.8]) {
+      const x = seg.a[0] + (seg.b[0] - seg.a[0]) * t
+      const y = seg.a[1] + (seg.b[1] - seg.a[1]) * t
+      if (containsPoint(ring, [x, y])) return true
+    }
+  }
+  return false
 }
 
 function isInWater(index: GridIndex<Ring>, ring: Ring, c: Vec2): boolean {

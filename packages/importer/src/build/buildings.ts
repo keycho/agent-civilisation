@@ -9,6 +9,7 @@ import {
   cleanRing,
   containsPoint,
   rdToLocal,
+  ringSelfIntersects,
   selectArchetype,
   simplifyRing,
 } from '@civ/core'
@@ -66,8 +67,11 @@ export function buildBaselineBuildings(
 
     // BAG footprints carry a lot of collinear detail. Simplifying at import
     // is what keeps §15's "clean silhouettes, readable masses" cheap.
+    // Douglas-Peucker can fold a thin concave ring through itself; the result
+    // is a shorter vertex list and an invalid polygon.
     const simplified = simplifyRing(localRing, SIMPLIFY_TOLERANCE_M)
-    const ring = simplified.length >= 3 ? simplified : localRing
+    const ring =
+      simplified.length >= 3 && !ringSelfIntersects(simplified) ? simplified : localRing
     const a = ringArea(ring)
     if (a < 4) continue
 

@@ -113,7 +113,9 @@ const parcels = deriveParcels(
 )
 log(
   `      ${parcels.parcels.length} parcels  (${parcels.occupied} occupied, ${parcels.vacant} vacant, ` +
-    `${parcels.undevelopable} undevelopable, ${parcels.orphanBuildings} orphan buildings)`,
+    `${parcels.undevelopable} undevelopable, ${parcels.orphanBuildings} orphan buildings, ` +
+    `${parcels.selfIntersectingDropped} self-intersecting and ` +
+    `${parcels.overCarriagewayDropped} on-carriageway dropped)`,
 )
 log(`      substrate: ${substrate.surfaces.length} surfaces, ${substrate.cols}x${substrate.rows} elevation grid`)
 

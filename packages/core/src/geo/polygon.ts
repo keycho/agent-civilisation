@@ -420,6 +420,48 @@ export function cleanRing(ring: Ring, eps = 0.05): Ring {
   return out
 }
 
+/**
+ * Snap a ring to a grid. Derived geometry is validated and then serialised, and
+ * the serialiser rounds — so validation has to run on the rounded coordinates
+ * or it is checking a polygon that never reaches disk. Near-degenerate slivers
+ * from polygon clipping sit exactly on that boundary: clean in float, crossing
+ * at millimetre precision.
+ */
+export function quantiseRing(ring: Ring, step = 0.001): Ring {
+  const inv = 1 / step
+  return ring.map(([x, y]) => [Math.round(x * inv) / inv, Math.round(y * inv) / inv] as Vec2)
+}
+
+/**
+ * Does a ring cross itself? Sutherland-Hodgman on a concave subject can bridge
+ * two disconnected pieces with a zero-width neck, and outsetting a concave
+ * footprint can fold a corner through an edge. Both produce rings that look
+ * fine in a vertex list and are nonsense as parcels.
+ */
+export function ringSelfIntersects(ring: Ring): boolean {
+  const n = ring.length
+  if (n < 4) return false
+  for (let i = 0; i < n; i++) {
+    const a1 = ring[i]
+    const a2 = ring[(i + 1) % n]
+    for (let j = i + 2; j < n; j++) {
+      if (i === 0 && j === n - 1) continue // adjacent through the closing vertex
+      if (segmentsCross(a1, a2, ring[j], ring[(j + 1) % n])) return true
+    }
+  }
+  return false
+}
+
+function segmentsCross(a1: Vec2, a2: Vec2, b1: Vec2, b2: Vec2): boolean {
+  const side = (p: Vec2, q: Vec2, r: Vec2) =>
+    (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+  const d1 = side(b1, b2, a1)
+  const d2 = side(b1, b2, a2)
+  const d3 = side(a1, a2, b1)
+  const d4 = side(a1, a2, b2)
+  return d1 > 0 !== d2 > 0 && d3 > 0 !== d4 > 0
+}
+
 export function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t
 }

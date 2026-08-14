@@ -1,5 +1,5 @@
 import type { Building, Parcel, Purpose } from '@civ/core'
-import { DAYS_PER_YEAR, clamp01 } from '@civ/core'
+import { RATE_WINDOW_TICKS, clamp01 } from '@civ/core'
 import type { AgentAction } from './actions.ts'
 import { developableFootprint } from './actions.ts'
 import {
@@ -12,7 +12,7 @@ import {
   expansionCost,
   normalisedIntensity,
   parcelPrice,
-  paybackYears,
+  paybackWindows,
   renovationCost,
   renovationUplift,
   yieldPerTick,
@@ -59,8 +59,11 @@ export interface Observation {
     capital: number
     strategy: string
     holdingCount: number
+    /** internal ordering key, never rendered (§20.2) */
     tick: number
-    year: number
+    generation: number
+    /** §20.5: what is left of this agent's finite budget, 0..1 */
+    budgetRemaining: number
   }
   holdings: BuildingRef[]
   candidates: {
@@ -148,7 +151,11 @@ export function observe(world: World, agent: Agent): Observation {
       strategy: agent.strategy,
       holdingCount: agent.holdings.size,
       tick: world.tick,
-      year: world.year,
+      generation: agent.generation,
+      budgetRemaining: Math.max(
+        0,
+        1 - agent.effortSpent / Math.max(1, agent.effortBudget),
+      ),
     },
     holdings,
     candidates: { forSale, vacantParcels, adjacentToHoldings },
@@ -260,13 +267,13 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
 
       if (b.condition < 0.82) {
         const cost = renovationCost(b)
-        const payback = paybackYears(cost, renovationUplift(world, b))
+        const payback = paybackWindows(cost, renovationUplift(world, b))
         if (cost <= agent.capital && payback < s.maxPayback) {
           options.push({
             action: {
               kind: 'renovate',
               buildingId: b.id,
-              rationale: `condition ${b.condition.toFixed(2)}, payback ${payback.toFixed(1)}y`,
+              rationale: `condition ${b.condition.toFixed(2)}, returns ${returnOnCost(payback)} on cost`,
             },
             score: s.renovate * (s.maxPayback / Math.max(1, payback)),
           })
@@ -275,14 +282,14 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
 
       const best = bestConversion(world, b)
       if (best && conversionCost(b) <= agent.capital) {
-        const payback = paybackYears(conversionCost(b), best.uplift)
+        const payback = paybackWindows(conversionCost(b), best.uplift)
         if (payback < s.maxPayback) {
           options.push({
             action: {
               kind: 'convert',
               buildingId: b.id,
               to: best.purpose,
-              rationale: `${b.purpose} to ${best.purpose}, payback ${payback.toFixed(1)}y`,
+              rationale: `${b.purpose} to ${best.purpose}, returns ${returnOnCost(payback)} on cost`,
             },
             score: s.convert * (s.maxPayback / Math.max(1, payback)),
           })
@@ -315,14 +322,14 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
         const uplift =
           yieldPerTick(world, { ...b, levels: b.levels + addLevels, heightM: b.heightM + addLevels * 3.2 }) -
           b.yieldPerTick
-        const payback = paybackYears(cost, uplift)
+        const payback = paybackWindows(cost, uplift)
         if (payback < s.maxPayback) {
           options.push({
             action: {
               kind: 'expand',
               buildingId: b.id,
               addLevels,
-              rationale: `${b.levels} to ${b.levels + addLevels} levels, payback ${payback.toFixed(1)}y`,
+              rationale: `${b.levels} to ${b.levels + addLevels} levels, returns ${returnOnCost(payback)} on cost`,
             },
             score: s.expand * (s.maxPayback / Math.max(1, payback)) * (0.6 + obs.neighbourhood.intensity),
           })
@@ -343,7 +350,7 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
         if (potential) {
           const cost = demolitionCost(b) + potential.cost
           const uplift = potential.yieldPerTick - b.yieldPerTick
-          const payback = paybackYears(cost, uplift)
+          const payback = paybackWindows(cost, uplift)
           const ratio = potential.yieldPerTick / Math.max(1e-6, b.yieldPerTick)
           if (
             cost <= agent.capital &&
@@ -356,7 +363,7 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
                 buildingId: b.id,
                 rationale:
                   `${potential.levels} levels of ${potential.purpose} would yield ` +
-                  `${(potential.yieldPerTick / Math.max(1e-6, b.yieldPerTick)).toFixed(1)}x, payback ${payback.toFixed(1)}y`,
+                  `${(potential.yieldPerTick / Math.max(1e-6, b.yieldPerTick)).toFixed(1)}x, returns ${returnOnCost(payback)} on cost`,
               },
               score: s.demolish * (s.maxPayback / Math.max(1, payback)),
             })
@@ -379,8 +386,8 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
         if (cost > agent.capital) continue
         const purpose = choosePurpose(world, parcels[0], obs.neighbourhood.intensity)
         const uplift =
-          (area * levels * (ECONOMY.rentPerM2Year[purpose] ?? 0.1) * 1.1) / DAYS_PER_YEAR
-        const payback = paybackYears(cost, uplift)
+          (area * levels * (ECONOMY.rentPerM2[purpose] ?? 0.1) * 1.1) / RATE_WINDOW_TICKS
+        const payback = paybackWindows(cost, uplift)
         if (payback > s.maxPayback * 1.5) continue
         options.push({
           action: {
@@ -462,8 +469,29 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
 
       const price = acquisitionPrice(world, b)
       if (price > agent.capital) continue
-      const annual = b.yieldPerTick * DAYS_PER_YEAR
+
+      /**
+       * NOTE (§18.2, unfixed): scoring acquisition purely on income yield makes
+       * a whole purpose class structurally invisible. Utility stock — garages,
+       * sheds — earns rent barely above its own maintenance, so its cap rate is
+       * ~0 and no agent considers one under any seed. All of it, plus most
+       * industrial, survives every run in the untouched residue: excluded
+       * rather than unattractive.
+       *
+       * The fix is to value a building at the better of its income and its
+       * site, which is what acquisition actually is. It was implemented and
+       * measured, and it moves the median index from 35.9% to 54.9% and the
+       * touched share from 58% to 91% at the frozen decision budget — because
+       * unlocking ~40% of the stock is a large change, not a small one. That
+       * makes it a decision about the model rather than a bug fix, and it
+       * belongs with §18.4's mispriced yield model on the second chunk, where
+       * the 1909-space-on-a-1909-curve asymmetry gets priced properly.
+       *
+       * Left as-is deliberately. tune.ts reports it every run.
+       */
+      const annual = b.yieldPerTick * RATE_WINDOW_TICKS
       const cap = annual / Math.max(1, price)
+
       // §9: adjacency is weighted above yield, which is what consolidates blocks
       const adjacent = b.parcelId ? isAdjacentToHoldings(world, agent, b.parcelId) : false
       const upside = b.condition < 0.7 ? 1.3 : 1
@@ -496,14 +524,14 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
       if (parcel.ownerId && !isAdjacentToHoldings(world, agent, p.id)) continue
       const potential = developPotential(world, agent, parcel, obs.neighbourhood.intensity, s)
       if (!potential) continue
-      const payback = paybackYears(p.price + potential.cost, potential.yieldPerTick)
+      const payback = paybackWindows(p.price + potential.cost, potential.yieldPerTick)
       if (payback > s.maxPayback * 1.6) continue
       const adjacent = isAdjacentToHoldings(world, agent, p.id)
       options.push({
         action: {
           kind: 'acquire_parcel',
           parcelId: p.id,
-          rationale: `${p.areaM2.toFixed(0)}m2 of buildable land, payback ${payback.toFixed(1)}y`,
+          rationale: `${p.areaM2.toFixed(0)}m2 of buildable land, returns ${returnOnCost(payback)} on cost`,
         },
         score:
           s.develop * 0.9 * (s.maxPayback / Math.max(1, payback)) * (adjacent ? s.adjacencyBonus * 0.6 : 1),
@@ -674,6 +702,16 @@ function choosePurpose(world: World, parcel: Parcel, intensity: number): Purpose
   if (intensity > 0.55) return 'office'
   if (access < 0.3) return 'industrial'
   return 'residential'
+}
+
+/**
+ * Payback is measured in internal rate windows, which is not something a
+ * spectator should ever be shown (§20.2). Its reciprocal is a return on cost,
+ * which carries the same information and names no unit of time.
+ */
+function returnOnCost(paybackWindows: number): string {
+  if (!Number.isFinite(paybackWindows) || paybackWindows <= 0) return '0%'
+  return `${(100 / paybackWindows).toFixed(1)}%`
 }
 
 /** Resale cooling-off, in ticks (§4 has no opinion; degenerate churn does). */

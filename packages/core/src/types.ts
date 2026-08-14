@@ -252,39 +252,52 @@ export interface ChunkMeta {
 }
 
 // ---------------------------------------------------------------------------
-// time (§3)
+// ordering (§20)
 // ---------------------------------------------------------------------------
 
-/** One tick is one simulated day. */
-export const EPOCH_YEAR = 2026
-export const END_YEAR = 2045
-export const DAYS_PER_YEAR = 365
+/**
+ * §20: the world has history, the simulation has no calendar.
+ *
+ * The tick did not disappear — construction spans it, decay accumulates on it,
+ * ordering requires it — but it is an internal monotonic sequence number that
+ * is never rendered and never named as time. There is no date formatter in this
+ * codebase, and `construction_year` on a building is a fact about that building
+ * in the same way its footprint is, not a reading from a clock.
+ */
 
-export function tickToDate(tick: number): { year: number; month: number; day: number } {
-  const year = EPOCH_YEAR + Math.floor(tick / DAYS_PER_YEAR)
-  const dayOfYear = tick % DAYS_PER_YEAR
-  const month = Math.min(11, Math.floor(dayOfYear / 30.42))
-  const day = Math.floor(dayOfYear - month * 30.42) + 1
-  return { year, month: month + 1, day }
-}
+/**
+ * The tick window over which rates (yield, decay, maintenance) are quoted.
+ * Purely an internal normalisation so the constants in economy.ts are legible
+ * numbers rather than six-decimal fractions. It is not a year and nothing
+ * converts it to one.
+ */
+export const RATE_WINDOW_TICKS = 365
 
-export function tickToYear(tick: number): number {
-  return EPOCH_YEAR + Math.floor(tick / DAYS_PER_YEAR)
-}
+/**
+ * The vintage of the source data, used only to turn a real construction year
+ * into a starting condition and an era tint at import. It is not a simulation
+ * epoch: nothing advances from it and nothing renders it.
+ */
+export const SOURCE_DATA_YEAR = 2026
 
-export function yearToTick(year: number): number {
-  return (year - EPOCH_YEAR) * DAYS_PER_YEAR
-}
-
-/** Sim time per real second. Anything faster than a week makes agent motion nonsense (§3). */
-export const SPEEDS = [
-  { label: 'pause', ticksPerSecond: 0 },
-  { label: '1 day / s', ticksPerSecond: 1 },
-  { label: '1 week / s', ticksPerSecond: 7 },
-  { label: '1 month / s', ticksPerSecond: 30.42 },
-  { label: '1 quarter / s', ticksPerSecond: 91.25 },
-  { label: '1 year / s', ticksPerSecond: 365 },
+/**
+ * §20.3: speed no longer sets time per second. It sets how fast the
+ * civilization thinks — agent decisions issued per real second. The spectator
+ * is dialling throughput, not a calendar.
+ */
+export const THROUGHPUT = [
+  { label: 'pause', decisionsPerSecond: 0 },
+  { label: 'slow', decisionsPerSecond: 3 },
+  { label: 'normal', decisionsPerSecond: 14 },
+  { label: 'fast', decisionsPerSecond: 55 },
+  { label: 'surge', decisionsPerSecond: 220 },
 ] as const
 
-/** Above this rate agents stop interpolating and render as static presence markers. */
-export const AGENT_MOTION_MAX_TPS = 7
+export type ThroughputLevel = (typeof THROUGHPUT)[number]
+
+/**
+ * §3's presence-marker threshold, rekeyed off throughput. Above this, agents
+ * stop interpolating and render as static markers with an activity pulse —
+ * continuous motion at surge rates is nonsense either way.
+ */
+export const AGENT_MOTION_MAX_THROUGHPUT = 14

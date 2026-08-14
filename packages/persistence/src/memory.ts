@@ -52,19 +52,22 @@ export class MemoryStore implements WorldStore {
   }
 
   putSnapshot(s: Snapshot): void {
-    this.snapshots.set(`${s.chunkId}:${s.year}`, s)
+    this.snapshots.set(`${s.chunkId}:${s.ordinal}`, s)
   }
 
-  snapshot(chunkId: string, year: number): Snapshot | undefined {
-    return this.snapshots.get(`${chunkId}:${year}`)
-  }
-
-  snapshotYears(chunkId: string): number[] {
-    const out: number[] = []
-    for (const key of this.snapshots.keys()) {
-      const [id, year] = key.split(':')
-      if (id === chunkId) out.push(Number(year))
+  /** Nearest snapshot at or before `ordinal` — the scrub lands between writes. */
+  snapshotAt(chunkId: string, ordinal: number): Snapshot | undefined {
+    let best: Snapshot | undefined
+    for (const s of this.snapshots.values()) {
+      if (s.chunkId !== chunkId || s.ordinal > ordinal) continue
+      if (!best || s.ordinal > best.ordinal) best = s
     }
+    return best
+  }
+
+  snapshotOrdinals(chunkId: string): number[] {
+    const out: number[] = []
+    for (const s of this.snapshots.values()) if (s.chunkId === chunkId) out.push(s.ordinal)
     return out.sort((a, b) => a - b)
   }
 

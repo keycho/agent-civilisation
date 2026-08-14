@@ -44,7 +44,8 @@
         top: 18px; left: 50%; transform: translateX(-50%);
         padding: 9px 16px; display: flex; align-items: center; gap: 14px;
       }
-      #clock .date { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: 0.01em; }
+      #clock .label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.09em;
+                      color: var(--muted); font-weight: 600; }
       #clock .speeds { display: flex; gap: 3px; }
       #clock button {
         font: inherit; font-size: 11px; padding: 4px 8px; cursor: pointer;
@@ -63,6 +64,8 @@
       }
       #divergenceIndex .n { font-size: 21px; font-weight: 650; font-variant-numeric: tabular-nums; color: var(--accent); }
       #divergenceIndex .l { font-size: 10.5px; color: var(--muted); text-align: right; line-height: 1.35; }
+      #generationLine { margin-top: 5px; font-size: 11.5px; color: var(--muted);
+                        font-variant-numeric: tabular-nums; }
 
       #inspector {
         top: 18px; right: 18px; width: 296px; padding: 14px 16px; display: none;
@@ -121,7 +124,7 @@
     </div>
 
     <div class="panel" id="clock">
-      <span class="date" id="date">—</span>
+      <span class="label">throughput</span>
       <span class="speeds" id="speeds"></span>
       <button id="ambient" aria-pressed="true" title="ambient mode — the director drives the camera (a)">ambient</button>
     </div>
@@ -135,14 +138,16 @@
         <output id="modeOut">normal</output>
       </div>
       <div class="row">
-        <label for="scrub">Year</label>
-        <input id="scrub" type="range" min="2026" max="2045" step="1" value="2026" />
+        <label for="scrub">History</label>
+        <input id="scrub" type="range" min="0" max="1" step="1" value="1" />
         <output id="scrubOut">live</output>
       </div>
+      <!-- §20.6: divergence index primary, generation secondary, no third readout -->
       <div id="divergenceIndex">
         <span class="n" id="divN">0.0%</span>
         <span class="l" id="divL">divergence index<br />baseline stock touched</span>
       </div>
+      <div id="generationLine"><span id="genN">generation 1</span></div>
     </div>
 
     <div class="panel" id="inspector">

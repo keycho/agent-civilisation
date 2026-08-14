@@ -4,16 +4,7 @@
  * §15's world-as-spectacle: the default experience is mostly world, UI is
  * secondary, and the thing can be left running.
  */
-import {
-  DIVERGENCE_LABEL,
-  EPOCH_YEAR,
-  PURPOSE_INDEX,
-  SPEEDS,
-  type WorldSeed,
-  tickToDate,
-  tickToYear,
-  yearToTick,
-} from '@civ/core'
+import { DIVERGENCE_LABEL, PURPOSE_INDEX, THROUGHPUT, type WorldSeed } from '@civ/core'
 import { EVENT_TONE, MemoryStore, type WorldEvent } from '@civ/persistence'
 import { Simulation, agentNetWorth, buildingValue } from '@civ/sim'
 import { Raycaster, Scene, Vector2, Vector3, WebGLRenderer } from 'three'
@@ -76,20 +67,19 @@ scene.add(agentMarkers.mesh)
 const store = new MemoryStore()
 const sim = new Simulation(seed as WorldSeed, store, {
   agentCount: 58,
-  onYear(year, report) {
+  // §20.4: snapshots key on event ordinal, not on a calendar boundary
+  onSnapshot({ ordinal, generation, report }) {
     bridge.sync()
-    bridge.captureSnapshot(year, report.index, {
+    bridge.captureSnapshot(ordinal, generation, report.index, {
       touched: report.touchedShare,
       agentOrigin: report.agentOrigin,
       demolished: report.demolished,
     })
-    availableYears.add(year)
-    refreshDivergence()
+    refreshReadouts()
   },
 })
 const bridge = new SimBridge(sim, buildings, roads.agent, substrate.groundY, store)
-const availableYears = new Set<number>([EPOCH_YEAR])
-bridge.captureSnapshot(EPOCH_YEAR, 0, {})
+bridge.captureSnapshot(0, 1, 0, {})
 
 // ---------------------------------------------------------------------------
 // camera and director
@@ -151,10 +141,11 @@ el('chunkStats').innerHTML =
   `${buildings.triangles.toLocaleString()} triangles · 58 agents`
 el('chunkProv').innerHTML = seed.provenance.map((p) => `${p.source} — ${p.licence}`).join('<br>')
 
+// §20.3: this dials how fast the civilization thinks, not how fast a clock runs
 let speedIndex = 0
 const speeds = el('speeds')
-speeds.innerHTML = SPEEDS.map(
-  (s, i) => `<button data-i="${i}" aria-pressed="${i === 0}">${s.label}</button>`,
+speeds.innerHTML = THROUGHPUT.map(
+  (t, i) => `<button data-i="${i}" aria-pressed="${i === 0}">${t.label}</button>`,
 ).join('')
 speeds.addEventListener('click', (e) => {
   const btn = (e.target as HTMLElement).closest('button')
@@ -174,23 +165,26 @@ modeInput.addEventListener('input', () => {
   modeOut.value = v < 0.02 ? 'normal' : v > 0.98 ? 'divergence' : v.toFixed(2)
 })
 
-// §8's year scrub: same viewpoint, 2026 versus 2045, straight from snapshots
+/**
+ * §20.4: the scrub travels the event log, keyed on event ordinal, and its
+ * handle is labelled by generation. "Show me 2033" is now "show me generation
+ * 3" — which is more honest to the architecture, since the log was always the
+ * source of truth and the year boundaries were an overlay on it.
+ */
 const scrub = el<HTMLInputElement>('scrub')
 const scrubOut = el<HTMLOutputElement>('scrubOut')
 let scrubbing = false
 scrub.addEventListener('input', () => {
-  const year = Number(scrub.value)
-  if (year >= tickToYear(sim.tick)) {
+  const ordinal = Number(scrub.value)
+  if (ordinal >= store.eventCount()) {
     exitScrub()
     return
   }
-  const nearest = [...availableYears].filter((y) => y <= year).sort((a, b) => b - a)[0]
-  if (nearest === undefined) return
+  const restored = bridge.restoreSnapshot(ordinal)
+  if (!restored) return
   scrubbing = true
-  bridge.restoreSnapshot(nearest)
-  scrubOut.value = String(nearest)
-  const snap = store.snapshot(sim.world.chunkId, nearest)
-  if (snap) setDivergenceReadout(snap.divergenceIndex, `${nearest} snapshot`)
+  scrubOut.value = `gen ${restored.generation}`
+  setReadouts(restored.divergenceIndex, restored.generation, 'at this point in the record')
 })
 
 function exitScrub(): void {
@@ -198,19 +192,22 @@ function exitScrub(): void {
   scrubbing = false
   scrubOut.value = 'live'
   bridge.sync()
-  refreshDivergence()
+  refreshReadouts()
 }
 
-function refreshDivergence(): void {
+function refreshReadouts(): void {
   if (scrubbing) return
   const r = sim.report
-  setDivergenceReadout(r.index, `baseline stock touched<br>${r.agentOrigin} agent-built`)
-  scrub.max = String(Math.max(EPOCH_YEAR, tickToYear(sim.tick)))
+  setReadouts(r.index, sim.generation, `baseline stock touched · ${r.agentOrigin} agent-built`)
+  scrub.max = String(Math.max(1, store.eventCount()))
+  scrub.value = String(store.eventCount())
 }
 
-function setDivergenceReadout(index: number, label: string): void {
+/** §20.6: divergence index primary, generation secondary, no third readout. */
+function setReadouts(index: number, generation: number, label: string): void {
   el('divN').textContent = `${(index * 100).toFixed(1)}%`
   el('divL').innerHTML = `divergence index<br>${label}`
+  el('genN').textContent = `generation ${generation}`
 }
 
 // ---------------------------------------------------------------------------
@@ -232,12 +229,13 @@ function pumpFeed(): void {
 }
 
 function feedRow(e: WorldEvent): string {
-  const agent = e.agentId ? sim.world.agents.get(e.agentId)?.name : undefined
+  const who = e.agentId ? sim.world.agents.get(e.agentId) : undefined
   const text = e.rationale ?? describe(e)
+  // §20.2: the feed never prints the tick. Generation is the public vocabulary.
   return (
     `<div class="e"><span class="dot" style="background:${EVENT_TONE[e.type]}"></span>` +
-    `<span class="yr">${tickToYear(e.tick)}</span>` +
-    `<span class="t">${agent ? `<b>${escapeHtml(agent.split(' ')[0])}</b> ` : ''}${escapeHtml(text)}</span></div>`
+    `<span class="yr">g${who?.generation ?? sim.generation}</span>` +
+    `<span class="t">${who ? `<b>${escapeHtml(who.name.split(' ')[0])}</b> ` : ''}${escapeHtml(text)}</span></div>`
   )
 }
 
@@ -289,14 +287,15 @@ function select(index: number | null): void {
     (b.state !== 'standing' ? ` · ${b.state.replace(/_/g, ' ')}` : '')
 
   el('insFacts').innerHTML = facts([
-    ['Built', b.constructionYear ? String(b.constructionYear) : 'unknown'],
+    // §20.1: a real building's construction year is a fact about it, the same
+    // kind of fact as its footprint. It stays, and it is shown.
+    ['Built', b.constructionYear ? String(b.constructionYear) : 'agent-built, new'],
     ['Height', `${b.heightM.toFixed(1)} m`],
     ['Levels', String(b.levels)],
     ['Archetype', b.archetype],
     ['Condition', `${(b.condition * 100).toFixed(0)}%`],
-    ['Owner', owner ? `${owner.name} (g${owner.generation})` : 'unowned'],
+    ['Owner', owner ? `${owner.name} (gen ${owner.generation})` : 'unowned'],
     ['Value', buildingValue(sim.world, b).toFixed(0)],
-    ['Yield', `${(b.yieldPerTick * 365).toFixed(1)} / yr`],
     ...(baseline
       ? ([
           ['Was', `${baseline.purpose}, ${baseline.levels} levels`],
@@ -315,31 +314,36 @@ function select(index: number | null): void {
       chain
         .map(
           (c) =>
-            `<div class="step"><span class="yr">${c.year}</span><span>${escapeHtml(c.text)}</span></div>`,
+            `<div class="step"><span class="yr">${c.label}</span><span>${escapeHtml(c.text)}</span></div>`,
         )
         .join('') +
       history
         .slice(0, 8)
         .reverse()
-        .map(
-          (e) =>
-            `<div class="step"><span class="yr">${tickToYear(e.tick)}</span><span>${escapeHtml(
-              e.rationale ?? describe(e),
-            )}</span></div>`,
-        )
+        .map((e) => {
+          const g = e.agentId ? sim.world.agents.get(e.agentId)?.generation : undefined
+          return `<div class="step"><span class="yr">${g ? `g${g}` : '·'}</span><span>${escapeHtml(
+            e.rationale ?? describe(e),
+          )}</span></div>`
+        })
         .join('')
   } else {
     box.classList.add('hidden')
   }
 }
 
-function lineage(id: string): Array<{ year: number; text: string }> {
-  const out: Array<{ year: number; text: string }> = []
+/**
+ * §5: clicking a replacement should walk back to what stood under it. The left
+ * column is the real construction year where there is one, and 'new' where the
+ * structure is an agent's — no invented dates.
+ */
+function lineage(id: string): Array<{ label: string; text: string }> {
+  const out: Array<{ label: string; text: string }> = []
   let cur = sim.world.buildings.get(id)
   let guard = 0
   while (cur && guard++ < 8) {
     out.push({
-      year: cur.constructionYear ?? EPOCH_YEAR,
+      label: cur.constructionYear ? String(cur.constructionYear) : 'new',
       text:
         cur.source === 'agent_built'
           ? `agent-built ${cur.purpose}, ${cur.levels} levels`
@@ -372,11 +376,7 @@ function resize(): void {
 addEventListener('resize', resize)
 resize()
 el('loading').remove()
-
-const MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-]
+refreshReadouts()
 
 let last = performance.now()
 let stepping = false
@@ -388,27 +388,25 @@ renderer.setAnimationLoop(() => {
   last = now
   clock += dt
 
-  const tps = SPEEDS[speedIndex].ticksPerSecond
-  if (tps > 0 && !stepping && !scrubbing) {
-    // budgeted so a fast speed never starves the frame (§3's month-per-second)
+  const dps = THROUGHPUT[speedIndex].decisionsPerSecond
+  if (dps > 0 && !stepping && !scrubbing) {
+    // §20.3: advance until the requested number of decisions have been issued,
+    // time-budgeted so a fast setting never starves the frame
     stepping = true
-    void sim.runBudgeted(Math.ceil(tps * dt) + 1, 7).then(() => {
+    void sim.runToThroughput(Math.max(1, Math.round(dps * dt)), 7).then(() => {
       stepping = false
       bridge.sync()
       pumpFeed()
-      refreshDivergence()
+      sim.refreshReport()
+      refreshReadouts()
     })
   }
-
-  const d = tickToDate(sim.tick)
-  el('date').textContent = `${d.day} ${MONTHS[d.month - 1]} ${d.year}`
-  if (!scrubbing) scrub.value = String(tickToYear(sim.tick))
 
   rig.update(dt)
   director.update(dt, sim.tick)
   if (!director.inControl) el('shot').classList.remove('on')
 
-  agentMarkers.update(sim.world.agents.values(), substrate.groundY, dt, tps, clock)
+  agentMarkers.update(sim.world.agents.values(), substrate.groundY, dt, dps, clock)
   construction.update(sim.world.buildings.values(), clock)
 
   if (scene.fog && 'near' in scene.fog) {
@@ -450,23 +448,27 @@ addEventListener('keydown', (e) => {
     modeInput.value = String(v)
     modeInput.dispatchEvent(new Event('input'))
   },
-  async runYears(years: number) {
+  /** Run to a decision budget — the §20.9 unit. */
+  async runDecisions(budget: number) {
     director.takeControl()
-    await sim.run(Math.round(years * 365))
+    await sim.runToDecisionBudget(budget)
     bridge.sync()
     pumpFeed()
-    refreshDivergence()
-    scrub.max = String(tickToYear(sim.tick))
+    sim.refreshReport()
+    refreshReadouts()
   },
-  scrubTo(year: number) {
-    scrub.value = String(year)
+  scrubTo(ordinal: number) {
+    scrub.value = String(ordinal)
+    scrub.dispatchEvent(new Event('input'))
+  },
+  scrubToStart() {
+    scrub.value = '0'
     scrub.dispatchEvent(new Event('input'))
   },
   netWorth: (id: string) => {
     const a = sim.world.agents.get(id)
     return a ? agentNetWorth(sim.world, a) : 0
   },
-  yearToTick,
   get selected() {
     return selectedIndex
   },

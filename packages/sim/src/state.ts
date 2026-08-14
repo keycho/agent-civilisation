@@ -9,12 +9,11 @@ import {
   type RoadNode,
   type Vec2,
   type WorldSeed,
-  DAYS_PER_YEAR,
+  SOURCE_DATA_YEAR,
   area as ringArea,
   centroid,
   distanceToRing,
   makeRng,
-  tickToYear,
 } from '@civ/core'
 import type { WorldStore } from '@civ/persistence'
 
@@ -39,6 +38,17 @@ export interface Agent {
   diedTick?: number
   generation: number
   heirId?: string
+  /**
+   * §20.5: an agent is born with a finite number of decisions and dies when it
+   * spends them. A life is measured by what it did, not by how long it sat
+   * there — so passing is cheap and acting is dear, and an aggressive agent
+   * burns out while a cautious one persists. Generational turnover becomes a
+   * function of activity: a busy district cycles through owners, a quiet one
+   * does not.
+   */
+  effortBudget: number
+  effortSpent: number
+  decisionsMade: number
   /** stable identity marker assigned at birth so recurring characters are recognisable (§16.6) */
   colourIndex: number
   holdings: Set<string>
@@ -60,11 +70,24 @@ export interface ParcelAdjacency {
 }
 
 export class World {
+  /**
+   * §20.2: an internal monotonic sequence number. Construction spans it, decay
+   * accumulates on it, ordering requires it. It is never rendered and never
+   * named as time.
+   */
   tick = 0
+  /** cumulative decisions issued — the x axis divergence is plotted against (§20.7) */
+  decisionsIssued = 0
+  /**
+   * §18.3: how many times each action kind was actually applied. A dead branch
+   * is a missing kind, and every bug in the first build produced plausible
+   * output — so what fired is asserted rather than assumed.
+   */
+  readonly actionCounts = new Map<string, number>()
   readonly chunkId: string
   readonly seed: WorldSeed
   readonly store: WorldStore
-  readonly rng = makeRng('world')
+  readonly rng: ReturnType<typeof makeRng>
 
   readonly buildings = new Map<string, Building>()
   readonly parcels = new Map<string, Parcel>()
@@ -103,9 +126,12 @@ export class World {
   private nextNodeSerial = 0
   private nextEdgeSerial = 0
 
-  constructor(seed: WorldSeed, store: WorldStore) {
+  constructor(seed: WorldSeed, store: WorldStore, seedKey = 'world') {
     this.seed = seed
     this.store = store
+    // §18.1: the run's randomness is seeded per run, so seed variance is a
+    // thing that can actually be measured rather than a fixed single sample.
+    this.rng = makeRng(`${seedKey}:world`)
     this.chunkId = seed.chunk.id
     this.bounds = seed.chunk.localBounds
 
@@ -154,8 +180,20 @@ export class World {
     this.nextEdgeSerial = this.edges.size
   }
 
-  get year(): number {
-    return tickToYear(this.tick)
+  /** §20.6: generation is the public vocabulary. Highest living generation. */
+  get generation(): number {
+    let g = 1
+    for (const a of this.agents.values()) {
+      if (!a.diedTick && a.generation > g) g = a.generation
+    }
+    return g
+  }
+
+  /** Generations that have completed, i.e. agents that spent their budget. */
+  get generationsCompleted(): number {
+    let n = 0
+    for (const a of this.agents.values()) if (a.diedTick) n++
+    return n
   }
 
   newBuildingId(): string {
@@ -189,8 +227,27 @@ export class World {
  */
 export function startingCondition(constructionYear: number | undefined): number {
   if (!constructionYear) return 0.7
-  const age = 2026 - constructionYear
+  // SOURCE_DATA_YEAR is the vintage of the BAG extract, not a simulation clock:
+  // it turns a real construction year into a starting condition once, at load.
+  const age = SOURCE_DATA_YEAR - constructionYear
   return Math.max(0.32, Math.min(1, 1 - age / 230))
+}
+
+/**
+ * What a decision costs an agent from its §20.5 budget. Passing is nearly free;
+ * committing capital and changing the world is not.
+ */
+export const EFFORT_COST: Record<string, number> = {
+  pass: 1,
+  acquire_building: 4,
+  acquire_parcel: 3,
+  renovate: 3,
+  convert: 5,
+  expand: 6,
+  demolish: 8,
+  develop: 10,
+  assemble: 7,
+  build_road: 9,
 }
 
 /** Uniform bucket index over the chunk, used for every spatial query. */
@@ -274,10 +331,6 @@ export function footprintCentroid(b: Building): Vec2 {
 
 export function floorArea(b: Building): number {
   return b.areaM2 * Math.max(1, b.levels)
-}
-
-export function isYearBoundary(tick: number): boolean {
-  return tick > 0 && tick % DAYS_PER_YEAR === 0
 }
 
 export const PURPOSE_CONVERSION_TARGETS: Purpose[] = [

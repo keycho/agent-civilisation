@@ -8,9 +8,18 @@ import type { EventType, WorldEvent } from './events.ts'
  * durable definition of the same three lifecycles.
  */
 
+/**
+ * §20.4: snapshots key on event ordinal, not on a year. The event log was
+ * already the source of truth and the year boundaries were an arbitrary
+ * overlay on it — "show me 2033" becomes "show me generation 3".
+ */
 export interface Snapshot {
   chunkId: string
-  year: number
+  /** number of events in the log when this was taken; the scrub's x axis */
+  ordinal: number
+  /** the public label for this point in the run (§20.6) */
+  generation: number
+  /** internal ordering key, never rendered */
   tick: number
   /** one RGBA texel per building — the §16.2 data texture, verbatim */
   buildingData: Uint8Array
@@ -35,8 +44,9 @@ export interface WorldStore {
   weightedEvents(sinceTick: number, limit: number): WorldEvent[]
 
   putSnapshot(s: Snapshot): void
-  snapshot(chunkId: string, year: number): Snapshot | undefined
-  snapshotYears(chunkId: string): number[]
+  /** nearest snapshot at or before `ordinal` */
+  snapshotAt(chunkId: string, ordinal: number): Snapshot | undefined
+  snapshotOrdinals(chunkId: string): number[]
 
   eventCount(): number
 }

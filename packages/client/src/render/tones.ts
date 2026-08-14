@@ -12,9 +12,11 @@ import type { ArchetypeId, RoofForm } from '@civ/core'
 export function roofToneFor(
   archetype: ArchetypeId,
   roof: RoofForm,
-  year: number,
+  /** the building's real construction year, or undefined for agent-built stock */
+  year: number | undefined,
   areaM2 = 100,
 ): number {
+  if (year === undefined) return archetype.startsWith('agent_') ? 4 : 3
   if (archetype.startsWith('agent_')) return 4
   if (roof === 'parapet' || roof === 'flat') return 3
   if (roof === 'spire') return 2

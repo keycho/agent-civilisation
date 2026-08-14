@@ -410,7 +410,6 @@ function develop(
     heightM,
     levels,
     purpose: action.purpose,
-    constructionYear: world.year,
     source: 'agent_built',
   }).archetype
 
@@ -433,7 +432,10 @@ function develop(
     // baseline building. This is the distinction the whole overlay turns on.
     divergence: replaced ? DIVERGENCE.replaced : DIVERGENCE.agentOrigin,
     replaces: replaced ?? undefined,
-    constructionYear: world.year,
+    // §20.1: construction_year is a fact about a real building, not a clock
+    // reading. An agent-built structure has no year — it is simply new, and
+    // the inspector says so.
+    constructionYear: undefined,
     createdTick: world.tick,
     areaM2,
     yieldPerTick: 0,

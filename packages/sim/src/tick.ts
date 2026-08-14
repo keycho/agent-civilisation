@@ -1,10 +1,4 @@
-import {
-  DAYS_PER_YEAR,
-  type WorldSeed,
-  centroid,
-  makeRng,
-  tickToYear,
-} from '@civ/core'
+import { RATE_WINDOW_TICKS, type WorldSeed, centroid, makeRng } from '@civ/core'
 import { BASE_CINEMATIC_WEIGHT, type WorldStore } from '@civ/persistence'
 import { advanceConstruction, applyAction } from './actions.ts'
 import {
@@ -16,21 +10,35 @@ import {
 } from './economy.ts'
 import { type DecisionEngine, RuleBasedDecisionEngine, observe } from './engine.ts'
 import { type DivergenceReport, divergenceReport, findDistricts } from './divergence.ts'
-import { type Agent, type Strategy, World, buildAdjacency } from './state.ts'
+import { EFFORT_COST, type Agent, type Strategy, World, buildAdjacency } from './state.ts'
 
 /**
- * §3: tick = one simulated day. The narrative spans 2026 to 2045, which is
- * about 7,000 ticks — a watchable run, not the ten million a minute-tick would
- * have needed.
+ * §20: the world evolves by agent action, not by elapsed time.
+ *
+ * The tick is an internal ordering key — construction spans it and decay
+ * accumulates on it — but nothing here converts it to a date and nothing
+ * downstream renders it. What the spectator dials is throughput: how fast the
+ * civilization thinks. What the spectator reads is the divergence index and the
+ * generation count.
  */
+
+export interface SnapshotSignal {
+  /** event-log ordinal this snapshot is keyed on (§20.4) */
+  ordinal: number
+  generation: number
+  report: DivergenceReport
+}
 
 export interface SimulationOptions {
   agentCount?: number
   engine?: DecisionEngine
-  seedKey?: string
+  /** seeds the whole run: agent spawn, strategy jitter, tie-breaks, budgets */
+  seed?: string
   /** ticks between an agent reconsidering its position */
   decisionInterval?: number
-  onYear?: (year: number, report: DivergenceReport) => void
+  /** §20.4: snapshots key on event ordinal. Write one every N events. */
+  snapshotEveryEvents?: number
+  onSnapshot?: (s: SnapshotSignal) => void
 }
 
 const FIRST_NAMES = [
@@ -43,21 +51,38 @@ const HOUSE_NAMES = [
   'Oosterhuis', 'Rietveld', 'Dijkgraaf', 'Wielinga', 'Ketelaar',
 ]
 
+/**
+ * §20.5's budget, in effort units. Spread rather than fixed so the population
+ * does not turn over in lockstep. Calibrated once against the build's end state
+ * and frozen — see docs and §20.9: tuning this to hit a target is the same
+ * hill-climb error §18 exists to catch.
+ */
+const EFFORT_BUDGET_RANGE: [number, number] = [340, 620]
+
+/** Housekeeping cadences, in internal ticks. */
+const INCOME_EVERY = 7
+const MARKET_EVERY = 30
+
 export class Simulation {
   readonly world: World
   readonly engine: DecisionEngine
   private readonly decisionInterval: number
-  private readonly onYear?: SimulationOptions['onYear']
+  private readonly snapshotEvery: number
+  private readonly onSnapshot?: SimulationOptions['onSnapshot']
   private readonly rng: ReturnType<typeof makeRng>
   private namedDistricts = new Set<string>()
   private lastReport: DivergenceReport
+  private lastSnapshotEventCount = 0
+  private nextHeirSerial = 0
 
   constructor(seed: WorldSeed, store: WorldStore, opts: SimulationOptions = {}) {
-    this.world = new World(seed, store)
+    const seedKey = opts.seed ?? 'sim'
+    this.world = new World(seed, store, seedKey)
     this.engine = opts.engine ?? new RuleBasedDecisionEngine()
     this.decisionInterval = opts.decisionInterval ?? 14
-    this.onYear = opts.onYear
-    this.rng = makeRng(opts.seedKey ?? 'sim')
+    this.snapshotEvery = opts.snapshotEveryEvents ?? 350
+    this.onSnapshot = opts.onSnapshot
+    this.rng = makeRng(`${seedKey}:sim`)
 
     buildAdjacency(this.world)
     recomputeIntensity(this.world)
@@ -72,8 +97,12 @@ export class Simulation {
     return this.world.tick
   }
 
-  get year(): number {
-    return this.world.year
+  get generation(): number {
+    return this.world.generation
+  }
+
+  get decisionsIssued(): number {
+    return this.world.decisionsIssued
   }
 
   get report(): DivergenceReport {
@@ -83,13 +112,12 @@ export class Simulation {
   private spawnAgents(count: number): void {
     const w = this.world
     const strategies: Strategy[] = ['consolidator', 'renovator', 'developer', 'converter']
-    // seed agents where there is something to work with, not uniformly
     const anchors = [...w.parcels.values()].filter((p) => p.developable && p.accessScore > 0.3)
 
     for (let i = 0; i < count; i++) {
       const anchor = anchors.length ? anchors[Math.floor(this.rng() * anchors.length)] : null
       const id = `agent-${i}`
-      const agent: Agent = {
+      w.agents.set(id, {
         id,
         name: `${FIRST_NAMES[i % FIRST_NAMES.length]} ${HOUSE_NAMES[i % HOUSE_NAMES.length]}`,
         capital:
@@ -102,48 +130,58 @@ export class Simulation {
         holdings: new Set(),
         parcels: new Set(),
         memory: [],
-        // stagger so the whole population does not act on the same day
+        effortBudget: this.rollBudget(),
+        effortSpent: 0,
+        decisionsMade: 0,
+        // stagger so the whole population does not act on the same tick
         nextDecisionTick: Math.floor(this.rng() * this.decisionInterval),
         x: anchor?.centroid[0] ?? 0,
         y: anchor?.centroid[1] ?? 0,
         targetX: anchor?.centroid[0] ?? 0,
         targetY: anchor?.centroid[1] ?? 0,
         activity: 'idle',
-      }
-      w.agents.set(id, agent)
+      })
       w.store.appendEvent({
         chunkId: w.chunkId,
         tick: 0,
         type: 'agent_born',
         agentId: id,
         cinematicWeight: BASE_CINEMATIC_WEIGHT.agent_born,
-        payload: { name: agent.name, strategy: agent.strategy, generation: 1 },
+        payload: { name: w.agents.get(id)!.name, strategy: w.agents.get(id)!.strategy, generation: 1 },
       })
     }
   }
 
-  /** One simulated day. */
-  async step(): Promise<void> {
+  private rollBudget(): number {
+    const [lo, hi] = EFFORT_BUDGET_RANGE
+    return Math.round(lo + this.rng() * (hi - lo))
+  }
+
+  /** One internal step. Returns how many decisions were issued during it. */
+  async step(): Promise<number> {
     const w = this.world
     w.tick++
+    let decisions = 0
 
     advanceConstruction(w)
 
-    // Weekly, not daily: yields barely move day to day and this is the hot loop.
-    if (w.tick % 7 === 0) {
+    if (w.tick % INCOME_EVERY === 0) {
       for (const agent of w.agents.values()) {
         if (agent.diedTick) continue
         let income = 0
         for (const id of agent.holdings) {
           const b = w.standing(id)
-          if (b?.state === 'standing') income += b.yieldPerTick * 7
+          if (b?.state === 'standing') income += b.yieldPerTick * INCOME_EVERY
         }
-        agent.capital += income
+        // §20.2: financing trickles per tick rather than arriving on a calendar
+        // boundary; there are no boundaries any more.
+        agent.capital +=
+          income + (ECONOMY.financingPerWindow * INCOME_EVERY) / RATE_WINDOW_TICKS
       }
     }
 
-    if (w.tick % 30 === 0) {
-      decayStep(w, 30)
+    if (w.tick % MARKET_EVERY === 0) {
+      decayStep(w, MARKET_EVERY)
       recomputeIntensity(w)
       recomputeLandValues(w)
       recomputeYields(w)
@@ -153,32 +191,65 @@ export class Simulation {
       if (agent.diedTick) continue
       if (w.tick < agent.nextDecisionTick) continue
       agent.nextDecisionTick = w.tick + this.decisionInterval
+
       const obs = observe(w, agent)
       const action = await this.engine.decide(obs, w, agent)
-      if (action) applyAction(w, agent, action)
+      decisions++
+      w.decisionsIssued++
+      agent.decisionsMade++
+
+      if (action) {
+        const outcome = applyAction(w, agent, action)
+        if (outcome.ok) {
+          w.actionCounts.set(action.kind, (w.actionCounts.get(action.kind) ?? 0) + 1)
+        }
+        // effort is charged for what was actually done: a refused action costs
+        // what deliberating cost, not what acting would have
+        agent.effortSpent += outcome.ok ? (EFFORT_COST[action.kind] ?? 4) : EFFORT_COST.pass
+      } else {
+        agent.effortSpent += EFFORT_COST.pass
+      }
+
       this.moveAgent(agent)
+      if (agent.effortSpent >= agent.effortBudget) this.retire(agent)
     }
 
-    if (w.tick % DAYS_PER_YEAR === 0) this.yearBoundary()
+    this.nameDistricts()
+    this.maybeSnapshot()
+    return decisions
   }
 
-  /** Run `ticks` days. Returns when done. */
-  async run(ticks: number): Promise<void> {
-    for (let i = 0; i < ticks; i++) await this.step()
+  /** Advance a fixed number of internal steps. */
+  async run(steps: number): Promise<void> {
+    for (let i = 0; i < steps; i++) await this.step()
   }
 
   /**
-   * Advance until the wall clock budget is spent. The render loop uses this so
-   * a fast speed never starves the frame.
+   * §20.9: run to a decision budget rather than to a span. This is the unit
+   * `tune.ts` freezes.
    */
-  async runBudgeted(maxTicks: number, budgetMs: number): Promise<number> {
-    const start = performance.now()
-    let done = 0
-    while (done < maxTicks && performance.now() - start < budgetMs) {
+  async runToDecisionBudget(budget: number, maxSteps = 500_000): Promise<void> {
+    let steps = 0
+    while (this.world.decisionsIssued < budget && steps < maxSteps) {
       await this.step()
-      done++
+      steps++
     }
-    return done
+  }
+
+  /**
+   * §20.3: advance until `targetDecisions` have been issued, or the wall-clock
+   * budget is spent. The render loop drives this, so throughput is what the
+   * spectator is actually dialling and a fast setting never starves the frame.
+   */
+  async runToThroughput(targetDecisions: number, budgetMs: number): Promise<number> {
+    const start = performance.now()
+    let issued = 0
+    let guard = 0
+    while (issued < targetDecisions && performance.now() - start < budgetMs && guard < 20_000) {
+      issued += await this.step()
+      guard++
+    }
+    return issued
   }
 
   /**
@@ -208,98 +279,79 @@ export class Simulation {
     }
   }
 
-  private yearBoundary(): void {
-    const w = this.world
-    const year = tickToYear(w.tick)
-
-    // financing: agents draw capital from outside the chunk, which is what
-    // keeps the economy from stalling once the cheap stock is bought
-    for (const agent of w.agents.values()) {
-      if (agent.diedTick) continue
-      agent.capital += ECONOMY.annualFinancing * (0.6 + this.rng() * 0.8)
-    }
-
-    this.generations(year)
-    this.nameDistricts(year)
-
-    this.lastReport = divergenceReport(w)
-    this.onYear?.(year, this.lastReport)
-  }
-
   /**
-   * §12 stage 12. Property inherits, dynasties form, holdings consolidate over
-   * decades — nearly free once estate transfer exists, and it is how real
-   * cities work.
-   *
-   * Careers are 13-21 years rather than lifetimes, so the 2026-2045 window
-   * actually contains a generational handover instead of implying one.
+   * §20.5 / §12: an agent that has spent its budget dies and its estate passes
+   * to an heir. Property inherits, dynasties form, holdings consolidate — and
+   * because the budget is effort rather than elapsed time, a busy district
+   * cycles through owners while a quiet one does not.
    */
-  private generations(year: number): void {
+  private retire(agent: Agent): void {
     const w = this.world
-    for (const agent of [...w.agents.values()]) {
-      if (agent.diedTick) continue
-      const careerYears = 13 + (hash(agent.id) % 9)
-      if (year - tickToYear(agent.bornTick) < careerYears) continue
+    agent.diedTick = w.tick
 
-      agent.diedTick = w.tick
-      const heirId = `${agent.id}-g${agent.generation + 1}`
-      const heir: Agent = {
-        ...agent,
-        id: heirId,
-        name: `${FIRST_NAMES[hash(heirId) % FIRST_NAMES.length]} ${agent.name.split(' ').slice(1).join(' ')}`,
-        capital: agent.capital * 0.82,
-        bornTick: w.tick,
-        diedTick: undefined,
-        generation: agent.generation + 1,
-        heirId: undefined,
-        holdings: new Set(agent.holdings),
-        parcels: new Set(agent.parcels),
-        memory: [{ tick: w.tick, note: `inherited from ${agent.name}` }],
-        nextDecisionTick: w.tick + 1,
-      }
-      agent.heirId = heirId
-      agent.capital = 0
-      w.agents.set(heirId, heir)
-
-      for (const id of heir.holdings) {
-        const b = w.buildings.get(id)
-        if (b) b.ownerId = heirId
-      }
-      for (const id of heir.parcels) {
-        const p = w.parcels.get(id)
-        if (p) p.ownerId = heirId
-      }
-      agent.holdings.clear()
-      agent.parcels.clear()
-
-      w.store.appendEvent({
-        chunkId: w.chunkId,
-        tick: w.tick,
-        type: 'agent_died',
-        agentId: agent.id,
-        cinematicWeight: BASE_CINEMATIC_WEIGHT.agent_died,
-        payload: { name: agent.name, generation: agent.generation },
-      })
-      w.store.appendEvent({
-        chunkId: w.chunkId,
-        tick: w.tick,
-        type: 'estate_transferred',
-        agentId: heirId,
-        cinematicWeight:
-          BASE_CINEMATIC_WEIGHT.estate_transferred + Math.min(30, heir.holdings.size * 3),
-        rationale: `${heir.holdings.size} holdings pass to generation ${heir.generation}`,
-        payload: {
-          from: agent.name,
-          to: heir.name,
-          holdings: heir.holdings.size,
-          generation: heir.generation,
-        },
-      })
+    const heirId = `${agent.id}-g${agent.generation + 1}-${this.nextHeirSerial++}`
+    const heir: Agent = {
+      ...agent,
+      id: heirId,
+      name: `${FIRST_NAMES[hash(heirId) % FIRST_NAMES.length]} ${agent.name.split(' ').slice(1).join(' ')}`,
+      capital: agent.capital * 0.82,
+      bornTick: w.tick,
+      diedTick: undefined,
+      generation: agent.generation + 1,
+      heirId: undefined,
+      holdings: new Set(agent.holdings),
+      parcels: new Set(agent.parcels),
+      memory: [{ tick: w.tick, note: `inherited from ${agent.name}` }],
+      effortBudget: this.rollBudget(),
+      effortSpent: 0,
+      decisionsMade: 0,
+      nextDecisionTick: w.tick + 1 + Math.floor(this.rng() * this.decisionInterval),
     }
+    agent.heirId = heirId
+    agent.capital = 0
+    w.agents.set(heirId, heir)
+
+    for (const id of heir.holdings) {
+      const b = w.buildings.get(id)
+      if (b) b.ownerId = heirId
+    }
+    for (const id of heir.parcels) {
+      const p = w.parcels.get(id)
+      if (p) p.ownerId = heirId
+    }
+    agent.holdings.clear()
+    agent.parcels.clear()
+
+    w.store.appendEvent({
+      chunkId: w.chunkId,
+      tick: w.tick,
+      type: 'agent_died',
+      agentId: agent.id,
+      cinematicWeight: BASE_CINEMATIC_WEIGHT.agent_died,
+      rationale: `spent ${agent.effortSpent} of a ${agent.effortBudget} budget over ${agent.decisionsMade} decisions`,
+      payload: { name: agent.name, generation: agent.generation, decisions: agent.decisionsMade },
+    })
+    w.store.appendEvent({
+      chunkId: w.chunkId,
+      tick: w.tick,
+      type: 'estate_transferred',
+      agentId: heirId,
+      cinematicWeight:
+        BASE_CINEMATIC_WEIGHT.estate_transferred + Math.min(30, heir.holdings.size * 3),
+      rationale: `${heir.holdings.size} holdings pass to generation ${heir.generation}`,
+      payload: {
+        from: agent.name,
+        to: heir.name,
+        holdings: heir.holdings.size,
+        generation: heir.generation,
+      },
+    })
   }
 
-  private nameDistricts(year: number): void {
+  private nameDistricts(): void {
     const w = this.world
+    // cheap enough to check on a cadence, expensive enough not to do per step
+    if (w.tick % 120 !== 0) return
     for (const d of findDistricts(w)) {
       if (this.namedDistricts.has(d.id)) continue
       this.namedDistricts.add(d.id)
@@ -314,10 +366,29 @@ export class Simulation {
           size: d.buildingIds.length,
           x: Math.round(d.centroid[0]),
           y: Math.round(d.centroid[1]),
-          year,
+          generation: w.generation,
         },
       })
     }
+  }
+
+  /** §20.4: snapshots key on event ordinal. */
+  private maybeSnapshot(): void {
+    const count = this.world.store.eventCount()
+    if (count - this.lastSnapshotEventCount < this.snapshotEvery) return
+    this.lastSnapshotEventCount = count
+    this.lastReport = divergenceReport(this.world)
+    this.onSnapshot?.({
+      ordinal: count,
+      generation: this.world.generation,
+      report: this.lastReport,
+    })
+  }
+
+  /** Recompute the divergence report without waiting for a snapshot boundary. */
+  refreshReport(): DivergenceReport {
+    this.lastReport = divergenceReport(this.world)
+    return this.lastReport
   }
 }
 

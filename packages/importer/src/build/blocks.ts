@@ -1,6 +1,7 @@
 import {
   BLOCK_BOUNDING_CLASSES,
   type Block,
+  ROAD_WIDTH,
   type Ring,
   type RoadEdge,
   type RoadNode,
@@ -40,10 +41,13 @@ export function extractBlocks(
 
   // adjacency, sorted counterclockwise by bearing
   const adj = new Map<string, string[]>()
+  const widthByPair = new Map<string, number>()
   for (const e of edges) {
     if (!byId.has(e.a) || !byId.has(e.b)) continue
     push(adj, e.a, e.b)
     push(adj, e.b, e.a)
+    const key = e.a < e.b ? `${e.a}|${e.b}` : `${e.b}|${e.a}`
+    widthByPair.set(key, Math.max(widthByPair.get(key) ?? 0, ROAD_WIDTH[e.class]))
   }
   for (const [id, neighbours] of adj) {
     const self = byId.get(id)!
@@ -67,9 +71,12 @@ export function extractBlocks(
       let v = to
       let guard = 0
       let ok = true
+      let widest = 0
 
       while (guard++ < 4000) {
         visited.add(`${u}>${v}`)
+        const pairKey = u < v ? `${u}|${v}` : `${v}|${u}`
+        widest = Math.max(widest, widthByPair.get(pairKey) ?? 0)
         const nv = byId.get(v)
         if (!nv) {
           ok = false
@@ -114,6 +121,7 @@ export function extractBlocks(
         polygon: ring,
         areaM2: a,
         parcelIds: [],
+        roadHalfWidthM: widest / 2,
       })
     }
   }

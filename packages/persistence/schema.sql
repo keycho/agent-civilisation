@@ -197,20 +197,23 @@ create trigger events_are_append_only
   for each row execute function refuse_event_mutation();
 
 -- ---------------------------------------------------------------------------
--- snapshots — every sim year. The comparison view wants arbitrary "show me
--- 2033" queries, and replaying millions of events per query is not viable.
+-- snapshots — §20.4: keyed on event ordinal, not on a year. The event log was
+-- already the source of truth; year boundaries were an arbitrary overlay on it.
+-- The comparison view asks "show me generation 3", and replaying the whole log
+-- per query is not viable.
 -- ---------------------------------------------------------------------------
 
 create table if not exists snapshots (
   chunk_id         text not null references chunks(id),
-  year             int not null,
+  event_ordinal    bigint not null,
+  generation       int not null,
   tick             bigint not null,
   -- one RGBA texel per building, exactly the §16.2 data texture, so the year
   -- scrub is a texture upload rather than a query
   building_data    bytea not null,
   divergence_index real not null,
   stats            jsonb not null default '{}'::jsonb,
-  primary key (chunk_id, year)
+  primary key (chunk_id, event_ordinal)
 );
 
 -- ---------------------------------------------------------------------------

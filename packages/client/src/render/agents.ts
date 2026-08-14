@@ -1,4 +1,4 @@
-import { AGENT_MOTION_MAX_TPS } from '@civ/core'
+import { AGENT_MOTION_MAX_THROUGHPUT } from '@civ/core'
 import type { Agent } from '@civ/sim'
 import {
   BufferAttribute,
@@ -21,7 +21,7 @@ import {
  * at 8 to 20 pixels the silhouette and the colour carry everything and geometry
  * detail carries nothing.
  *
- * §3: above about a week per second, continuous motion is nonsense, so agents
+ * §3/§20.3: above `normal` throughput, continuous motion is nonsense, so agents
  * stop interpolating and become static presence markers with an activity pulse.
  */
 
@@ -53,10 +53,17 @@ export class AgentMarkers {
 
   /**
    * `interpolate` is false above the motion threshold: markers snap to where
-   * the agent is working rather than sliding around at a month a second.
+   * the agent is working rather than sliding around at surge throughput.
    */
-  update(agents: Iterable<Agent>, groundY: number, dt: number, ticksPerSecond: number, time: number): void {
-    const interpolate = ticksPerSecond > 0 && ticksPerSecond <= AGENT_MOTION_MAX_TPS
+  update(
+    agents: Iterable<Agent>,
+    groundY: number,
+    dt: number,
+    decisionsPerSecond: number,
+    time: number,
+  ): void {
+    const interpolate =
+      decisionsPerSecond > 0 && decisionsPerSecond <= AGENT_MOTION_MAX_THROUGHPUT
     let i = 0
     for (const a of agents) {
       if (a.diedTick) continue

@@ -48,8 +48,8 @@ export function siteMarkOpacity(progress: number): number {
 }
 
 /**
- * Ticks a build takes. §3 wants 200-600 ticks so that construction reads as a
- * smooth multi-second rise at month-per-second speed rather than a pop.
+ * Ticks a build takes. 200-600, so that construction reads as a smooth rise
+ * over several seconds at normal throughput rather than a pop.
  */
 export function constructionDuration(volumeM3: number, isDemolition = false): number {
   const base = 200 + Math.min(400, Math.sqrt(Math.max(1, volumeM3)) * 5.5)
