@@ -301,3 +301,24 @@ export type ThroughputLevel = (typeof THROUGHPUT)[number]
  * continuous motion at surge rates is nonsense either way.
  */
 export const AGENT_MOTION_MAX_THROUGHPUT = 14
+
+/**
+ * §16.2: spare slots in the building data texture, beyond the baseline stock.
+ *
+ * Every geometric mutation — expand, develop, replace — retires a slot and
+ * takes a new one, because a building that changes shape leaves the static
+ * batch for good. Slots are therefore consumed, not recycled: recycling would
+ * corrupt the scrub, since a snapshot holds a texel per slot and reusing one
+ * would show a later building's state in an earlier frame.
+ *
+ * That makes this a real ceiling, and §22.3's seasons are what make a fixed
+ * ceiling safe: the client returns every slot past the baseline at a season
+ * turn, so this only has to cover one season rather than uptime.
+ *
+ * Measured at the saturation point: ~14,600 applied actions, of which expand is
+ * 5.7% and develop 1.8% — about 1,100 new slots. This is a little over double
+ * that. It cost 900 before, which a continuously running world exhausted in
+ * minutes; the failure was a hard throw on the client and a *silent* truncation
+ * on the server, where writes past the end of a typed array are simply dropped.
+ */
+export const BUILDING_SLOT_SPARE = 2_400

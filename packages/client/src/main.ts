@@ -9,7 +9,13 @@
  * viewer is looking at the same one. What is left in this file is a renderer, a
  * camera, and a socket.
  */
-import { AGENT_MOTION_MAX_THROUGHPUT, DIVERGENCE_LABEL, EVENT_TONE, PURPOSE_INDEX } from '@civ/core'
+import {
+  AGENT_MOTION_MAX_THROUGHPUT,
+  BUILDING_SLOT_SPARE,
+  DIVERGENCE_LABEL,
+  EVENT_TONE,
+  PURPOSE_INDEX,
+} from '@civ/core'
 import type { BuildingDetail, EventWire, Frame, Hello, Readouts, ScrubResult } from '@civ/protocol'
 import { FRAME_INTERVAL_MS } from '@civ/protocol'
 import { Raycaster, Scene, Vector2, Vector3, WebGLRenderer } from 'three'
@@ -48,7 +54,7 @@ const substrate = createSubstrateView(seed.substrate, HALF_EXTENT)
 scene.add(substrate.group)
 const env = createEnvironment(scene, { radius, groundY: substrate.groundY })
 
-const buildings = new BuildingRenderer(items, seed.buildings.length + 900)
+const buildings = new BuildingRenderer(items, seed.buildings.length + BUILDING_SLOT_SPARE)
 seed.buildings.forEach((b, i) => {
   const s = statics[i]
   buildings.data.setStatic(i, s.roofTone, s.jitter, s.era, s.agent)

@@ -38,6 +38,7 @@ export class BuildingRenderer {
 
   private slots = new Map<string, BuildingSlot>()
   private nextIndex: number
+  private warnedFull = false
 
   constructor(baseline: BatchItem[], capacity: number) {
     this.data = new BuildingDataTexture(Math.max(capacity, baseline.length))
@@ -95,9 +96,18 @@ export class BuildingRenderer {
 
     const index = this.nextIndex++
     if (index >= this.data.count) {
-      throw new Error(
-        `building data texture is full (${this.data.count}); raise the capacity passed to BuildingRenderer`,
-      )
+      // Throwing here fires once per new building, every frame, forever — which
+      // buries the cause under its own symptom. Say it once and keep drawing
+      // what is already standing.
+      if (!this.warnedFull) {
+        this.warnedFull = true
+        console.error(
+          `building data texture is full (${this.data.count}); raise BUILDING_SLOT_SPARE. ` +
+            'New structures will not appear until the season turns.',
+        )
+      }
+      this.nextIndex--
+      return this.slots.get(id)?.index ?? 0
     }
     this.slots.set(id, { id, index, batch: 'dynamic' })
     this.dynamicItems.push({ id: indexKey(index), mesh, baseY })
@@ -111,6 +121,7 @@ export class BuildingRenderer {
    * starts from the same ground the first one did rather than accumulating.
    */
   resetToBaseline(baselineCount: number): void {
+    this.warnedFull = false
     this.dynamicItems = []
     this.dynamicDirty = true
     for (const [id, slot] of this.slots) if (slot.index >= baselineCount) this.slots.delete(id)

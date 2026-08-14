@@ -1,4 +1,4 @@
-import { PURPOSE_INDEX, type Building, clamp01 } from '@civ/core'
+import { BUILDING_SLOT_SPARE, PURPOSE_INDEX, type Building, clamp01 } from '@civ/core'
 import type { WorldEvent } from '@civ/persistence'
 import type { AgentIdentity, AgentWire, EventWire, MaterialiseSpec, RoadEdgeWire } from '@civ/protocol'
 import type { Simulation } from '@civ/sim'
@@ -18,8 +18,9 @@ export class BuildingTexture {
   private readonly index = new Map<string, number>()
   private next: number
   private readonly baseline: number
+  private warnedFull = false
 
-  constructor(baselineIds: string[], spare = 900) {
+  constructor(baselineIds: string[], spare = BUILDING_SLOT_SPARE) {
     this.baseline = baselineIds.length
     this.bytes = new Uint8Array((baselineIds.length + spare) * 4)
     baselineIds.forEach((id, i) => this.index.set(id, i))
@@ -39,6 +40,19 @@ export class BuildingTexture {
     const old = this.index.get(id)
     if (old !== undefined && old < this.baseline) this.bytes[old * 4] = 0
     const slot = this.next++
+    /**
+     * Writing past a Uint8Array is silently dropped, so running out of slots
+     * here would look exactly like a world that had stopped changing — the
+     * §18.3 failure shape, on the server, where nobody would see it. Loud, and
+     * once.
+     */
+    if (slot * 4 + 3 >= this.bytes.length && !this.warnedFull) {
+      this.warnedFull = true
+      console.error(
+        `[texture] out of building slots at ${slot} of ${this.bytes.length >> 2}. ` +
+          'Updates past this point are dropped; raise BUILDING_SLOT_SPARE.',
+      )
+    }
     this.index.set(id, slot)
     return slot
   }
