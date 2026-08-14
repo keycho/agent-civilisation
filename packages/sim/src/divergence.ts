@@ -120,6 +120,30 @@ export interface EmergentDistrict {
 const CLUSTER_RADIUS_M = 55
 const CLUSTER_MIN = 7
 
+/**
+ * §23.6, found by watching rather than by measuring: the feed said "1094
+ * buildings changed within 55 m of each other" in a chunk that holds 925
+ * baseline buildings.
+ *
+ * The growth below is single-linkage — it chains transitively, so A near B and
+ * B near C puts A and C in one group however far apart they are. In continuous
+ * urban fabric almost every building has a neighbour inside 55 m, so once the
+ * agents had worked over enough of the city the whole touched set collapsed
+ * into a single "district" that was the city. The claim in the rationale was
+ * false as written, and the count exceeded the baseline stock because
+ * agent-built structures joined the same chain.
+ *
+ * §26.2 keeps the divergence index per district now that the global scalar is
+ * retired, so a district that is the whole chunk is not a cosmetic problem: it
+ * is the unit the headline is about to rest on.
+ *
+ * The bound is on extent, not on count. A district stays a connected cluster,
+ * but it may not span more than this, which is roughly two blocks of Schiedam
+ * and is about what the word has to mean at this scale. Anything larger is not
+ * one district however well connected it is.
+ */
+export const DISTRICT_SPAN_M = 220
+
 export function findDistricts(world: World): EmergentDistrict[] {
   const points: Array<{ id: string; x: number; y: number; w: number }> = []
   for (const b of world.buildings.values()) {
@@ -129,6 +153,7 @@ export function findDistricts(world: World): EmergentDistrict[] {
     points.push({ id: b.id, x: c[0], y: c[1], w })
   }
 
+  const reach = DISTRICT_SPAN_M / 2
   const seen = new Set<string>()
   const out: EmergentDistrict[] = []
   for (const p of points) {
@@ -142,7 +167,10 @@ export function findDistricts(world: World): EmergentDistrict[] {
       group.push(cur)
       for (const q of points) {
         if (seen.has(q.id)) continue
-        if (Math.hypot(q.x - cur.x, q.y - cur.y) <= CLUSTER_RADIUS_M) stack.push(q)
+        // connected to the growing edge, and still inside the seed's span
+        if (Math.hypot(q.x - cur.x, q.y - cur.y) > CLUSTER_RADIUS_M) continue
+        if (Math.hypot(q.x - p.x, q.y - p.y) > reach) continue
+        stack.push(q)
       }
     }
     if (group.length < CLUSTER_MIN) continue

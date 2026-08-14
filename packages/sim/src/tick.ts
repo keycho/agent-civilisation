@@ -12,7 +12,12 @@ import {
   recomputeYields,
 } from './economy.ts'
 import { type DecisionEngine, RuleBasedDecisionEngine, observe } from './engine.ts'
-import { type DivergenceReport, divergenceReport, findDistricts } from './divergence.ts'
+import {
+  DISTRICT_SPAN_M,
+  type DivergenceReport,
+  divergenceReport,
+  findDistricts,
+} from './divergence.ts'
 import {
   EFFORT_COST,
   type Agent,
@@ -395,7 +400,10 @@ export class Simulation {
         tick: w.tick,
         type: 'district_formed',
         cinematicWeight: BASE_CINEMATIC_WEIGHT.district_formed,
-        rationale: `${d.buildingIds.length} buildings changed within 55 m of each other`,
+        // §23.6: the old wording claimed every pair was within 55 m, which
+        // single-linkage growth never guaranteed. The bound that is actually
+        // enforced is the district's span.
+        rationale: `${d.buildingIds.length} buildings changed across the same ${DISTRICT_SPAN_M} m`,
         payload: {
           districtId: d.id,
           size: d.buildingIds.length,

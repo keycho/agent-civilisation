@@ -21,6 +21,7 @@ import { seedChecks, validateSeed } from '@civ/core'
 import {
   ALL_ACTION_KINDS,
   DECISION_BUDGET,
+  DISTRICT_SPAN_M,
   type Summary,
   jaccard,
   loadSeed,
@@ -645,6 +646,42 @@ assert(
   wide.length > 0 && entropyAtWide / wide.length > 0.25,
   'entropy survives where the decision was clear-cut',
   `${((entropyAtWide / Math.max(1, wide.length)) * 100).toFixed(0)}% of ${wide.length} wide-margin buildings`,
+)
+
+// ---------------------------------------------------------------------------
+// §23.6 / §26.2: emergent districts
+// ---------------------------------------------------------------------------
+
+const baselineStock = results[0].structural.buildingsTotal
+console.log('\n§26.2 emergent districts')
+console.log(
+  `  ${med2((x) => x.districts.count)} districts, median ${med2((x) => x.districts.medianSize)} buildings, ` +
+    `largest ${med2((x) => x.districts.largest)}`,
+)
+console.log(
+  `  widest extent ${med2((x) => x.districts.maxExtentM)} m against a ${DISTRICT_SPAN_M} m bound ` +
+    `(chunk holds ${baselineStock} baseline buildings)`,
+)
+/**
+ * Written against the specific falsehood the §23.6 watch turned up rather than
+ * against a round number: the feed said "1094 buildings changed within 55 m of
+ * each other" in a 925-building chunk. Single-linkage growth chained the whole
+ * touched set into one group, so the district that the cinematic director was
+ * pointing at was the city.
+ *
+ * Two assertions because they fail for different reasons. Extent catches the
+ * chaining directly. Size catches it even if the bound is later changed to
+ * something too loose to bite.
+ */
+assert(
+  med2((x) => x.districts.maxExtentM) <= DISTRICT_SPAN_M + 1,
+  `no district spans more than ${DISTRICT_SPAN_M} m`,
+  `${med2((x) => x.districts.maxExtentM)} m`,
+)
+assert(
+  med2((x) => x.districts.largest) < baselineStock * 0.25,
+  'the largest district is a district, not the chunk',
+  `${med2((x) => x.districts.largest)} of ${baselineStock}`,
 )
 
 console.log('\n§21.3 divergence-class entropy across seeds')

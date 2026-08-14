@@ -3,12 +3,21 @@
  * about. Shared by calibrate.ts (one seed, verbose) and tune.ts (N seeds,
  * distribution).
  */
-import { type SeedReport, type WorldSeed, distanceToSegment, validateSeed } from '@civ/core'
+import {
+  type SeedReport,
+  type WorldSeed,
+  centroid,
+  distanceToSegment,
+  validateSeed,
+} from '@civ/core'
 import { MemoryStore } from '@civ/persistence'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Simulation } from '../../src/index.ts'
+import { DISTRICT_SPAN_M, findDistricts } from '../../src/divergence.ts'
+
+export { DISTRICT_SPAN_M }
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
@@ -112,6 +121,14 @@ export interface Summary {
    */
   untouchedByPurpose: Record<string, { untouched: number; total: number }>
   correlations: { access: number; landValue: number; adjacency: number }
+  /**
+   * §23.6/§26.2: emergent districts, and how big they actually got. The feed
+   * claimed 1094 buildings in one district of a 925-building chunk, because
+   * single-linkage growth chained the whole touched set together. §26.2 retires
+   * the global scalar and keeps the index per district, so district extent is
+   * now a load-bearing quantity rather than a label on a feed line.
+   */
+  districts: { count: number; largest: number; medianSize: number; maxExtentM: number }
   /** structural canaries over the emitted artifact (§21.4) */
   structural: SeedReport
   curve: Array<{ decisions: number; index: number; agentOrigin: number; cleared: number; generation: number }>
@@ -330,7 +347,37 @@ export async function runSeed(
       adjacency: pearson(flags, degree),
     },
     structural: validateSeed(world),
+    districts: districtsOf(sim.world),
     curve,
+  }
+}
+
+/**
+ * §23.6/§26.2. Extent is measured off the buildings the district actually
+ * contains rather than off the constant that is supposed to bound them, so the
+ * canary in `tune.ts` is checking the result and not restating the input.
+ */
+function districtsOf(w: Parameters<typeof findDistricts>[0]) {
+  const ds = findDistricts(w)
+  const sizes = ds.map((d) => d.buildingIds.length).sort((a, b) => a - b)
+  let maxExtent = 0
+  for (const d of ds) {
+    const pts = d.buildingIds
+      .map((id) => w.buildings.get(id))
+      .filter((b): b is NonNullable<typeof b> => !!b)
+      .map((b) => centroid(b.footprint))
+    for (let i = 0; i < pts.length; i++) {
+      for (let j = i + 1; j < pts.length; j++) {
+        const e = Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1])
+        if (e > maxExtent) maxExtent = e
+      }
+    }
+  }
+  return {
+    count: ds.length,
+    largest: sizes.length ? sizes[sizes.length - 1] : 0,
+    medianSize: median(sizes),
+    maxExtentM: Math.round(maxExtent),
   }
 }
 
