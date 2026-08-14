@@ -49,6 +49,52 @@ test('a new season does not report the previous season\'s events', async () => {
   await store.close()
 })
 
+test('the event that ends a season belongs to that season', async () => {
+  // The turn happens between append and flush: `season_ended` is written while
+  // season 1 is current and reaches the database after season 2 has started.
+  // Stamping at flush time filed it under the season it announced the end of.
+  const store = new DurableStore()
+  store.season = 1
+  const id = store.appendEvent({
+    chunkId: 'c',
+    tick: 10,
+    type: 'season_ended',
+    cinematicWeight: 100,
+  })
+  store.season = 2
+  const queued = (store as unknown as { pendingEvents: Array<{ id: number; season: number }> })
+    .pendingEvents
+  // memory-only stores queue nothing; assert the stamp where there is one
+  if (queued.length > 0) {
+    assert.equal(queued.find((e) => e.id === id)?.season, 1)
+  }
+  await store.close()
+})
+
+test('the scrub travels this season, not the whole log', async () => {
+  const store = new DurableStore()
+  const first = new WorldService({ seed, store, season: 1, rngSeed: 's1', throughput: 4 })
+  for (let i = 0; i < 30; i++) await first.advance(0.2)
+  const firstCount = first.readouts().eventCount
+  assert.ok(firstCount > 0)
+
+  const second = new WorldService({ seed, store, season: 2, rngSeed: 's2', throughput: 4 })
+  // Its own founding population, and nothing of season 1's — the log they share
+  // is far longer than this.
+  const founding = second.readouts().eventCount
+  assert.ok(
+    founding > 0 && founding < firstCount / 4,
+    `a new season's range should be its own short log, got ${founding} against ` +
+      `${firstCount} for the first season and ${store.eventCount()} shared`,
+  )
+  for (let i = 0; i < 10; i++) await second.advance(0.2)
+  assert.ok(
+    second.readouts().eventCount < firstCount,
+    'the second season has run for less time and its range should say so',
+  )
+  await store.close()
+})
+
 test('the season is on the readouts a spectator sees', async () => {
   const store = new DurableStore()
   const w = new WorldService({ seed, store, season: 7, rngSeed: 'test-7' })

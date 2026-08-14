@@ -89,11 +89,18 @@ export class WorldService {
       snapshotEveryEvents: opts.snapshotEveryEvents ?? 350,
       onSnapshot: ({ ordinal, generation, report }) => {
         this.pump()
-        // §20.4: keyed on event ordinal. This is what the scrub later queries.
+        /**
+         * §20.4: keyed on event ordinal. This is what the scrub later queries.
+         *
+         * §22.3: the ordinal is season-local. The log is shared and its ids run
+         * on across seasons, but a spectator scrubs *this* season — so a slider
+         * whose range is the global count would spend most of its travel
+         * sitting on the season's first snapshot.
+         */
         this.store.putSnapshot({
           chunkId: this.chunkId,
           season: this.season,
-          ordinal,
+          ordinal: ordinal - this.firstEventId,
           generation,
           tick: this.sim.world.tick,
           buildingData: this.texture.bytes.slice(),
@@ -241,7 +248,8 @@ export class WorldService {
       demolished: r.demolished,
       tick: this.sim.world.tick,
       decisions: this.sim.decisionsIssued,
-      eventCount: this.store.eventCount(),
+      // §22.3: this season's log, which is what the scrub travels
+      eventCount: Math.max(0, this.store.eventCount() - this.firstEventId),
     }
   }
 

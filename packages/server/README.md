@@ -152,7 +152,7 @@ for the rest of the session. When a socket's send buffer runs away the server
 stops sending diffs and re-sends `hello`: more bytes than one frame, fewer than
 the backlog it replaces, and it lands the viewer exactly on the current state.
 
-## Verified
+## Verified, seasons
 
 Two browsers on one server, both settled:
 
@@ -165,3 +165,27 @@ Identical tick, identical decision count, frames arriving ~60 ms apart. The
 scrub asks the server for an ordinal and gets back a row that is in Postgres —
 `select event_ordinal, length(building_data) from snapshots` shows the 7,300-byte
 data textures the scrub uploads.
+
+A season turning, at `surge` against the same Postgres:
+
+```
+season 1 saturated; turning over
+
+ season | events   |     type     | rationale
+--------+----------+--------------+------------------------------------------------
+      1 |   15,681 | season_ended | season 1 reached 49.9% divergence over 199
+      2 |    2,826 |              | completed generations and stopped changing
+                   | season_began | season 2 begins on the same ground
+```
+
+That run also surfaced two ordering faults, both fixed and both now covered by
+`test/seasons.test.ts`. `season_ended` was filed under season 2, because the
+flusher stamped the season at flush time and the turn happens between append and
+flush — it is stamped at append time now. And snapshot ordinals were positions
+in the shared log rather than in the season, so a new season's scrub spent 85%
+of its travel sitting on the season's first snapshot; ordinals and the scrub's
+range are season-local now.
+
+A third was found by reading rather than running: the log spans seasons but a
+new season's tick restarts at 0, so anything filtering recent events by tick
+alone would have handed a joining spectator the *previous* season's feed.

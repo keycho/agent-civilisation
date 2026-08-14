@@ -152,9 +152,15 @@ assemble as "consolidate adjacent lots and redevelop at higher intensity", and
 consolidating *occupied* lots is the half the model cannot express.
 
 So the grain is largely frozen. 3% of agent-built structures stand on
-consolidated ground; the rest replace one building on one lot. The 1.55x
-footprint ratio is real grain change at the building scale — new structures
-cover half again as much of their lot — but the 1909 lot pattern survives.
+consolidated ground; the rest replace one building on one lot. That 3% is the
+generous reading — it counts any structure standing on more than one parcel,
+whether the parcels were gathered by `assemble` or one at a time by
+`acquire_parcel` — and it still fails.
+
+The 1.55x footprint ratio is real grain change at the building scale: new
+structures cover half again as much of their lot as what they replaced. But the
+1909 lot pattern survives, which is the thing §22.1 says decides whether the
+district thesis holds.
 
 **Churn (§22.1).** Also medians across 20 seeds:
 

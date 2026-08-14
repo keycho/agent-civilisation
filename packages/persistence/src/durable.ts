@@ -40,7 +40,13 @@ export class DurableStore implements WorldStore {
   private readonly memory = new MemoryStore()
   private readonly sql: Sql | null
   private readonly onError: (e: unknown) => void
-  private pendingEvents: WorldEvent[] = []
+  /**
+   * Queued with the season they were written in, not the one current at flush
+   * time. The event that *ends* a season is appended before the turn and
+   * flushed after it, so stamping at flush time filed it under the season it
+   * announced the end of.
+   */
+  private pendingEvents: Array<WorldEvent & { season: number }> = []
   private pendingSnapshots: Snapshot[] = []
   private timer: ReturnType<typeof setInterval> | null = null
   private flushing = false
@@ -56,8 +62,8 @@ export class DurableStore implements WorldStore {
    */
   readonly flushMs: number
   /**
-   * §22.3: stamped on everything written from here on. A season boundary is a
-   * new run of the same chunk, and the previous one stays queryable as history
+   * §22.3: stamped on each event as it is appended. A season boundary is a new
+   * run of the same chunk, and the previous one stays queryable as history
    * rather than being overwritten or thrown away.
    */
   season = 1
@@ -157,7 +163,7 @@ export class DurableStore implements WorldStore {
 
   appendEvent(e: Omit<WorldEvent, 'id'>): number {
     const id = this.memory.appendEvent(e)
-    if (this.sql) this.pendingEvents.push({ ...e, id } as WorldEvent)
+    if (this.sql) this.pendingEvents.push({ ...e, id, season: this.season } as WorldEvent & { season: number })
     return id
   }
 
@@ -286,7 +292,7 @@ export class DurableStore implements WorldStore {
         const chunk = events.slice(i, i + 500).map((e) => ({
           id: e.id,
           chunk_id: e.chunkId,
-          season: this.season,
+          season: e.season,
           tick: e.tick,
           type: e.type,
           agent_id: e.agentId ?? null,
