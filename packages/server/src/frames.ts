@@ -32,6 +32,19 @@ export class BuildingTexture {
   }
 
   /**
+   * §23.4: how much of the texture is spent, 0..1.
+   *
+   * 2,400 spare slots fixes the instance; the class stays open while the only
+   * thing that reclaims them is a season turn and the turn condition is
+   * saturation, which is soft. Any mechanism that makes more stock reachable
+   * lengthens a season — §23.2 and §23.3 both do — so pressure becomes a turn
+   * trigger of its own and the ceiling stops being reachable by construction.
+   */
+  get pressure(): number {
+    return this.next / (this.bytes.length >> 2)
+  }
+
+  /**
    * §16.2: a building that changes shape leaves the static baseline batch for
    * good and takes a new slot. The old one is set to progress 0, which sinks it
    * under the ground rather than leaving a ghost standing.
@@ -213,6 +226,16 @@ export function buildingDetail(sim: Simulation, id: string, history: WorldEvent[
     value: buildingValue(w, b),
     ownerName: owner?.name,
     ownerGeneration: owner?.generation,
+    // §23.1/§23.3: a name, a character and a stated objective — which is what
+    // makes an owner someone rather than a uuid
+    ownerTraits: owner
+      ? {
+          risk: +owner.traits.risk.toFixed(2),
+          horizon: +owner.traits.horizon.toFixed(2),
+          intensity: +owner.traits.intensity.toFixed(2),
+        }
+      : undefined,
+    ownerIntent: owner?.intent ? describeIntent(owner.intent) : undefined,
     baseline: baselineSeed
       ? { purpose: baselineSeed.purpose, levels: baselineSeed.levels, bagId: baselineSeed.bagId }
       : undefined,
@@ -224,6 +247,27 @@ export function buildingDetail(sim: Simulation, id: string, history: WorldEvent[
         const g = e.agentId ? w.agents.get(e.agentId)?.generation : undefined
         return { label: g ? `g${g}` : '·', text: e.rationale ?? e.type.replace(/_/g, ' ') }
       }),
+  }
+}
+
+/** §23.3: the objective, in words a spectator can read. */
+function describeIntent(i: {
+  kind: string
+  purpose?: string
+  buildingId?: string
+  parcelIds?: string[]
+}): string {
+  switch (i.kind) {
+    case 'convert':
+      return i.purpose ? `converting to ${i.purpose}` : 'converting'
+    case 'renovate':
+      return 'restoring it'
+    case 'redevelop':
+      return 'clearing the site to rebuild'
+    case 'assemble':
+      return `assembling ${i.parcelIds?.length ?? 0} lots`
+    default:
+      return i.kind
   }
 }
 

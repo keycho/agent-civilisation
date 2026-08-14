@@ -189,6 +189,10 @@ export interface BuildingDetail {
   value?: number
   ownerName?: string
   ownerGeneration?: number
+  /** §23.1: who the owner is, not just which archetype */
+  ownerTraits?: { risk: number; horizon: number; intensity: number }
+  /** §23.3: what the owner is currently trying to do with it */
+  ownerIntent?: string
   baseline?: { purpose: string; levels: number; bagId?: string }
   lineage: Array<{ label: string; text: string }>
   history: Array<{ label: string; text: string }>

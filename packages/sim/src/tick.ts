@@ -13,7 +13,15 @@ import {
 } from './economy.ts'
 import { type DecisionEngine, RuleBasedDecisionEngine, observe } from './engine.ts'
 import { type DivergenceReport, divergenceReport, findDistricts } from './divergence.ts'
-import { EFFORT_COST, type Agent, type Strategy, World, buildAdjacency } from './state.ts'
+import {
+  EFFORT_COST,
+  type Agent,
+  type Strategy,
+  World,
+  buildAdjacency,
+  inheritTraits,
+  rollTraits,
+} from './state.ts'
 
 /**
  * §20: the world evolves by agent action, not by elapsed time.
@@ -129,6 +137,9 @@ export class Simulation {
         debt: 0,
         peakDebt: 0,
         strategy: strategies[i % strategies.length],
+        // §23.1: who this one is, and the reason two neighbours with the same
+        // strategy do different things with the same building
+        traits: rollTraits(this.rng, strategies[i % strategies.length]),
         bornTick: 0,
         generation: 1,
         colourIndex: i % 12,
@@ -315,6 +326,9 @@ export class Simulation {
       capital: agent.capital * 0.82,
       debt: agent.debt,
       peakDebt: agent.debt,
+      // §23.1: recognisably its parent, and not identical to it
+      traits: inheritTraits(agent.traits, this.rng),
+      intent: undefined,
       bornTick: w.tick,
       diedTick: undefined,
       generation: agent.generation + 1,

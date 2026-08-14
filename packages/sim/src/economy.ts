@@ -51,6 +51,20 @@ export const ECONOMY = {
   /** premium a seller extracts over assessed value */
   acquisitionPremium: 0.12,
 
+  /**
+   * §23.3: transfer duty, paid by the buyer on top of the price.
+   *
+   * Build 4 measured 6.77 acquisitions per altered building and a worst case of
+   * fifteen trades. That is what a scoring function does when buying is free:
+   * there is no penalty for being wrong and no reward for holding, so it churns.
+   * Friction is most of what makes real holders hold.
+   *
+   * Not an invented number. Dutch overdrachtsbelasting on property that is not
+   * the buyer's own home is 10.4%, which is the rate that applies to every
+   * transaction an agent here makes, in the country this chunk is in.
+   */
+  transferDuty: 0.104,
+
   renovateCostPerM2: 0.34,
   convertCostPerM2: 0.55,
   expandCostPerM2: 2.0,
@@ -265,6 +279,27 @@ export function buildingValue(world: World, b: Building): number {
 
 export function acquisitionPrice(world: World, b: Building): number {
   return buildingValue(world, b) * (1 + ECONOMY.acquisitionPremium)
+}
+
+/**
+ * §23.2: what it costs to take a parcel, including whatever stands on it.
+ *
+ * `assemble` could only ever gather vacant land, which made §4's "consolidate
+ * adjacent lots and redevelop at higher intensity" structurally unbuildable —
+ * assemble -> demolish -> develop measured exactly 0, not merely rare. Buying
+ * the standing buildings is what the real transaction is, and it is a large
+ * capital gate that is probably self-limiting without any extra rule.
+ */
+export function parcelTakeoverPrice(world: World, p: Parcel): number {
+  const land = parcelPrice(world, p)
+  const b = p.buildingId ? world.buildings.get(p.buildingId) : undefined
+  const standing = b && b.state !== 'demolished' ? acquisitionPrice(world, b) : 0
+  return land + standing
+}
+
+/** §23.3: what a purchase actually costs, duty included. */
+export function withDuty(price: number): number {
+  return price * (1 + ECONOMY.transferDuty)
 }
 
 /** A rent stream expressed as a price, at the market's capitalisation rate. */

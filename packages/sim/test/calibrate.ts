@@ -69,7 +69,7 @@ console.log(
   `\nfinal: index ${(s.divergenceIndex * 100).toFixed(1)}%, ` +
     `touched ${(s.touchedShare * 100).toFixed(0)}%, ` +
     `${s.agentOrigin} agent-built, ${s.cleared} cleared, ` +
-    `generation ${s.generation}, ${s.generationsCompleted} completed`,
+    `generation ${s.generation} (deepest ${s.deepestLineage}), ${s.livesCompleted} lives completed`,
 )
 console.log(
   `leverage: ${s.leverage.withDebt}/${s.leverage.agents} agents carrying debt, ` +

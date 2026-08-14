@@ -24,18 +24,26 @@ import {
   developmentCost,
   expansionCost,
   parcelPrice,
+  parcelTakeoverPrice,
   receive,
   renovationCost,
   spend,
+  withDuty,
 } from './economy.ts'
-import { type Agent, type World, floorArea } from './state.ts'
+import { type Agent, type Intent, type World, floorArea } from './state.ts'
 
 /**
  * §4's action set. Everything an agent can do to the built environment.
  * `inspect` is not here — it is the observation, not a mutation.
  */
 export type AgentAction =
-  | { kind: 'acquire_building'; buildingId: string; rationale: string }
+  | {
+      kind: 'acquire_building'
+      buildingId: string
+      rationale: string
+      /** §23.3: the plan this purchase is for; the agent commits to it */
+      intent?: Intent
+    }
   | { kind: 'acquire_parcel'; parcelId: string; rationale: string }
   | { kind: 'renovate'; buildingId: string; rationale: string }
   | { kind: 'convert'; buildingId: string; to: Purpose; rationale: string }
@@ -48,7 +56,7 @@ export type AgentAction =
       levels: number
       rationale: string
     }
-  | { kind: 'assemble'; parcelIds: string[]; rationale: string }
+  | { kind: 'assemble'; parcelIds: string[]; rationale: string; intent?: Intent }
   | { kind: 'build_road'; parcelId: string; rationale: string }
 
 /**
@@ -92,6 +100,27 @@ function recordDecision(world: World, agent: Agent, action: ScoredAction): void 
     }
   }
 
+  // §23.3: a purchase commits the agent to what it bought the thing for
+  if ((action.kind === 'acquire_building' || action.kind === 'assemble') && action.intent) {
+    agent.intent = action.intent
+  }
+
+  /**
+   * §23.3: a plan that has been carried out is over. Clearing it is what lets
+   * the agent go shopping again — the commitment is a period of doing the thing
+   * rather than a cooling-off timer wearing a plan's clothes.
+   */
+  const i = agent.intent
+  if (i && i.kind !== 'assemble') {
+    const done =
+      (i.kind === 'convert' && action.kind === 'convert' && action.buildingId === i.buildingId) ||
+      (i.kind === 'renovate' && action.kind === 'renovate' && action.buildingId === i.buildingId) ||
+      (i.kind === 'redevelop' && action.kind === 'develop')
+    if (done) agent.intent = undefined
+  } else if (i && i.kind === 'assemble' && action.kind === 'develop') {
+    agent.intent = undefined
+  }
+
   // §22.2: churn per building
   if (action.kind === 'acquire_building') {
     world.acquisitionCount.set(
@@ -102,6 +131,16 @@ function recordDecision(world: World, agent: Agent, action: ScoredAction): void 
 
   // §22.1: the assemble chain, followed on the ground rather than in the log
   if (action.kind === 'assemble') {
+    /**
+     * §23.2's prediction, recorded so it can be tested rather than assumed:
+     * assembly should stay rare and concentrate where the land value gradient
+     * is steepest. If it goes common and flat across the chunk, the capital
+     * gate is not binding and the gradient is too weak.
+     */
+    const values = action.parcelIds
+      .map((id) => world.parcels.get(id)?.landValue ?? 0)
+      .filter((v) => v > 0)
+    const here = values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0
     world.assemblies.push({
       agentId: agent.id,
       parcelIds: [...action.parcelIds],
@@ -110,6 +149,11 @@ function recordDecision(world: World, agent: Agent, action: ScoredAction): void 
       developedAfter: false,
       baselineAreaM2: action.parcelIds.reduce((sum, id) => sum + baselineAreaOf(world, id), 0),
       builtAreaM2: 0,
+      landValueRatio: here / Math.max(1e-9, medianLandValue(world)),
+      occupiedCount: action.parcelIds.filter((id) => {
+        const b = world.parcels.get(id)?.buildingId
+        return !!b && !!world.standing(b)
+      }).length,
     })
   }
   if (action.kind === 'demolish') {
@@ -140,6 +184,15 @@ function sameHolding(a: string, b: string): boolean {
   return a === b || a.startsWith(`${b}-g`) || b.startsWith(`${a}-g`)
 }
 
+/** The chunk's median parcel land value right now, for the ratio above. */
+function medianLandValue(world: World): number {
+  const vs: number[] = []
+  for (const p of world.parcels.values()) vs.push(p.landValue)
+  if (vs.length === 0) return 1
+  vs.sort((a, b) => a - b)
+  return vs[vs.length >> 1]
+}
+
 /** Baseline floor area that stood on a parcel at day 0, from the seed. */
 function baselineAreaOf(world: World, parcelId: string): number {
   return world.baselineAreaByParcel.get(parcelId) ?? 0
@@ -148,7 +201,7 @@ function baselineAreaOf(world: World, parcelId: string): number {
 function dispatch(world: World, agent: Agent, action: ScoredAction): ActionOutcome {
   switch (action.kind) {
     case 'acquire_building':
-      return acquireBuilding(world, agent, action.buildingId, action.rationale)
+      return acquireBuilding(world, agent, action.buildingId, action.rationale, action.intent)
     case 'acquire_parcel':
       return acquireParcel(world, agent, action.parcelId, action.rationale)
     case 'renovate':
@@ -221,13 +274,17 @@ function acquireBuilding(
   agent: Agent,
   buildingId: string,
   rationale: string,
+  intent?: Intent,
 ): ActionOutcome {
   const b = world.standing(buildingId)
   if (!b) return { ok: false, reason: 'gone' }
   if (b.ownerId === agent.id) return { ok: false, reason: 'already owned' }
   const price = acquisitionPrice(world, b)
+  // §23.3: duty is a cost to the buyer and not income to the seller. It leaves
+  // the economy, which is exactly why it makes holding rational.
+  const cost = withDuty(price)
   const seller = b.ownerId ? world.agents.get(b.ownerId) : undefined
-  if (!spend(world, agent, price)) return { ok: false, reason: 'insufficient capital' }
+  if (!spend(world, agent, cost)) return { ok: false, reason: 'insufficient capital' }
   if (seller) {
     receive(seller, price)
     seller.holdings.delete(b.id)
@@ -250,9 +307,18 @@ function acquireBuilding(
     building: b,
     parcelId: parcel?.id,
     rationale,
-    payload: { price: round(price), from: seller?.name ?? 'unowned' },
+    payload: {
+      price: round(price),
+      duty: round(cost - price),
+      from: seller?.name ?? 'unowned',
+      // §21.1's mechanism, recorded as data rather than inferred from the
+      // rationale text. §23.3 rewrote those strings and the string-matching
+      // counter silently read zero — a measurement that breaks quietly is the
+      // §18.3 failure shape pointed at the instruments instead of the model.
+      intent: intent?.kind,
+    },
   })
-  return { ok: true, spent: price }
+  return { ok: true, spent: cost }
 }
 
 function acquireParcel(
@@ -266,8 +332,9 @@ function acquireParcel(
   if (p.ownerId === agent.id) return { ok: false, reason: 'already owned' }
   if (!p.developable) return { ok: false, reason: 'undevelopable' }
   const price = parcelPrice(world, p)
+  const cost = withDuty(price)
   const seller = p.ownerId ? world.agents.get(p.ownerId) : undefined
-  if (!spend(world, agent, price)) return { ok: false, reason: 'insufficient capital' }
+  if (!spend(world, agent, cost)) return { ok: false, reason: 'insufficient capital' }
   if (seller) {
     receive(seller, price)
     seller.parcels.delete(p.id)
@@ -279,9 +346,9 @@ function acquireParcel(
     agent,
     parcelId: p.id,
     rationale,
-    payload: { price: round(price), areaM2: round(p.areaM2) },
+    payload: { price: round(price), duty: round(cost - price), areaM2: round(p.areaM2) },
   })
-  return { ok: true, spent: price }
+  return { ok: true, spent: cost }
 }
 
 /**
@@ -298,25 +365,42 @@ function assemble(
   const parcels = parcelIds.map((id) => world.parcels.get(id)).filter(Boolean) as Parcel[]
   if (parcels.length < 2) return { ok: false, reason: 'nothing to assemble' }
 
+  /**
+   * §23.2: assembling occupied ground means buying what stands on it. The whole
+   * takeover is priced before anything is committed, because half an assembly
+   * is worse than none — an agent that buys two of three lots and runs out of
+   * capital has spent the money and changed nothing.
+   */
   let total = 0
   for (const p of parcels) {
-    if (p.ownerId !== agent.id) total += parcelPrice(world, p)
+    if (p.ownerId === agent.id) continue
+    total += withDuty(parcelTakeoverPrice(world, p))
   }
   if (availableFunds(world, agent) < total) return { ok: false, reason: 'insufficient capital' }
 
+  let occupied = 0
   for (const p of parcels) {
     if (p.ownerId === agent.id) continue
-    const r = acquireParcel(world, agent, p.id, rationale)
-    if (!r.ok) return r
+    const standing = p.buildingId ? world.standing(p.buildingId) : undefined
+    if (standing && standing.ownerId !== agent.id) {
+      const bought = acquireBuilding(world, agent, standing.id, rationale)
+      if (!bought.ok) return bought
+      occupied++
+    }
+    if (world.parcels.get(p.id)?.ownerId !== agent.id) {
+      const r = acquireParcel(world, agent, p.id, rationale)
+      if (!r.ok) return r
+    }
   }
 
   emit(world, 'parcels_assembled', {
     agent,
     parcelId: parcels[0].id,
-    extraWeight: Math.min(30, parcels.length * 8),
+    extraWeight: Math.min(40, parcels.length * 8 + occupied * 6),
     rationale,
     payload: {
       count: parcels.length,
+      occupied,
       areaM2: round(parcels.reduce((s, p) => s + p.areaM2, 0)),
       parcelIds: parcels.map((p) => p.id),
     },

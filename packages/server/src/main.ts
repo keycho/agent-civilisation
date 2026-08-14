@@ -74,8 +74,8 @@ function newSeason(season: number): WorldService {
     throughput: THROUGHPUT_INDEX,
     season,
     rngSeed: `${RNG_SEED}-${season}`,
-    onSaturated: (ended) => {
-      console.log(`\nseason ${ended} saturated; turning over`)
+    onSaturated: (ended, reason) => {
+      console.log(`\nseason ${ended} ended on ${reason}; turning over`)
       turnSeason(ended + 1)
     },
   })
@@ -139,6 +139,8 @@ const http = createServer((req, res) => {
         flushMs: store.flushMs,
         lag: store.lag,
         retainSeasons: RETAIN_SEASONS,
+        /** §23.4: how close the season is to turning on pressure rather than saturation */
+        slotPressure: +world.texture.pressure.toFixed(3),
         /**
          * §22.4: "the tick loop is a long-running process and must not be
          * treated as a request handler." Nothing here can prove the host is

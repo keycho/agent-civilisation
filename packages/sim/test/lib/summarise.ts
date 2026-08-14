@@ -24,6 +24,9 @@ const HERE = dirname(fileURLToPath(import.meta.url))
  *                      (34.6% / 135 agent-built / 85 cleared) was reached
  *   build 3   65,000   the plateau of the model that has site value and a
  *                      capital constraint in it
+ *   build 4   80,000   the plateau of the model that has traits and argmax
+ *                      (§23.1), assembly on occupied lots (§23.2) and
+ *                      transaction cost with intent (§23.3) in it
  *
  * The build-3 rule was written into calibrate.ts before the number was read,
  * and it names no target: the first point past which the index gains under 1pp
@@ -31,15 +34,17 @@ const HERE = dirname(fileURLToPath(import.meta.url))
  * 5,000 decisions. All three together, because a flat index can hide
  * construction still finishing. Measured at 64,894 on one seed.
  *
- * The larger budget is not the model being slower. It is ~40% more stock being
- * reachable and every purchase now competing for finite credit, so the same
- * world takes more decisions to arrive at.
+ * The budget grows each time for the same reason: more of the world is reachable,
+ * so arriving at it takes more decisions. Build 4's rise is smaller than build
+ * 3's despite three mechanisms landing, because argmax made agents decisive —
+ * they stopped discarding their best move two times in three — and that pulls
+ * the other way.
  *
  * It is not adjusted until the assertions pass. Tuning the budget to hit a
  * target is precisely the hill-climb error §18 exists to catch, so this number
  * does not move. One recalibration, not an iterative approach to a target.
  */
-export const DECISION_BUDGET = 65_000
+export const DECISION_BUDGET = 80_000
 
 export const ALL_ACTION_KINDS = [
   'acquire_building',
@@ -63,7 +68,9 @@ export interface Summary {
   agentOrigin: number
   cleared: number
   generation: number
-  generationsCompleted: number
+  /** §23.5: agent lifetimes ended, not generations */
+  livesCompleted: number
+  deepestLineage: number
   events: number
   actionCounts: Record<string, number>
   eventCounts: Record<string, number>
@@ -135,6 +142,17 @@ export interface GrainReport {
   medianFootprintRatio: number
   /** the same ratio over every agent-built structure with a baseline under it */
   medianFootprintRatioAll: number
+  /**
+   * §23.2's prediction. Land value where assemblies happen, against the chunk
+   * median. Above 1 and concentrated means the capital gate is binding and the
+   * gradient is doing the selecting; near 1 and flat means it is not.
+   */
+  assemblyLandValueRatio: number
+  assemblyLandValueP90: number
+  /** share of applied actions that were assemblies — "rare in count" */
+  assemblyShareOfActions: number
+  /** lots taken with something standing on them, per assembly */
+  medianOccupiedPerAssembly: number
 }
 
 /**
@@ -199,7 +217,10 @@ export async function runSeed(
   let siteLedAcquisitions = 0
   for (const e of store.events({ limit: 1e9 })) {
     eventCounts[e.type] = (eventCounts[e.type] ?? 0) + 1
-    if (e.type === 'building_acquired' && (e.rationale ?? '').startsWith('site is worth')) {
+    // §23.3 rewrote the rationale strings and this counter, which matched on
+    // one, silently read zero for a whole calibration run. It reads the payload
+    // now: a measurement that depends on prose is not a measurement.
+    if (e.type === 'building_acquired' && e.payload?.intent === 'redevelop') {
       siteLedAcquisitions++
     }
   }
@@ -272,7 +293,8 @@ export async function runSeed(
     agentOrigin: r.agentOrigin,
     cleared: r.demolished,
     generation: w.generation,
-    generationsCompleted: w.generationsCompleted,
+    livesCompleted: w.livesCompleted,
+    deepestLineage: w.deepestLineage,
     events: store.eventCount(),
     actionCounts,
     eventCounts,
@@ -283,7 +305,12 @@ export async function runSeed(
       Math.max(...ALL_ACTION_KINDS.map((k) => actionCounts[k])) /
       Math.max(1, ALL_ACTION_KINDS.reduce((sum, k) => sum + actionCounts[k], 0)),
     leverage: leverageOf(w),
-    grain: grainOf(w),
+    grain: {
+      ...grainOf(w),
+      assemblyShareOfActions:
+        actionCounts.assemble /
+        Math.max(1, ALL_ACTION_KINDS.reduce((sum, k) => sum + actionCounts[k], 0)),
+    },
     churn: churnOf(w, actionCounts.acquire_building),
     untouchedIds,
     divergenceByBuilding,
@@ -335,6 +362,8 @@ function grainOf(w: {
     parcelIds: string[]
     clearedAfter: boolean
     developedAfter: boolean
+    landValueRatio: number
+    occupiedCount: number
   }>
   buildings: Map<string, { source: string; state: string; areaM2: number; builtOnParcels?: string[] }>
   baselineAreaByParcel: Map<string, number>
@@ -369,6 +398,10 @@ function grainOf(w: {
     agentBuiltMultiParcel: multi,
     medianFootprintRatio: median(multiRatios),
     medianFootprintRatioAll: median(ratios),
+    assemblyLandValueRatio: median(a.map((x) => x.landValueRatio)),
+    assemblyLandValueP90: percentile(a.map((x) => x.landValueRatio), 0.9),
+    assemblyShareOfActions: 0, // filled by the caller, which knows the totals
+    medianOccupiedPerAssembly: median(a.map((x) => x.occupiedCount)),
   }
 }
 

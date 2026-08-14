@@ -15,13 +15,15 @@ import {
   expansionCost,
   normalisedIntensity,
   parcelPrice,
+  parcelTakeoverPrice,
   paybackWindows,
   portfolioValue,
   renovationCost,
   renovationUplift,
+  withDuty,
   yieldPerTick,
 } from './economy.ts'
-import { type Agent, type MemoryEntry, type World, floorArea } from './state.ts'
+import { type Agent, type Intent, type MemoryEntry, type World, floorArea } from './state.ts'
 
 /**
  * §9. Async, may return null, carries a rationale on the action.
@@ -51,6 +53,8 @@ export interface ParcelRef {
   accessScore: number
   landValue: number
   price: number
+  /** §23.2: price including any standing building, which assembly must pay */
+  takeoverPrice: number
   developable: boolean
   hasBuilding: boolean
   ownedBySelf: boolean
@@ -66,6 +70,15 @@ export interface Observation {
     creditAvailable: number
     portfolioValue: number
     strategy: string
+    /**
+     * §23.1: who this agent is. An LLM engine given a personality is doing the
+     * same thing the rule engine does with more nuance, against the same
+     * scoring surface — which is what makes the §9 swap continuous rather than
+     * a replacement.
+     */
+    traits: { risk: number; horizon: number; intensity: number; purpose: Record<string, number> }
+    /** §23.3: the plan this agent is committed to, if any */
+    intent?: { kind: string; purpose?: string; buildingId?: string; expiresIn: number }
     holdingCount: number
     /** internal ordering key, never rendered (§20.2) */
     tick: number
@@ -160,6 +173,20 @@ export function observe(world: World, agent: Agent): Observation {
       creditAvailable: creditHeadroom(world, agent),
       portfolioValue: portfolioValue(world, agent),
       strategy: agent.strategy,
+      traits: {
+        risk: agent.traits.risk,
+        horizon: agent.traits.horizon,
+        intensity: agent.traits.intensity,
+        purpose: agent.traits.purpose as Record<string, number>,
+      },
+      intent: agent.intent
+        ? {
+            kind: agent.intent.kind,
+            purpose: agent.intent.purpose,
+            buildingId: agent.intent.buildingId,
+            expiresIn: Math.max(0, agent.intent.expiresTick - world.tick),
+          }
+        : undefined,
       holdingCount: agent.holdings.size,
       tick: world.tick,
       generation: agent.generation,
@@ -204,6 +231,8 @@ function parcelRef(world: World, p: Parcel, agent: Agent): ParcelRef {
     accessScore: p.accessScore,
     landValue: p.landValue,
     price: parcelPrice(world, p),
+    /** §23.2: land plus whatever stands on it — what taking this lot costs */
+    takeoverPrice: parcelTakeoverPrice(world, p),
     developable: p.developable,
     hasBuilding: !!(p.buildingId && world.standing(p.buildingId)),
     ownedBySelf: p.ownerId === agent.id,
@@ -269,11 +298,19 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
 
   async decide(obs: Observation, world: World, agent: Agent): Promise<ScoredAction | null> {
     const options: Scored[] = []
-    const s = STRATEGY[agent.strategy]
+    // §23.1: this agent's weights, not its archetype's
+    const s = weightsFor(agent)
     // §21.1: what an agent can commit is cash plus undrawn credit, and credit
-    // is secured against the portfolio. Every affordability test below reads
-    // this one number.
-    const funds = availableFunds(world, agent)
+    // is secured against the portfolio. §23.1: how far into that credit it will
+    // reach is a trait.
+    const funds = usableFunds(world, agent)
+    /**
+     * §23.3: an agent that has bought something for a reason is committed to it
+     * and is not shopping. This is what kills churn structurally — 6.77 trades
+     * per alteration was a scoring function with nothing holding it to a plan —
+     * rather than by making buying expensive and hoping.
+     */
+    const shopping = !committed(world, agent)
 
     // -- improve what is already owned
     for (const h of obs.holdings) {
@@ -295,7 +332,7 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
         }
       }
 
-      const best = bestConversion(world, b)
+      const best = bestConversion(world, b, agent)
       if (best && conversionCost(b) <= funds) {
         const payback = paybackWindows(conversionCost(b), best.uplift)
         if (payback < s.maxPayback) {
@@ -392,6 +429,23 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
     if (ownedVacant.length > 0) {
       const cluster = clusterOwned(world, agent, ownedVacant.map((p) => p.id))
       for (const group of cluster) {
+        /**
+         * §23.2/§23.3: do not build on a third of an assembly.
+         *
+         * An agent that assembles three lots and develops the first one it
+         * clears has spent the assembly and got a single-lot building — which
+         * is why 218 assemblies produced one multi-parcel structure. The plan
+         * is the site, so the site waits until it is clear.
+         */
+        const plan = agent.intent
+        if (plan?.kind === 'assemble' && committed(world, agent) && plan.parcelIds) {
+          const overlaps = group.some((id) => plan.parcelIds?.includes(id))
+          const stillStanding = plan.parcelIds.some((id) => {
+            const p = world.parcels.get(id)
+            return !!p?.buildingId && !!world.standing(p.buildingId)
+          })
+          if (overlaps && stillStanding) continue
+        }
         const parcels = group.map((id) => world.parcels.get(id)!).filter(Boolean)
         const footprint = developableFootprint(parcels)
         if (!footprint) continue
@@ -399,7 +453,7 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
         const levels = chooseLevels(obs.neighbourhood.intensity, s.intensityAppetite)
         const cost = developmentCost(area, levels)
         if (cost > funds) continue
-        const purpose = choosePurpose(world, parcels[0], obs.neighbourhood.intensity)
+        const purpose = choosePurpose(world, parcels[0], obs.neighbourhood.intensity, agent)
         const uplift =
           (area * levels * (ECONOMY.rentPerM2[purpose] ?? 0.1) * 1.1) / RATE_WINDOW_TICKS
         const payback = paybackWindows(cost, uplift)
@@ -421,29 +475,48 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
     }
 
     // -- assemble adjacent land
+    /**
+     * §23.2: assembly can gather occupied lots now.
+     *
+     * The filter used to drop anything with a building on it, which meant
+     * assemble -> demolish -> develop was structurally impossible rather than
+     * rare — there was never anything standing on assembled ground to clear.
+     * The cost of taking an occupied lot includes buying the building, which is
+     * the real transaction and a large capital gate.
+     */
     const assemblable = obs.candidates.adjacentToHoldings.filter((p) => {
-      if (p.hasBuilding || !p.developable || p.ownedBySelf) return false
+      if (!p.developable || p.ownedBySelf) return false
       const traded = world.lastTransfer.get(p.id)
       return traded === undefined || world.tick - traded >= RESALE_LOCK_TICKS
     })
-    if (assemblable.length >= 1 && agent.parcels.size >= 1) {
+    if (shopping && assemblable.length >= 1 && agent.parcels.size >= 1) {
       const affordable = assemblable
-        .filter((p) => p.price <= funds)
-        .sort((a, b) => b.areaM2 / b.price - a.areaM2 / a.price)
+        .filter((p) => withDuty(p.takeoverPrice) <= funds)
+        .sort((a, b) => b.areaM2 / b.takeoverPrice - a.areaM2 / a.takeoverPrice)
         .slice(0, 3)
       if (affordable.length >= 2) {
-        const total = affordable.reduce((sum, p) => sum + p.price, 0)
+        const total = affordable.reduce((sum, p) => sum + withDuty(p.takeoverPrice), 0)
         if (total <= funds) {
+          const occupied = affordable.filter((p) => p.hasBuilding).length
           options.push({
             action: {
               kind: 'assemble',
               parcelIds: affordable.map((p) => p.id),
-              rationale: `consolidating ${affordable.length} adjacent lots`,
+              rationale: occupied
+                ? `assembling ${affordable.length} adjacent lots, clearing ${occupied}`
+                : `consolidating ${affordable.length} adjacent lots`,
+              intent: {
+                kind: 'assemble',
+                parcelIds: affordable.map((p) => p.id),
+                value: total,
+                setTick: world.tick,
+                expiresTick: world.tick + INTENT_TICKS,
+              },
             },
             score: s.assemble * affordable.length * (0.7 + obs.neighbourhood.intensity),
           })
         }
-      } else if (affordable.length === 1) {
+      } else if (affordable.length === 1 && !affordable[0].hasBuilding) {
         options.push({
           action: {
             kind: 'acquire_parcel',
@@ -473,7 +546,7 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
     }
 
     // -- acquire
-    for (const cand of obs.candidates.forSale) {
+    for (const cand of shopping ? obs.candidates.forSale : []) {
       const b = world.standing(cand.id)
       if (!b) continue
       if (b.state !== 'standing') continue
@@ -483,7 +556,7 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
       if (traded !== undefined && world.tick - traded < RESALE_LOCK_TICKS) continue
 
       const price = acquisitionPrice(world, b)
-      if (price > funds) continue
+      if (withDuty(price) > funds) continue
 
       /**
        * §21.1. A building is worth the better of what it earns and what its
@@ -510,6 +583,10 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
       const annual = Math.max(incomeAnnual, site * ECONOMY.capRate)
       const cap = annual / Math.max(1, price)
       const forSite = site * ECONOMY.capRate > incomeAnnual
+      // §23.3: what this purchase is *for*. Scoring a buy independently of what
+      // follows makes it a terminal action, and a scoring function with a
+      // terminal buy churns.
+      const plan = planFor(world, agent, b, s, forSite)
 
       // §9: adjacency is weighted above yield, which is what consolidates blocks
       const adjacent = b.parcelId ? isAdjacentToHoldings(world, agent, b.parcelId) : false
@@ -521,11 +598,10 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
         action: {
           kind: 'acquire_building',
           buildingId: b.id,
-          rationale: forSite
-            ? `site is worth ${(site / Math.max(1, price)).toFixed(1)}x the ${b.purpose} on it`
-            : adjacent
-              ? `adjacent to holdings, ${(cap * 100).toFixed(1)}% yield`
-              : `${(cap * 100).toFixed(1)}% yield on ${price.toFixed(0)}`,
+          // §23.3: "acquiring 14 Havenstraat to convert to retail" and then
+          // doing it is legible in a way that buying and shrugging is not.
+          rationale: planRationale(plan, b, cap, price, adjacent),
+          intent: plan,
         },
         score: s.acquire * cap * 12 * upside * fromAgent * (adjacent ? s.adjacencyBonus : 1),
       })
@@ -534,9 +610,9 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
     // -- buy land to build on. Vacant lots are rarely adjacent to what an agent
     // already owns in fabric this dense, so without this branch `develop`,
     // `assemble` and `build_road` are all unreachable.
-    for (const p of obs.candidates.vacantParcels) {
+    for (const p of shopping ? obs.candidates.vacantParcels : []) {
       if (p.ownedBySelf || p.hasBuilding || !p.developable) continue
-      if (p.price > funds * 0.6) continue
+      if (withDuty(p.price) > funds * 0.6) continue
       const parcel = world.parcels.get(p.id)
       if (!parcel) continue
       const lastTraded = world.lastTransfer.get(p.id)
@@ -545,7 +621,7 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
       if (parcel.ownerId && !isAdjacentToHoldings(world, agent, p.id)) continue
       const potential = developPotential(world, agent, parcel, obs.neighbourhood.intensity, s)
       if (!potential) continue
-      const payback = paybackWindows(p.price + potential.cost, potential.yieldPerTick)
+      const payback = paybackWindows(withDuty(p.price) + potential.cost, potential.yieldPerTick)
       if (payback > s.maxPayback * 1.6) continue
       const adjacent = isAdjacentToHoldings(world, agent, p.id)
       options.push({
@@ -559,11 +635,30 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
       })
     }
 
+    /**
+     * §23.3: the plan pulls. Blocking further shopping stops churn; this is
+     * what makes the commitment mean something — an agent that bought a
+     * warehouse to convert it gets on with converting it rather than drifting
+     * into whatever scored highest this tick.
+     */
+    if (agent.intent && committed(world, agent)) {
+      for (const o of options) if (servesIntent(o.action, agent.intent)) o.score *= INTENT_PULL
+    }
+
     if (options.length === 0) return null
     options.sort((a, b) => b.score - a.score)
-    // a little noise so identical agents do not converge on identical moves
-    const top = options.slice(0, 3)
-    const pick = top[Math.floor(world.rng() * top.length)]
+    /**
+     * §23.1: argmax, not sampling.
+     *
+     * Build 4 took a uniform pick over the top three, which above a 0.25 margin
+     * discarded a materially better move two times in three — variety by
+     * deliberate error. Variety comes from `weightsFor` now, and what is left
+     * here is a band narrow enough that a clear-cut decision is never
+     * overturned: at 4%, an option 25% behind can never win.
+     */
+    const best = options[0].score
+    const band = options.filter((o) => o.score >= best * (1 - TIE_BAND))
+    const pick = band.length === 1 ? band[0] : band[Math.floor(world.rng() * band.length)]
     if (pick.score <= s.threshold) return null
     /**
      * §22.2: how much better the best option was than the runner-up, as a
@@ -613,6 +708,43 @@ interface StrategyWeights {
   maxPayback: number
   intensityAppetite: number
   threshold: number
+}
+
+/**
+ * §23.1: the archetype, then the individual.
+ *
+ * Strategy stays the coarse type — it is what the marker colour reads and what
+ * "recognise a recurring character" hangs on. Traits bend the weights within
+ * it, so two developers are both developers and one of them is reckless. Every
+ * term below is a trait doing something a viewer could name: a patient agent
+ * accepts a longer payback, a risk-taker clears standing stock and levers up,
+ * a cautious one renovates what it has.
+ */
+function weightsFor(agent: Agent): StrategyWeights {
+  const base = STRATEGY[agent.strategy]
+  const t = agent.traits
+  return {
+    ...base,
+    maxPayback: base.maxPayback * (0.6 + 0.8 * t.horizon),
+    renovate: base.renovate * (1.4 - 0.7 * t.risk),
+    demolish: base.demolish * (0.4 + 1.3 * t.risk),
+    develop: base.develop * (0.6 + 0.9 * t.risk),
+    assemble: base.assemble * (0.5 + 1.1 * t.risk),
+    intensityAppetite: base.intensityAppetite * (0.55 + 0.9 * t.intensity),
+  }
+}
+
+/**
+ * §23.1: how much of its credit line an agent will actually reach for. The
+ * facility is the same for everyone; the willingness to draw it is not.
+ */
+function usableFunds(world: World, agent: Agent): number {
+  return agent.capital + creditHeadroom(world, agent) * (0.3 + 0.7 * agent.traits.risk)
+}
+
+/** A trait's opinion of a purpose, as a multiplier on anything it would earn. */
+function purposeBias(agent: Agent, purpose: Purpose): number {
+  return agent.traits.purpose[purpose] ?? 1
 }
 
 const STRATEGY: Record<string, StrategyWeights> = {
@@ -675,12 +807,112 @@ const STRATEGY: Record<string, StrategyWeights> = {
 }
 
 // ---------------------------------------------------------------------------
+// §23.3 intent
+// ---------------------------------------------------------------------------
+
+/** How long an agent stays committed to the plan it bought for, in ticks. */
+const INTENT_TICKS = 365
+
+/**
+ * How hard the plan pulls. Large enough to win against ordinary alternatives,
+ * finite so that an agent whose plan has become absurd — the market moved, the
+ * building burned through its condition — is not trapped in it forever.
+ */
+const INTENT_PULL = 2.5
+
+/**
+ * The best thing this agent could do with a building it does not yet own. The
+ * purchase is scored by the plan, the agent is committed to the plan, and the
+ * commitment is what stops the next decision being another purchase.
+ */
+function planFor(
+  world: World,
+  agent: Agent,
+  b: Building,
+  s: StrategyWeights,
+  forSite: boolean,
+): Intent {
+  const at = world.tick
+  const base = { setTick: at, expiresTick: at + INTENT_TICKS, buildingId: b.id }
+  if (forSite) {
+    return { ...base, kind: 'redevelop', value: siteValue(world, agent, b, s) }
+  }
+  const conversion = bestConversion(world, b, agent)
+  const renovation = b.condition < 0.82 ? renovationUplift(world, b) : 0
+  if (conversion && conversion.uplift >= renovation) {
+    return { ...base, kind: 'convert', purpose: conversion.purpose, value: conversion.uplift }
+  }
+  if (renovation > 0) return { ...base, kind: 'renovate', value: renovation }
+  // nothing to do with it beyond holding it; `convert` is the loosest plan and
+  // it still commits, which is the point
+  return { ...base, kind: 'convert', purpose: b.purpose, value: 0 }
+}
+
+function planRationale(
+  plan: Intent,
+  b: Building,
+  cap: number,
+  price: number,
+  adjacent: boolean,
+): string {
+  const where = b.name ?? `the ${b.purpose}`
+  switch (plan.kind) {
+    case 'redevelop':
+      return `buying ${where} to clear and rebuild the site`
+    case 'renovate':
+      return `buying ${where} to restore it`
+    case 'convert':
+      return plan.purpose && plan.purpose !== b.purpose
+        ? `buying ${where} to convert to ${plan.purpose}`
+        : adjacent
+          ? `buying ${where}, adjacent to holdings, ${(cap * 100).toFixed(1)}% yield`
+          : `buying ${where} at ${(cap * 100).toFixed(1)}% yield on ${price.toFixed(0)}`
+    default:
+      return `buying ${where}`
+  }
+}
+
+/** Does this action carry out the plan the agent committed to? */
+function servesIntent(action: AgentAction, intent: Intent): boolean {
+  switch (intent.kind) {
+    case 'convert':
+      return action.kind === 'convert' && action.buildingId === intent.buildingId
+    case 'renovate':
+      return action.kind === 'renovate' && action.buildingId === intent.buildingId
+    case 'redevelop':
+      return (
+        (action.kind === 'demolish' && action.buildingId === intent.buildingId) ||
+        (action.kind === 'develop' &&
+          !!intent.buildingId &&
+          action.parcelIds.length > 0)
+      )
+    case 'assemble':
+      return (
+        (action.kind === 'develop' || action.kind === 'demolish') &&
+        (action.kind === 'demolish' ||
+          action.parcelIds.some((id) => intent.parcelIds?.includes(id)))
+      )
+  }
+}
+
+/** §23.3: an agent with a live plan is not in the market. */
+function committed(world: World, agent: Agent): boolean {
+  const i = agent.intent
+  if (!i) return false
+  if (world.tick >= i.expiresTick) return false
+  // a plan whose subject is gone is not a plan
+  if (i.buildingId && !world.standing(i.buildingId)) return false
+  return true
+}
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 
 function bestConversion(
   world: World,
   b: Building,
+  agent: Agent,
 ): { purpose: Purpose; uplift: number } | null {
   if (b.purpose === 'civic') return null
   const targets: Purpose[] = ['residential', 'retail', 'commercial', 'office']
@@ -688,7 +920,10 @@ function bestConversion(
   for (const t of targets) {
     if (t === b.purpose) continue
     const uplift = yieldPerTick(world, { ...b, purpose: t, condition: Math.max(b.condition, 0.85) }) - b.yieldPerTick
-    if (uplift > 0 && (!best || uplift > best.uplift)) best = { purpose: t, uplift }
+    // §23.1: an agent that likes retail converts to retail sooner than one that
+    // does not, and both are acting on the same yield surface
+    const seen = uplift * purposeBias(agent, t)
+    if (uplift > 0 && (!best || seen > best.uplift)) best = { purpose: t, uplift: seen }
   }
   return best
 }
@@ -728,13 +963,32 @@ function chooseLevels(intensity: number, appetite: number): number {
   return Math.max(2, Math.min(8, Math.round((2.2 + intensity * 5.5) * appetite)))
 }
 
-/** §4's land-value gradient expressed as a programme choice. */
-function choosePurpose(world: World, parcel: Parcel, intensity: number): Purpose {
+/**
+ * §4's land-value gradient expressed as a programme choice, and §23.1's
+ * preference expressed as who builds what. The site proposes; the agent's taste
+ * can overrule it where the margin is not decisive.
+ */
+function choosePurpose(world: World, parcel: Parcel, intensity: number, agent?: Agent): Purpose {
   const access = clamp01(parcel.accessScore)
-  if (access > 0.66 && intensity > 0.42) return 'retail'
-  if (intensity > 0.55) return 'office'
-  if (access < 0.3) return 'industrial'
-  return 'residential'
+  const site: Purpose =
+    access > 0.66 && intensity > 0.42
+      ? 'retail'
+      : intensity > 0.55
+        ? 'office'
+        : access < 0.3
+          ? 'industrial'
+          : 'residential'
+  if (!agent) return site
+  let best: Purpose = site
+  let bestScore = purposeBias(agent, site) * 1.15 // the site's own case
+  for (const p of ['residential', 'retail', 'commercial', 'office', 'industrial'] as Purpose[]) {
+    const score = purposeBias(agent, p)
+    if (score > bestScore) {
+      bestScore = score
+      best = p
+    }
+  }
+  return best
 }
 
 /**
@@ -749,6 +1003,14 @@ function returnOnCost(paybackWindows: number): string {
 
 /** Resale cooling-off, in ticks (§4 has no opinion; degenerate churn does). */
 const RESALE_LOCK_TICKS = 365 * 3
+
+/**
+ * §23.1: how close two options must be before the seed is allowed to choose
+ * between them. Small enough that §22.2's 0.25 margin is never overturned —
+ * which is the whole point, since a sampler that can overturn a clear decision
+ * is the thing traits replace.
+ */
+const TIE_BAND = 0.04
 
 interface Potential {
   levels: number
@@ -776,7 +1038,7 @@ function developPotential(
   const areaM2 = areaOf(footprint)
   if (areaM2 < 45) return null
   const levels = chooseLevels(intensity, s.intensityAppetite)
-  const purpose = choosePurpose(world, parcel, intensity)
+  const purpose = choosePurpose(world, parcel, intensity, agent)
   const cost = developmentCost(areaM2, levels)
   const hypothetical = {
     id: 'hypothetical',

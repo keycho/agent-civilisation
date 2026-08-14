@@ -115,14 +115,14 @@ const p10 = percentile(idx, 0.1)
 const sd = stdev(idx)
 const cv = sd / Math.max(1e-9, med)
 
-console.log('seed        divergence  touched  peak   agent-built  cleared  gen  completed  acq/mut')
+console.log('seed        divergence  touched  peak   agent-built  cleared  gen     lives  acq/mut')
 for (const r of results) {
   console.log(
     `${r.seed.padEnd(10)} ${(r.divergenceIndex * 100).toFixed(1).padStart(9)}%  ` +
       `${(r.touchedShare * 100).toFixed(0).padStart(6)}%  ` +
       `${(r.peakSector * 100).toFixed(0).padStart(4)}%  ` +
       `${String(r.agentOrigin).padStart(11)}  ${String(r.cleared).padStart(7)}  ` +
-      `${String(r.generation).padStart(3)}  ${String(r.generationsCompleted).padStart(9)}  ` +
+      `${String(r.generation).padStart(3)}  ${String(r.livesCompleted).padStart(9)}  ` +
       `${r.acquisitionsPerMutation.toFixed(2).padStart(7)}`,
   )
 }
@@ -145,7 +145,7 @@ const firedIn: Record<string, number> = {}
 for (const k of ALL_ACTION_KINDS) {
   firedIn[k] = results.filter((r) => r.actionCounts[k] > 0).length
 }
-const completed = results.map((r) => r.generationsCompleted)
+const completed = results.map((r) => r.livesCompleted)
 const completedCv = stdev(completed) / Math.max(1e-9, median(completed))
 
 console.log('\n§18.1 seed variance')
@@ -172,7 +172,7 @@ for (const k of ALL_ACTION_KINDS) {
 }
 assert(
   completedCv < 0.25,
-  'generations completed stable across seeds',
+  'agent lifetimes completed stable across seeds',
   `median ${median(completed)}, stdev/median ${completedCv.toFixed(3)}`,
 )
 
@@ -301,6 +301,21 @@ console.log(
 console.log(
   `  footprint vs baseline on the same ground: ${med2((x) => x.medianFootprintRatioAll).toFixed(2)}x all, ` +
     `${med2((x) => x.medianFootprintRatio).toFixed(2)}x on multi-parcel sites`,
+)
+// §23.2's prediction, stated to be tested: rare in count, large in consequence,
+// concentrating where the land value gradient is steepest.
+console.log(
+  `  assembly is ${(med2((x) => x.assemblyShareOfActions) * 100).toFixed(1)}% of applied actions, ` +
+    `${med2((x) => x.medianOccupiedPerAssembly)} occupied lots each`,
+)
+console.log(
+  `  land value where it happens: ${med2((x) => x.assemblyLandValueRatio).toFixed(2)}x the chunk median ` +
+    `(p90 ${med2((x) => x.assemblyLandValueP90).toFixed(2)}x)`,
+)
+console.log(
+  `  §23.2 predicted rare and concentrated. ` +
+    `${med2((x) => x.assemblyShareOfActions) < 0.03 ? 'rare' : 'COMMON'}, ` +
+    `${med2((x) => x.assemblyLandValueRatio) > 1.15 ? 'concentrated' : 'FLAT'}`,
 )
 
 // The threshold below was written before the run. "If the chain assemble ->

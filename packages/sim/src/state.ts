@@ -29,6 +29,59 @@ export interface MemoryEntry {
 
 export type Strategy = 'consolidator' | 'renovator' | 'developer' | 'converter'
 
+/**
+ * §23.1. Variety in an agent civilization should come from agents differing,
+ * not from dice.
+ *
+ * Build 4 got its variety from sampling uniformly over the top three scored
+ * options, which above a 0.25 margin discards a materially better move two
+ * times in three. That is injected variety: real in its effects, but produced
+ * by agents being deliberately wrong rather than by agents being different.
+ *
+ * Traits replace it. A slumlord who buys cheap and renovates to minimum, a
+ * developer who assembles and rebuilds, and a landlord who holds should score
+ * the same parcel differently and all three be acting optimally for who they
+ * are. Then argmax, with a band narrow enough that a clear-cut decision is
+ * never overturned.
+ *
+ * Three things follow. Population composition becomes the variance source,
+ * which is an explanation rather than a dice roll. Traits inherit with drift,
+ * so dynasties acquire character. And §15's recurring characters become
+ * possible at all — an agent that picks randomly from its top three has no
+ * character to recognise.
+ */
+export interface Traits {
+  /** appetite for leverage, and for clearing standing stock. 0..1 */
+  risk: number
+  /** patience: a discount rate on future yield, as a payback multiplier. 0..1 */
+  horizon: number
+  /** appetite for higher-density redevelopment. 0..1 */
+  intensity: number
+  /** multiplicative bias per purpose, around 1 */
+  purpose: Partial<Record<Purpose, number>>
+}
+
+/**
+ * §23.3: what an acquisition was *for*.
+ *
+ * Scoring a purchase independently of what follows makes buying a terminal
+ * action, and a scoring function with a terminal buy will churn — 6.77 trades
+ * per alteration, worst traded fifteen times. An agent that commits to a plan
+ * cannot spend the next decision buying something else, which kills churn
+ * structurally rather than by penalty, and gives the inspector a real objective
+ * and the feed a spine.
+ */
+export interface Intent {
+  kind: 'convert' | 'redevelop' | 'renovate' | 'assemble'
+  buildingId?: string
+  parcelIds?: string[]
+  purpose?: Purpose
+  /** what the plan was worth when it was formed, for the inspector */
+  value: number
+  setTick: number
+  expiresTick: number
+}
+
 export interface Agent {
   id: string
   name: string
@@ -42,6 +95,10 @@ export interface Agent {
   /** high-water mark of drawn credit, so "did capital ever bind?" is answerable */
   peakDebt: number
   strategy: Strategy
+  /** §23.1: who this one is, persistent from spawn and inherited with drift */
+  traits: Traits
+  /** §23.3: the plan a purchase was made for, and what it is committed to */
+  intent?: Intent
   bornTick: number
   diedTick?: number
   generation: number
@@ -95,6 +152,10 @@ export interface Assembly {
   baselineAreaM2: number
   /** footprint of what the agent put there, 0 until it develops */
   builtAreaM2: number
+  /** §23.2: land value where it happened, against the chunk median at the time */
+  landValueRatio: number
+  /** how many of the lots had something standing on them */
+  occupiedCount: number
 }
 
 export class World {
@@ -256,17 +317,39 @@ export class World {
     this.nextEdgeSerial = this.edges.size
   }
 
-  /** §20.6: generation is the public vocabulary. Highest living generation. */
+  /**
+   * §20.6: generation is the public vocabulary, and §23.5 asks what it counts
+   * before it goes on screen as the second number.
+   *
+   * It is the depth of the *typical* living lineage — the median, not the
+   * deepest. A population where one dynasty has reached its eighth heir and
+   * everyone else is on their third is not eight generations old, and "the
+   * deepest anyone got" is not a claim a viewer would read from the word.
+   */
   get generation(): number {
+    const depths: number[] = []
+    for (const a of this.agents.values()) if (!a.diedTick) depths.push(a.generation)
+    if (depths.length === 0) return 1
+    depths.sort((x, y) => x - y)
+    return depths[depths.length >> 1]
+  }
+
+  /** The deepest single lineage, for the inspector rather than the headline. */
+  get deepestLineage(): number {
     let g = 1
-    for (const a of this.agents.values()) {
-      if (!a.diedTick && a.generation > g) g = a.generation
-    }
+    for (const a of this.agents.values()) if (!a.diedTick && a.generation > g) g = a.generation
     return g
   }
 
-  /** Generations that have completed, i.e. agents that spent their budget. */
-  get generationsCompleted(): number {
+  /**
+   * §23.5: agents that have spent their §20.5 budget and died.
+   *
+   * This was called `generationsCompleted`, and season 1 reported 199 of them —
+   * which read as 199 generations and is not what it counts. With 58 lineages
+   * that is about three and a half lifetimes each. A life is not a generation
+   * and the label was doing work it could not support.
+   */
+  get livesCompleted(): number {
     let n = 0
     for (const a of this.agents.values()) if (a.diedTick) n++
     return n
@@ -293,6 +376,59 @@ export class World {
 
   parcelOf(building: Building): Parcel | undefined {
     return building.parcelId ? this.parcels.get(building.parcelId) : undefined
+  }
+}
+
+/**
+ * §23.1: a personality, rolled once at spawn.
+ *
+ * Strategy stays as the coarse archetype — it is what the marker colour reads
+ * and what §15's "recognise a recurring character" hangs on — and traits are
+ * the individual within it. Two developers are both developers and one of them
+ * is reckless.
+ */
+export function rollTraits(rng: () => number, strategy: Strategy): Traits {
+  // centred on the archetype, spread wide enough that neighbours differ
+  const around = (mid: number, spread: number) =>
+    Math.max(0, Math.min(1, mid + (rng() * 2 - 1) * spread))
+  const base: Record<Strategy, { risk: number; horizon: number; intensity: number }> = {
+    consolidator: { risk: 0.5, horizon: 0.7, intensity: 0.5 },
+    renovator: { risk: 0.25, horizon: 0.75, intensity: 0.3 },
+    developer: { risk: 0.75, horizon: 0.4, intensity: 0.8 },
+    converter: { risk: 0.45, horizon: 0.5, intensity: 0.5 },
+  }
+  const b = base[strategy]
+  const purpose: Partial<Record<Purpose, number>> = {}
+  // one purpose this agent likes and one it does not, so a preference is a
+  // recognisable habit rather than a uniform tilt
+  const kinds: Purpose[] = ['residential', 'retail', 'commercial', 'office', 'industrial']
+  const liked = kinds[Math.floor(rng() * kinds.length)]
+  const disliked = kinds[Math.floor(rng() * kinds.length)]
+  purpose[liked] = 1 + 0.35 * rng()
+  if (disliked !== liked) purpose[disliked] = 0.6 + 0.25 * rng()
+  return {
+    risk: around(b.risk, 0.28),
+    horizon: around(b.horizon, 0.28),
+    intensity: around(b.intensity, 0.28),
+    purpose,
+  }
+}
+
+/**
+ * §23.1: an heir is recognisably its parent, and not identical to it. Drift is
+ * small enough that a dynasty keeps a character across several generations.
+ */
+export function inheritTraits(t: Traits, rng: () => number): Traits {
+  const drift = (v: number) => Math.max(0, Math.min(1, v + (rng() * 2 - 1) * 0.12))
+  const purpose: Partial<Record<Purpose, number>> = {}
+  for (const [k, v] of Object.entries(t.purpose)) {
+    purpose[k as Purpose] = Math.max(0.4, Math.min(1.6, (v ?? 1) + (rng() * 2 - 1) * 0.08))
+  }
+  return {
+    risk: drift(t.risk),
+    horizon: drift(t.horizon),
+    intensity: drift(t.intensity),
+    purpose,
   }
 }
 

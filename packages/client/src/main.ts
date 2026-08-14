@@ -329,6 +329,16 @@ function showInspector(b: BuildingDetail): void {
     ['Archetype', b.archetype ?? '—'],
     ['Condition', `${((b.condition ?? 0) * 100).toFixed(0)}%`],
     ['Owner', b.ownerName ? `${b.ownerName} (gen ${b.ownerGeneration})` : 'unowned'],
+    // §23.3: a real objective rather than a shrug
+    ...(b.ownerIntent ? ([['Doing', b.ownerIntent]] as Array<[string, string]>) : []),
+    ...(b.ownerTraits
+      ? ([
+          [
+            'Character',
+            `risk ${b.ownerTraits.risk} · patience ${b.ownerTraits.horizon} · density ${b.ownerTraits.intensity}`,
+          ],
+        ] as Array<[string, string]>)
+      : []),
     ['Value', (b.value ?? 0).toFixed(0)],
     ...(b.baseline
       ? ([

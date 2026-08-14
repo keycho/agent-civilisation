@@ -37,11 +37,17 @@ export interface WorldServiceOptions {
   rngSeed?: string
   /** §22.3: which season this is. Increments when the world saturates. */
   season?: number
-  /** §22.3: called when the world stops changing and the season should turn */
-  onSaturated?: (season: number) => void
+  /** §22.3/§23.4: called when the season should turn, with why */
+  onSaturated?: (season: number, reason: SeasonEndReason) => void
   /** existing store, so a new season keeps writing to the same log */
   store?: DurableStore
 }
+
+/** §23.4: a season ends for one of two reasons and they are not the same news. */
+export type SeasonEndReason = 'saturation' | 'slot_pressure'
+
+/** Turn at this share of the building data texture, whatever the world is doing. */
+const SLOT_PRESSURE_TURN = 0.85
 
 export class WorldService {
   readonly sim: Simulation
@@ -71,7 +77,7 @@ export class WorldService {
   private known = new Set<string>()
   private ticking = false
   private readonly saturation = new SaturationWatch()
-  private readonly onSaturated?: (season: number) => void
+  private readonly onSaturated?: (season: number, reason: SeasonEndReason) => void
   private saturatedAlready = false
 
   constructor(opts: WorldServiceOptions) {
@@ -157,13 +163,18 @@ export class WorldService {
        * cost of running continuously.
        */
       if (!this.saturatedAlready) {
-        const done = this.saturation.sample({
+        const saturated = this.saturation.sample({
           decisions: this.sim.decisionsIssued,
           index: r.index,
           agentOrigin: r.agentOrigin,
           cleared: r.demolished,
         })
-        if (done) {
+        // §23.4: pressure turns the season regardless of what the world is
+        // doing, so the texture ceiling cannot be reached rather than being
+        // estimated not to be.
+        const pressed = this.texture.pressure >= SLOT_PRESSURE_TURN
+        const reason: SeasonEndReason = saturated ? 'saturation' : 'slot_pressure'
+        if (saturated || pressed) {
           this.saturatedAlready = true
           this.store.appendEvent({
             chunkId: this.chunkId,
@@ -172,16 +183,21 @@ export class WorldService {
             cinematicWeight: BASE_CINEMATIC_WEIGHT.season_ended,
             rationale:
               `season ${this.season} reached ${(r.index * 100).toFixed(1)}% divergence over ` +
-              `${this.sim.world.generationsCompleted} completed generations and stopped changing`,
+              `${this.sim.world.livesCompleted} agent lifetimes and ` +
+              (reason === 'saturation'
+                ? 'stopped changing'
+                : `filled ${(this.texture.pressure * 100).toFixed(0)}% of its building slots`),
             payload: {
               season: this.season,
+              reason,
+              slotPressure: +this.texture.pressure.toFixed(3),
               divergenceIndex: r.index,
               agentOrigin: r.agentOrigin,
               cleared: r.demolished,
               decisions: this.sim.decisionsIssued,
             },
           })
-          this.onSaturated?.(this.season)
+          this.onSaturated?.(this.season, reason)
         }
       }
     } finally {
