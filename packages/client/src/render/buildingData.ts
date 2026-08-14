@@ -22,8 +22,8 @@ export class BuildingDataTexture {
   readonly count: number
   readonly width: number
   readonly height: number
-  readonly data: Uint8Array
-  readonly staticData: Uint8Array
+  readonly data: Uint8Array<ArrayBuffer>
+  readonly staticData: Uint8Array<ArrayBuffer>
   readonly texture: DataTexture
   readonly staticTexture: DataTexture
   private dirty = true
@@ -110,7 +110,7 @@ export class BuildingDataTexture {
   }
 }
 
-function makeTexture(data: Uint8Array, w: number, h: number): DataTexture {
+function makeTexture(data: Uint8Array<ArrayBuffer>, w: number, h: number): DataTexture {
   const t = new DataTexture(data, w, h, RGBAFormat, UnsignedByteType)
   t.magFilter = NearestFilter
   t.minFilter = NearestFilter
