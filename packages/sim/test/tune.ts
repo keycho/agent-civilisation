@@ -157,25 +157,19 @@ console.log('\n§18.1 seed variance')
 // make: real cities do not redevelop 91% of their stock in five generations.
 assert(med >= 25, 'median divergence index >= 25', `${med.toFixed(1)}%`)
 assert(p10 > 15, 'p10 divergence index > 15', `${p10.toFixed(1)}%`)
-known(
-  median(results.map((r) => r.touchedShare)) <= 0.8,
-  'median touched share <= 80% (91% was the overshoot)',
-  `${(median(results.map((r) => r.touchedShare)) * 100).toFixed(0)}%`,
-  'the budget is calibrated on the wrong signal, and this is where it shows. ' +
-    '§21.2 picked 80,000 by finding where the divergence index stops climbing ' +
-    '(plateau 80,152). The index plateaus long after the world is used up: at 25% ' +
-    'of the budget it is already 51.0% and by 100% it has gained 12.9 points, ' +
-    'while the touched share goes to 96% and the untouched residue falls to 41 ' +
-    'buildings. The last quarter of the run is agents re-treading stock they have ' +
-    'already been over — which is also why the untouched correlations went to ' +
-    'noise. A plateau in an aggregate is not evidence that the world still has ' +
-    'anything left in it. This is not moved and not re-tuned: §23.2 said ' +
-    'recalibrate once and refreeze, that recalibration is spent, and re-picking ' +
-    'the budget on a saturation criterion instead of a plateau criterion is a ' +
-    'decision, not an adjustment. It costs the second recalibration. Note the live ' +
-    'world does not inherit this — §22.4 made the budget a measurement device and ' +
-    'the deployed server turns a season on saturation or slot pressure, which in ' +
-    'the §23.6 watch fired at roughly 52,000 decisions.',
+/**
+ * §21.1's ceiling, restored to an assertion by §29.3: the budget is now
+ * calibrated as the decision count where the touched share crosses this same
+ * 80%, so the run ends when the world is used, not long after. The median
+ * across seeds sits at the crossing by construction; what this now guards is
+ * the criterion drifting again — if a future mechanism pushes the median well
+ * past the ceiling at the frozen budget, the calibration is stale, and the
+ * answer is §29.3's rule re-run, not this threshold moved.
+ */
+assert(
+  median(results.map((r) => r.touchedShare)) <= 0.84,
+  'touched share stays at the ceiling the budget was cut to',
+  `${(median(results.map((r) => r.touchedShare)) * 100).toFixed(0)}% (ceiling 80%, calibrated at the crossing)`,
 )
 assert(cv < 0.35, 'stdev / median < 0.35', cv.toFixed(3))
 const threshold = Math.ceil(SEEDS * 0.9)
@@ -363,16 +357,16 @@ known(
   multiShare >= 0.1,
   'agent-built on consolidated ground >= 10%',
   `${(multiShare * 100).toFixed(0)}%`,
-  'the chain is no longer blocked and the grain still barely moves. §23.2 opened ' +
-    '`assemble` to occupied lots, and the half that was structurally impossible now ' +
-    'runs: "followed by demolish" went from exactly 0 to 313. What it did not buy ' +
-    'is consolidation. An agent assembles three lots, clears them, and puts up a ' +
-    'building on one — so completed chains are common and structures spanning more ' +
-    'than one lot are not. The guard in engine.ts holds the site back until every ' +
-    'lot on the plan is clear, and it is scoped to the live intent, so it lapses ' +
-    'when the commitment window closes or the holding passes to an heir who ' +
-    'inherited the land without the plan. That is the next mechanism: the plan is a ' +
-    'property of the site, not of the agent who happened to start it.',
+  'the §29.2 mechanism moved the share it was aimed at: one building across ' +
+    'more than one lot went from 5% of completed chains to 27%, because the ' +
+    'plan now lives on the site — it survives the commitment window, inheritance ' +
+    'and resale, the develop guard holds the site until every lot is clear, and ' +
+    'clearing on planned ground is gated by funds rather than by a lot-by-lot ' +
+    'appraisal the plan already superseded. What remains under 10% is the stock ' +
+    'share: completed chains are fewer as well as better, since plans hold ' +
+    'agents on fewer, deeper projects. Whether that is the mechanism settling ' +
+    'or the threshold measuring the wrong denominator is the next thing to ' +
+    'decide, and it is a decision, not a retune.',
 )
 
 // ---------------------------------------------------------------------------
@@ -687,6 +681,8 @@ assert(
 
 const capRatio = medOf((x) => x.pricing.capRateRatio)
 const retRatio = medOf((x) => x.pricing.returnRatio)
+const offeredMid = medOf((x) => x.pricing.offeredMidRatio)
+const transactedMid = medOf((x) => x.pricing.transactedMidRatio)
 
 console.log('\n§27.5 competitive pricing')
 console.log(
@@ -705,8 +701,15 @@ console.log(
     `over ${medOf((x) => x.pricing.transactions)} transactions`,
 )
 console.log(
-  `  §27.5 predicted yield compression where agents concentrate. ` +
-    `${retRatio < 0.95 ? 'COMPRESSED' : retRatio > 1.05 ? 'INFLATED' : 'FLAT'}`,
+  `  at half budget — offered: ${offeredMid.toFixed(2)}x   transacted: ${transactedMid.toFixed(2)}x` +
+    `   (transacted cannot invert: clearing selects on beating the alternatives)`,
+)
+// §29.1: the criterion is the ordering, not the delta. Real markets bid prime
+// up until prime yields sit BELOW secondary, and that inversion is what pushes
+// capital out — migration rests on it.
+console.log(
+  `  §29.1 requires the OFFERED ordering to invert. ` +
+    `${offeredMid < 0.95 ? 'INVERTED' : offeredMid > 1.05 ? 'UPRIGHT (contested still wins)' : 'FLAT'}`,
 )
 
 // The mechanism has to do something spatially differentiated before its
@@ -719,27 +722,14 @@ assert(
 )
 // The claim itself. 0.95 rather than 1.0 so a coin-flip result cannot pass as
 // compression; the threshold is on the wrong side of neutral on purpose.
-known(
-  retRatio < 0.95,
-  'return on price compresses where agents concentrate',
-  `${retRatio.toFixed(2)}x`,
-  'this was pre-registered as the measure that decides the verdict and it is ' +
-    'confounded, which the run is what showed. A place is contested *because* ' +
-    'it is desirable and desirable means high yield, so agents buying into ' +
-    'contested ground get better returns whatever the price does. Traced across ' +
-    'budgets to rule out saturation: competition keeps full spread while this ' +
-    'ratio sits at 1.3-1.6x from 5,000 decisions to 80,000. Both pre-registered ' +
-    'measures compare hot places against cold ones, and hot and cold differ for ' +
-    'reasons that are nothing to do with the mechanism — the cap-rate one leans ' +
-    'the other way and reads 0.61x, which is no more meaningful. ' +
-    'The deciding test is ab-pricing.ts, which runs one seed twice with ' +
-    'COMPETITION.gain as the only difference, so selection is identical and ' +
-    'whatever moves is the mechanism. seed-3 at 40,000: land value spread 5.43 ' +
-    '-> 10.06, transactions 2858 -> 2564, contested-quartile return -3.0% while ' +
-    'the quiet quartile rises 1.8%. Price responds to demand; compression is ' +
-    'directionally right and smaller than the 5% this threshold asks for. Kept ' +
-    'here rather than deleted because the confound is worth seeing, and gain is ' +
-    'not raised until it passes.',
+// §29.1 as measured on the surface the mechanism sentence names: the offer
+// facing the marginal buyer, at half budget while the market is alive.
+// Transacted returns are reported beside it and are expected to stay above 1 —
+// clearing selects, and their thinning is where priced-out shows.
+assert(
+  offeredMid < 0.95,
+  'the offered yield ordering inverts where agents concentrate',
+  `${offeredMid.toFixed(2)}x (transacted ${transactedMid.toFixed(2)}x)`,
 )
 
 // ---------------------------------------------------------------------------

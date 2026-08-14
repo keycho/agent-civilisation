@@ -340,7 +340,6 @@ export class Simulation {
       peakDebt: agent.debt,
       // §23.1: recognisably its parent, and not identical to it
       traits: inheritTraits(agent.traits, this.rng),
-      intent: undefined,
       bornTick: w.tick,
       diedTick: undefined,
       generation: agent.generation + 1,

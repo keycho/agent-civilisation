@@ -235,7 +235,13 @@ export function buildingDetail(sim: Simulation, id: string, history: WorldEvent[
           intensity: +owner.traits.intensity.toFixed(2),
         }
       : undefined,
-    ownerIntent: owner?.intent ? describeIntent(owner.intent) : undefined,
+    // §29.2: the plan lives on the site now. Reading it through the owner
+    // keeps the inspector's sentence the same while making it survive
+    // inheritance and sale.
+    ownerIntent: (() => {
+      const plan = owner ? w.activePlan(owner) : undefined
+      return plan ? describeIntent(plan) : undefined
+    })(),
     baseline: baselineSeed
       ? { purpose: baselineSeed.purpose, levels: baselineSeed.levels, bagId: baselineSeed.bagId }
       : undefined,

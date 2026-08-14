@@ -24,7 +24,7 @@ import {
   withDuty,
   yieldPerTick,
 } from './economy.ts'
-import { type Agent, type Intent, type MemoryEntry, type World, floorArea } from './state.ts'
+import { type Agent, type MemoryEntry, type PlanSpec, type SitePlan, type World, floorArea } from './state.ts'
 
 /**
  * §9. Async, may return null, carries a rationale on the action.
@@ -180,14 +180,18 @@ export function observe(world: World, agent: Agent): Observation {
         intensity: agent.traits.intensity,
         purpose: agent.traits.purpose as Record<string, number>,
       },
-      intent: agent.intent
-        ? {
-            kind: agent.intent.kind,
-            purpose: agent.intent.purpose,
-            buildingId: agent.intent.buildingId,
-            expiresIn: Math.max(0, agent.intent.expiresTick - world.tick),
-          }
-        : undefined,
+      intent: (() => {
+        // §29.2: read off the site, not off the agent
+        const plan = world.activePlan(agent)
+        return plan
+          ? {
+              kind: plan.kind,
+              purpose: plan.purpose,
+              buildingId: plan.buildingId,
+              expiresIn: Math.max(0, plan.setTick + INTENT_TICKS - world.tick),
+            }
+          : undefined
+      })(),
       holdingCount: agent.holdings.size,
       tick: world.tick,
       generation: agent.generation,
@@ -399,6 +403,33 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
       // building forever and the redevelopment chain never starts.
       const worn = b.condition < 0.72
       if (parcel && parcel.ownerId === agent.id) {
+        /**
+         * §29.2: on planned ground, clearing IS the plan. The ratio and
+         * payback gates below appraise a single lot on its own merits, and an
+         * assembled site never passes lot-by-lot — the third of three lots is
+         * a small building on a small parcel however good the site is. That
+         * gate was why §29.2's first cut consolidated exactly nothing: the
+         * develop guard held the site until it was clear, and the clearing
+         * was vetoed by an appraisal the plan had already superseded. The
+         * plan carried the economics when the ground was bought; execution is
+         * gated by funds alone.
+         */
+        const sitePlanId = world.planByParcel.get(parcel.id)
+        const sitePlan = sitePlanId ? world.sitePlans.get(sitePlanId) : undefined
+        if (
+          sitePlan &&
+          (sitePlan.kind === 'assemble' || sitePlan.kind === 'redevelop') &&
+          demolitionCost(b) <= funds
+        ) {
+          options.push({
+            action: {
+              kind: 'demolish',
+              buildingId: b.id,
+              rationale: `clearing the ${b.purpose} for the site plan`,
+            },
+            score: s.demolish * 1.6,
+          })
+        }
         const potential = developPotential(world, agent, parcel, obs.neighbourhood.intensity, s)
         if (potential) {
           const cost = demolitionCost(b) + potential.cost
@@ -406,6 +437,7 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
           const payback = paybackWindows(cost, uplift)
           const ratio = potential.yieldPerTick / Math.max(1e-6, b.yieldPerTick)
           if (
+            !sitePlan &&
             cost <= funds &&
             (worn ? ratio > 1.5 : ratio > 2.2) &&
             payback < s.maxPayback * 1.7
@@ -438,14 +470,22 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
          * is why 218 assemblies produced one multi-parcel structure. The plan
          * is the site, so the site waits until it is clear.
          */
-        const plan = agent.intent
-        if (plan?.kind === 'assemble' && committed(world, agent) && plan.parcelIds) {
-          const overlaps = group.some((id) => plan.parcelIds?.includes(id))
-          const stillStanding = plan.parcelIds.some((id) => {
+        /**
+         * §29.2 re-grounds this: the hold is a property of the SITE. If any
+         * parcel in this group belongs to a plan whose ground still carries
+         * standing stock, the site is not ready and building on a fragment of
+         * it would spend the plan for a single-lot structure. No commitment
+         * window and no owner check — an heir or a buyer inherits the wait
+         * along with the plan.
+         */
+        const planId = group.map((id) => world.planByParcel.get(id)).find(Boolean)
+        if (planId) {
+          const plan = world.sitePlans.get(planId)
+          const stillStanding = plan?.parcelIds.some((id) => {
             const p = world.parcels.get(id)
             return !!p?.buildingId && !!world.standing(p.buildingId)
           })
-          if (overlaps && stillStanding) continue
+          if (stillStanding) continue
         }
         const parcels = group.map((id) => world.parcels.get(id)!).filter(Boolean)
         const footprint = developableFootprint(parcels)
@@ -506,13 +546,9 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
               rationale: occupied
                 ? `assembling ${affordable.length} adjacent lots, clearing ${occupied}`
                 : `consolidating ${affordable.length} adjacent lots`,
-              intent: {
-                kind: 'assemble',
-                parcelIds: affordable.map((p) => p.id),
-                value: total,
-                setTick: world.tick,
-                expiresTick: world.tick + INTENT_TICKS,
-              },
+              // §29.2: the spec names the ground via the action's parcelIds;
+              // apply files it on those parcels
+              intent: { kind: 'assemble', value: total },
             },
             score: s.assemble * affordable.length * (0.7 + obs.neighbourhood.intensity),
           })
@@ -654,8 +690,12 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
      * warehouse to convert it gets on with converting it rather than drifting
      * into whatever scored highest this tick.
      */
-    if (agent.intent && committed(world, agent)) {
-      for (const o of options) if (servesIntent(o.action, agent.intent)) o.score *= INTENT_PULL
+    // §29.2: the pull is indefinite. The commitment window bounds shopping, not
+    // the plan — a plan pulls its owner toward completion for as long as the
+    // holding masters the site, across generations if it takes that long.
+    const active = world.activePlan(agent)
+    if (active) {
+      for (const o of options) if (servesPlan(world, o.action, active)) o.score *= INTENT_PULL
     }
 
     if (options.length === 0) return null
@@ -844,9 +884,8 @@ function planFor(
   b: Building,
   s: StrategyWeights,
   forSite: boolean,
-): Intent {
-  const at = world.tick
-  const base = { setTick: at, expiresTick: at + INTENT_TICKS, buildingId: b.id }
+): PlanSpec {
+  const base = { buildingId: b.id }
   if (forSite) {
     return { ...base, kind: 'redevelop', value: siteValue(world, agent, b, s) }
   }
@@ -862,7 +901,7 @@ function planFor(
 }
 
 function planRationale(
-  plan: Intent,
+  plan: PlanSpec,
   b: Building,
   cap: number,
   price: number,
@@ -885,36 +924,50 @@ function planRationale(
   }
 }
 
-/** Does this action carry out the plan the agent committed to? */
-function servesIntent(action: AgentAction, intent: Intent): boolean {
-  switch (intent.kind) {
+/** Does this action carry the site's plan forward? */
+function servesPlan(world: World, action: AgentAction, plan: SitePlan): boolean {
+  switch (plan.kind) {
     case 'convert':
-      return action.kind === 'convert' && action.buildingId === intent.buildingId
+      return action.kind === 'convert' && action.buildingId === plan.buildingId
     case 'renovate':
-      return action.kind === 'renovate' && action.buildingId === intent.buildingId
+      return action.kind === 'renovate' && action.buildingId === plan.buildingId
     case 'redevelop':
       return (
-        (action.kind === 'demolish' && action.buildingId === intent.buildingId) ||
+        (action.kind === 'demolish' && action.buildingId === plan.buildingId) ||
         (action.kind === 'develop' &&
-          !!intent.buildingId &&
-          action.parcelIds.length > 0)
+          action.parcelIds.some((id) => plan.parcelIds.includes(id)))
       )
-    case 'assemble':
-      return (
-        (action.kind === 'develop' || action.kind === 'demolish') &&
-        (action.kind === 'demolish' ||
-          action.parcelIds.some((id) => intent.parcelIds?.includes(id)))
-      )
+    case 'assemble': {
+      if (
+        action.kind === 'develop' &&
+        action.parcelIds.some((id) => plan.parcelIds.includes(id))
+      ) {
+        return true
+      }
+      // a demolish serves the plan only on the plan's own ground — the §23.3
+      // version accepted any demolition anywhere, which let the pull subsidise
+      // unrelated clearances
+      if (action.kind === 'demolish') {
+        const pid = world.buildings.get(action.buildingId)?.parcelId
+        return !!pid && plan.parcelIds.includes(pid)
+      }
+      return false
+    }
   }
 }
 
-/** §23.3: an agent with a live plan is not in the market. */
+/**
+ * §23.3 as amended by §29.2: an agent is out of the market while its plan is
+ * young. The window bounds the shopping freeze only — the plan itself lives on
+ * the site until it is carried out or built over, however long that takes and
+ * whoever ends up holding the ground.
+ */
 function committed(world: World, agent: Agent): boolean {
-  const i = agent.intent
-  if (!i) return false
-  if (world.tick >= i.expiresTick) return false
-  // a plan whose subject is gone is not a plan
-  if (i.buildingId && !world.standing(i.buildingId)) return false
+  const plan = world.activePlan(agent)
+  if (!plan) return false
+  if (world.tick >= plan.setTick + INTENT_TICKS) return false
+  // a plan whose subject is gone is carried by demolition, not voided, for
+  // redevelop/assemble; for the others the retire hooks already removed it
   return true
 }
 

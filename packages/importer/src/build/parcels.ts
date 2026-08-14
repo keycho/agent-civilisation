@@ -198,6 +198,10 @@ export function deriveParcels(
         const pulled = insetRing(ring2, 3)
         if (!pulled || overlapsCarriageway(roadIndex, nodeById, pulled)) {
           overCarriageway++
+          if (process.env.CIV_DIAGNOSE_DROPS) {
+            const cc = centroid(ring2)
+            console.error(`  drop over-carriageway at ${cc[0].toFixed(0)},${cc[1].toFixed(0)}`)
+          }
           continue
         }
         ring2 = quantiseRing(pulled)

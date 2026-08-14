@@ -62,24 +62,52 @@ export interface Traits {
 }
 
 /**
- * §23.3: what an acquisition was *for*.
+ * §23.3 introduced the plan: an acquisition is *for* something, and scoring a
+ * purchase independently of what follows makes buying a terminal action — a
+ * scoring function with a terminal buy churns (6.77 trades per alteration).
  *
- * Scoring a purchase independently of what follows makes buying a terminal
- * action, and a scoring function with a terminal buy will churn — 6.77 trades
- * per alteration, worst traded fifteen times. An agent that commits to a plan
- * cannot spend the next decision buying something else, which kills churn
- * structurally rather than by penalty, and gives the inspector a real objective
- * and the feed a spine.
+ * §29.2: the development plan belongs to the site, not to the agent.
+ *
+ * §23.3 hung the plan on the agent as `intent`, scoped to a commitment window,
+ * and that scoping is why assembly never completed: the plan lapsed when the
+ * window closed, and vanished entirely when the land passed to an heir who
+ * inherited the ground without the intent. The capital gate §23.2's prediction
+ * assumed would bind was never binding, because the plan died before the
+ * capital was committed.
+ *
+ * So the plan is now a property of the parcels it covers. It persists past the
+ * commitment window, transfers with the land at inheritance without any code
+ * at the inheritance site — the heir gets the parcels and the parcels carry the
+ * plan — and is sold with the site: buy a planned site and the plan is yours,
+ * which is how real assembly and entitlement outlive the developer who started
+ * them. A half-assembled block with a stated purpose is a tradeable asset and
+ * a narrative object that survives generations.
+ *
+ * An agent is *committed* to a plan while it owns every parcel the plan
+ * covers. Ownership fragmenting leaves the plan dormant on the land, waiting
+ * for someone to reassemble it. The commitment window (INTENT_TICKS) now
+ * bounds only how long the plan blocks its owner from shopping — the plan
+ * itself does not expire.
  */
-export interface Intent {
-  kind: 'convert' | 'redevelop' | 'renovate' | 'assemble'
+/** What an action proposes to file, before the world assigns it a home. */
+export interface PlanSpec {
+  kind: SitePlan['kind']
+  purpose?: Purpose
   buildingId?: string
-  parcelIds?: string[]
+  /** what the plan was worth when it was formed, for the inspector */
+  value: number
+}
+
+export interface SitePlan {
+  id: string
+  kind: 'convert' | 'redevelop' | 'renovate' | 'assemble'
+  /** the ground the plan covers; ownership of all of it makes the plan active */
+  parcelIds: string[]
+  buildingId?: string
   purpose?: Purpose
   /** what the plan was worth when it was formed, for the inspector */
   value: number
   setTick: number
-  expiresTick: number
 }
 
 export interface Agent {
@@ -97,8 +125,6 @@ export interface Agent {
   strategy: Strategy
   /** §23.1: who this one is, persistent from spawn and inherited with drift */
   traits: Traits
-  /** §23.3: the plan a purchase was made for, and what it is committed to */
-  intent?: Intent
   bornTick: number
   diedTick?: number
   generation: number
@@ -241,7 +267,20 @@ export class World {
    * first 20-seed run, so the metric cannot be chosen after seeing which one
    * flatters the mechanism.
    */
-  readonly transactions: Array<{ competition: number; returnOnPrice: number }> = []
+  readonly transactions: Array<{
+    competition: number
+    returnOnPrice: number
+    /**
+     * The chunk-median competition at the moment of purchase. Ranking raw
+     * competition mixes time into space — late purchases all see a saturated
+     * surface, early ones a cold one — so "contested" must mean contested
+     * relative to the market the buyer was actually standing in.
+     */
+    competitionMedianAtBuy: number
+  }> = []
+
+  /** running spatial median of the competition surface, updated per market step */
+  competitionMedian = 0
 
   /** buildings created by agents, needing geometry on the client */
   readonly pendingGeometry: string[] = []
@@ -286,6 +325,54 @@ export class World {
 
   /** §22.1: buildings that have ever changed hands, and how often. */
   readonly acquisitionCount = new Map<string, number>()
+
+  /**
+   * §29.2: development plans, living on the world and attached to parcels.
+   * `planByParcel` is the index that makes "is this ground spoken for" a map
+   * lookup during option generation.
+   */
+  readonly sitePlans = new Map<string, SitePlan>()
+  readonly planByParcel = new Map<string, string>()
+  private nextPlanSerial = 0
+
+  newPlanId(): string {
+    return `plan-${this.nextPlanSerial++}`
+  }
+
+  /** File a plan on its ground, displacing whatever plan was there before. */
+  filePlan(plan: SitePlan): void {
+    for (const pid of plan.parcelIds) {
+      const old = this.planByParcel.get(pid)
+      if (old && old !== plan.id) this.retirePlan(old)
+      this.planByParcel.set(pid, plan.id)
+    }
+    this.sitePlans.set(plan.id, plan)
+  }
+
+  retirePlan(id: string): void {
+    const plan = this.sitePlans.get(id)
+    if (!plan) return
+    for (const pid of plan.parcelIds) {
+      if (this.planByParcel.get(pid) === id) this.planByParcel.delete(pid)
+    }
+    this.sitePlans.delete(id)
+  }
+
+  /**
+   * The plan this holding is currently the master of: one whose every parcel
+   * it owns. Ownership fragmenting leaves the plan dormant — still on the
+   * land, binding nobody — until someone owns the whole site again.
+   */
+  activePlan(agent: Agent): SitePlan | undefined {
+    for (const pid of agent.parcels) {
+      const planId = this.planByParcel.get(pid)
+      if (!planId) continue
+      const plan = this.sitePlans.get(planId)
+      if (!plan) continue
+      if (plan.parcelIds.every((p) => this.parcels.get(p)?.ownerId === agent.id)) return plan
+    }
+    return undefined
+  }
 
   /** The building a `develop` just created, for attributing the decision to it. */
   lastDevelopedId?: string

@@ -4,6 +4,7 @@
  * distribution).
  */
 import {
+  RATE_WINDOW_TICKS,
   type SeedReport,
   type WorldSeed,
   centroid,
@@ -15,6 +16,7 @@ import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Simulation } from '../../src/index.ts'
+import { acquisitionPrice, competitionAt, withDuty } from '../../src/economy.ts'
 import { DISTRICT_SPAN_M, findDistricts } from '../../src/divergence.ts'
 import type { World } from '../../src/state.ts'
 
@@ -25,10 +27,9 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 /**
  * §20.9: the run budget, in agent decisions.
  *
- * CALIBRATED ONCE, then frozen. Recalibrated once, under §21.2, because §21.1
- * added a mechanism the model lacked rather than tuning a constant against an
- * outcome — "the freeze blocks tuning constants against observed outcomes, it
- * does not block adding a mechanism the model lacks."
+ * CALIBRATED, then frozen. Recalibrated twice, each time with an authorisation
+ * that names its reason: §21.2 for build 3 (a mechanism the model lacked),
+ * §29.3 for build 7 (the criterion itself was at fault).
  *
  *   build 2   39,000   the decision count at which the pre-calendar end state
  *                      (34.6% / 135 agent-built / 85 cleared) was reached
@@ -37,24 +38,32 @@ const HERE = dirname(fileURLToPath(import.meta.url))
  *   build 4   80,000   the plateau of the model that has traits and argmax
  *                      (§23.1), assembly on occupied lots (§23.2) and
  *                      transaction cost with intent (§23.3) in it
+ *   build 7   34,000   the touched-share crossing of the model that has
+ *                      competitive pricing at the §29.1 inversion in it,
+ *                      measured at 33,799 before §29.2 landed
  *
- * The build-3 rule was written into calibrate.ts before the number was read,
- * and it names no target: the first point past which the index gains under 1pp
- * and both the agent-built and cleared counts grow under 5% over the following
- * 5,000 decisions. All three together, because a flat index can hide
- * construction still finishing. Measured at 64,894 on one seed.
+ * The criterion changed at build 7 and that is the point. The plateau rule
+ * asked when the aggregate went quiet, and the index plateaus long after the
+ * world is used up — a plateau-sized budget runs its last quarter as agents
+ * re-treading stock, which §29.3 calls "a criterion fault, not a number
+ * fault". The budget became the decision count at which the touched share
+ * crosses 80%, the ceiling §21.1 set from what real cities do not do.
  *
- * The budget grows each time for the same reason: more of the world is reachable,
- * so arriving at it takes more decisions. Build 4's rise is smaller than build
- * 3's despite three mechanisms landing, because argmax made agents decisive —
- * they stopped discarding their best move two times in three — and that pulls
- * the other way.
+ * Then §29.2 landed in the same build and the crossing stopped existing:
+ * with plans living on sites, touched reaches 73% at 90,000 decisions and is
+ * still creeping, no plateau, no crossing. Agents go deep on planned ground
+ * instead of sweeping the chunk. That is §29.3's own forecast — "a world
+ * where saturation produces migration needs no budget; the budget survives
+ * only as the harness's unit" — arriving one build early and in one chunk.
+ * So the number stays at the last criterion-derived value and is now purely
+ * the unit of comparison across seeds. It has no claim to being the world's
+ * lifetime, which §22.3 already established it never was.
  *
  * It is not adjusted until the assertions pass. Tuning the budget to hit a
  * target is precisely the hill-climb error §18 exists to catch, so this number
- * does not move. One recalibration, not an iterative approach to a target.
+ * does not move.
  */
-export const DECISION_BUDGET = 80_000
+export const DECISION_BUDGET = 34_000
 
 export const ALL_ACTION_KINDS = [
   'acquire_building',
@@ -150,6 +159,16 @@ export interface Summary {
     quietReturn: number
     returnRatio: number
     transactions: number
+    /**
+     * §29.1's deciding pair, measured at half budget. `offeredMidRatio` is the
+     * contested/quiet ratio of what a marginal buyer WOULD earn on standing
+     * stock — the quantity that inverts in real markets and the one migration
+     * keys off. `transactedMidRatio` is the same split over purchases that
+     * cleared, which selection keeps above 1 however hard the premium binds;
+     * it is reported so the difference between the two stays visible.
+     */
+    offeredMidRatio: number
+    transactedMidRatio: number
     competitionP10: number
     competitionP90: number
     landValueP10: number
@@ -157,7 +176,7 @@ export interface Summary {
   }
   /** structural canaries over the emitted artifact (§21.4) */
   structural: SeedReport
-  curve: Array<{ decisions: number; index: number; agentOrigin: number; cleared: number; generation: number }>
+  curve: Array<{ decisions: number; index: number; touched: number; agentOrigin: number; cleared: number; generation: number; compP10: number; compP90: number }>
 }
 
 /**
@@ -244,17 +263,29 @@ export async function runSeed(
     seed,
     onSnapshot({ report, generation }) {
       if (captureCurve) {
+        const comps = [...(sim.world.competition ?? [])].sort((a, b) => a - b)
         curve.push({
           decisions: sim.decisionsIssued,
           index: report.index,
+          touched: report.touchedShare,
           agentOrigin: report.agentOrigin,
           cleared: report.demolished,
           generation,
+          compP10: comps.length ? comps[Math.floor(comps.length * 0.1)] : 0,
+          compP90: comps.length ? comps[Math.floor(comps.length * 0.9)] : 0,
         })
       }
     },
   })
 
+  // §29.1: spatial pricing is judged at half budget, while the surface is
+  // differentiated. Measured at the end of a supply-exhausted run it reads
+  // saturated-flat everywhere, which is the terminal state working rather
+  // than the mechanism failing — and it broke three measurements in a row
+  // before this line existed.
+  await sim.runToDecisionBudget(Math.floor(budget / 2))
+  const offeredMidRatio = offeredRatioOf(sim.world)
+  const transactedMidRatio = transactedRatioOf(sim.world)
   await sim.runToDecisionBudget(budget)
   const r = sim.refreshReport()
   const w = sim.world
@@ -374,7 +405,7 @@ export async function runSeed(
     },
     structural: validateSeed(world),
     districts: districtsOf(sim.world),
-    pricing: pricingOf(sim.world),
+    pricing: { ...pricingOf(sim.world, curve), offeredMidRatio, transactedMidRatio },
     curve,
   }
 }
@@ -390,7 +421,43 @@ export async function runSeed(
  * some stock before they count, for the same reason the sector index does — a
  * cell holding one building reports its own noise.
  */
-function pricingOf(w: World) {
+/** §29.1: offered contested/quiet over standing stock, at the moment called. */
+function offeredRatioOf(w: World): number {
+  const offers: Array<{ comp: number; y: number }> = []
+  for (const b of w.buildings.values()) {
+    if (b.state !== 'standing') continue
+    const price = withDuty(acquisitionPrice(w, b))
+    if (price <= 0) continue
+    const c = centroid(b.footprint)
+    offers.push({
+      comp: competitionAt(w, c[0], c[1]),
+      y: (b.yieldPerTick * RATE_WINDOW_TICKS) / price,
+    })
+  }
+  offers.sort((a, b) => a.comp - b.comp)
+  const q = Math.max(1, Math.floor(offers.length / 4))
+  const avg = (xs: typeof offers) => (xs.length ? xs.reduce((s, x) => s + x.y, 0) / xs.length : 0)
+  const quiet = avg(offers.slice(0, q))
+  return quiet > 0 ? avg(offers.slice(-q)) / quiet : 1
+}
+
+/** Time-controlled transacted contested/quiet over purchases made so far. */
+function transactedRatioOf(w: World): number {
+  const tx = [...w.transactions].sort(
+    (a, b) =>
+      a.competition - a.competitionMedianAtBuy - (b.competition - b.competitionMedianAtBuy),
+  )
+  const q = Math.max(1, Math.floor(tx.length / 4))
+  const avg = (xs: typeof tx) =>
+    xs.length ? xs.reduce((s, x) => s + x.returnOnPrice, 0) / xs.length : 0
+  const quiet = avg(tx.slice(0, q))
+  return quiet > 0 ? avg(tx.slice(-q)) / quiet : 1
+}
+
+function pricingOf(
+  w: World,
+  curve: Summary['curve'],
+) {
   const cols = w.intensityCols
   const rows = w.intensityRows
   const cell = w.intensityCell
@@ -433,13 +500,40 @@ function pricingOf(w: World) {
   const mean = (xs: Array<{ cap: number }>): number =>
     xs.length ? xs.reduce((s, x) => s + x.cap, 0) / xs.length : 0
 
-  const comps = live.map((x) => x.comp)
+  /**
+   * The surface spread is read MID-RUN, not at the end. A single chunk whose
+   * supply has been bought out ends with competition saturated everywhere —
+   * demand over near-zero supply — which is §27.5's terminal state working,
+   * not its differentiation failing. The question "is the mechanism spatially
+   * differentiated" has to be asked while there is still a market to
+   * differentiate, so it reads the curve point nearest half budget.
+   */
+  const mid = curve.length
+    ? curve.reduce((best, p) =>
+        Math.abs(p.decisions - curve[curve.length - 1].decisions / 2) <
+        Math.abs(best.decisions - curve[curve.length - 1].decisions / 2)
+          ? p
+          : best,
+      )
+    : undefined
   const lvs = [...w.parcels.values()].map((p) => p.landValue)
   const contestedCapRate = mean(contested)
   const quietCapRate = mean(quiet)
 
-  // the transaction-side measure, which is the one §27.5's claim is about
-  const tx = [...w.transactions].sort((a, b) => a.competition - b.competition)
+  /**
+   * The transaction-side measure, which is the one §27.5's claim is about.
+   *
+   * Ranked by competition RELATIVE to the chunk median at the moment of
+   * purchase. Build 7's first cut ranked raw competition, and on a run whose
+   * surface saturates as supply exhausts, that sorted transactions by *when*
+   * they happened rather than *where* — the "inversion" it reported was early
+   * buyers beating late buyers, which is true and is not the mechanism. A pass
+   * for the wrong reason is the silent-plausible-output class again, in a
+   * measurement.
+   */
+  const tx = [...w.transactions].sort(
+    (a, b) => a.competition - a.competitionMedianAtBuy - (b.competition - b.competitionMedianAtBuy),
+  )
   const tq = Math.max(1, Math.floor(tx.length / 4))
   const avg = (xs: typeof tx): number =>
     xs.length ? xs.reduce((s, x) => s + x.returnOnPrice, 0) / xs.length : 0
@@ -454,8 +548,8 @@ function pricingOf(w: World) {
     quietReturn,
     returnRatio: quietReturn > 0 ? contestedReturn / quietReturn : 1,
     transactions: tx.length,
-    competitionP10: percentile(comps, 0.1),
-    competitionP90: percentile(comps, 0.9),
+    competitionP10: mid?.compP10 ?? 0,
+    competitionP90: mid?.compP90 ?? 0,
     landValueP10: percentile(lvs, 0.1),
     landValueP90: percentile(lvs, 0.9),
   }

@@ -33,7 +33,7 @@ import {
   spend,
   withDuty,
 } from './economy.ts'
-import { type Agent, type Intent, type World, floorArea } from './state.ts'
+import { type Agent, type PlanSpec, type World, floorArea } from './state.ts'
 
 /**
  * §4's action set. Everything an agent can do to the built environment.
@@ -44,8 +44,8 @@ export type AgentAction =
       kind: 'acquire_building'
       buildingId: string
       rationale: string
-      /** §23.3: the plan this purchase is for; the agent commits to it */
-      intent?: Intent
+      /** §23.3/§29.2: the plan this purchase is for; it is filed on the site */
+      intent?: PlanSpec
     }
   | { kind: 'acquire_parcel'; parcelId: string; rationale: string }
   | { kind: 'renovate'; buildingId: string; rationale: string }
@@ -59,7 +59,7 @@ export type AgentAction =
       levels: number
       rationale: string
     }
-  | { kind: 'assemble'; parcelIds: string[]; rationale: string; intent?: Intent }
+  | { kind: 'assemble'; parcelIds: string[]; rationale: string; intent?: PlanSpec }
   | { kind: 'build_road'; parcelId: string; rationale: string }
 
 /**
@@ -103,25 +103,59 @@ function recordDecision(world: World, agent: Agent, action: ScoredAction): void 
     }
   }
 
-  // §23.3: a purchase commits the agent to what it bought the thing for
+  /**
+   * §29.2: a purchase files its plan on the ground it bought, displacing any
+   * plan a previous owner left there. From here the plan travels with the land
+   * — inheritance and resale carry it without another line of code.
+   */
   if ((action.kind === 'acquire_building' || action.kind === 'assemble') && action.intent) {
-    agent.intent = action.intent
+    const spec = action.intent
+    const ground =
+      action.kind === 'assemble'
+        ? [...action.parcelIds]
+        : [world.buildings.get(action.buildingId)?.parcelId].filter((x): x is string => !!x)
+    if (ground.length) {
+      world.filePlan({
+        id: world.newPlanId(),
+        kind: spec.kind,
+        parcelIds: ground,
+        buildingId: action.kind === 'acquire_building' ? action.buildingId : undefined,
+        purpose: spec.purpose,
+        value: spec.value,
+        setTick: world.tick,
+      })
+    }
   }
 
   /**
-   * §23.3: a plan that has been carried out is over. Clearing it is what lets
-   * the agent go shopping again — the commitment is a period of doing the thing
-   * rather than a cooling-off timer wearing a plan's clothes.
+   * A plan that has been carried out is over; one whose subject is gone and
+   * cannot come back is dead. Both are read off the site rather than off the
+   * agent, so completion by an heir — or by a buyer who took the site plan and
+   * all — retires the same plan the founder filed.
    */
-  const i = agent.intent
-  if (i && i.kind !== 'assemble') {
-    const done =
-      (i.kind === 'convert' && action.kind === 'convert' && action.buildingId === i.buildingId) ||
-      (i.kind === 'renovate' && action.kind === 'renovate' && action.buildingId === i.buildingId) ||
-      (i.kind === 'redevelop' && action.kind === 'develop')
-    if (done) agent.intent = undefined
-  } else if (i && i.kind === 'assemble' && action.kind === 'develop') {
-    agent.intent = undefined
+  if (action.kind === 'convert' || action.kind === 'renovate') {
+    const pid = world.buildings.get(action.buildingId)?.parcelId
+    const planId = pid ? world.planByParcel.get(pid) : undefined
+    const plan = planId ? world.sitePlans.get(planId) : undefined
+    if (plan && plan.kind === action.kind && plan.buildingId === action.buildingId) {
+      world.retirePlan(plan.id)
+    }
+  }
+  if (action.kind === 'develop') {
+    const retire = new Set<string>()
+    for (const pid of action.parcelIds) {
+      const planId = world.planByParcel.get(pid)
+      if (planId) retire.add(planId)
+    }
+    for (const id of retire) world.retirePlan(id)
+  }
+  if (action.kind === 'demolish') {
+    // demolition is progress for a redevelop/assemble plan and the end of a
+    // convert/renovate one — the subject no longer exists
+    const pid = world.buildings.get(action.buildingId)?.parcelId
+    const planId = pid ? world.planByParcel.get(pid) : undefined
+    const plan = planId ? world.sitePlans.get(planId) : undefined
+    if (plan && (plan.kind === 'convert' || plan.kind === 'renovate')) world.retirePlan(plan.id)
   }
 
   // §22.2: churn per building
@@ -282,7 +316,7 @@ function acquireBuilding(
   agent: Agent,
   buildingId: string,
   rationale: string,
-  intent?: Intent,
+  intent?: PlanSpec,
 ): ActionOutcome {
   const b = world.standing(buildingId)
   if (!b) return { ok: false, reason: 'gone' }
@@ -310,6 +344,7 @@ function acquireBuilding(
       world.transactions.push({
         competition: competitionAt(world, at.centroid[0], at.centroid[1]),
         returnOnPrice: (b.yieldPerTick * RATE_WINDOW_TICKS) / Math.max(1e-9, cost),
+        competitionMedianAtBuy: world.competitionMedian,
       })
     }
   }
@@ -317,6 +352,10 @@ function acquireBuilding(
 
   const parcel = world.parcelOf(b)
   if (parcel) {
+    // §29.2 exposed this: the seller's parcel set kept the id after the ground
+    // changed hands, which was harmless while nothing keyed off the set and is
+    // wrong now that plan mastery does.
+    if (seller && parcel.ownerId === seller.id) seller.parcels.delete(parcel.id)
     parcel.ownerId = agent.id
     agent.parcels.add(parcel.id)
   }

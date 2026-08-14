@@ -265,8 +265,41 @@ export function normalisedIntensity(world: World, x: number, y: number): number 
  * way to tell whether the pricing was wrong or the plumbing was.
  */
 export const COMPETITION = {
-  /** what a fully bid-up locality adds to its land value, as a multiplier */
-  gain: 0.85,
+  /**
+   * §29.1: what a fully bid-up locality adds to the price of an asset there.
+   *
+   * CALIBRATED against the inversion criterion, then frozen. The criterion is
+   * a mechanism specification anchored to a real fact: competition bids prime
+   * up until prime yields compress below secondary, and that inversion is what
+   * pushes capital out of prime markets. The rule, written before any sweep
+   * ran: the lowest gain at which contested ground returns less than quiet
+   * ground, margin 0.95.
+   *
+   * The ruler broke twice before the number meant anything, and both breaks
+   * are worth keeping:
+   *
+   *   - ranking transactions by raw competition sorted them by WHEN, not
+   *     WHERE — the surface saturates as supply exhausts, so early-vs-late
+   *     masqueraded as quiet-vs-contested and "inverted" for the wrong reason.
+   *   - transacted returns cannot invert at all while agents are
+   *     return-rational: clearing selects on the deal beating the buyer's
+   *     alternatives, so the traded sample in a bid-up place is precisely the
+   *     survivors. Transaction counts falling with gain (815 -> 531 across the
+   *     sweep) is where being priced out is actually visible.
+   *
+   * So the criterion reads the OFFERED surface — what a marginal buyer would
+   * earn on each still-standing building, duty in — at HALF budget, while the
+   * market is differentiated rather than terminally saturated. Offered
+   * contested/quiet at 40,000 decisions, 2 seeds:
+   *
+   *   0.85  1.089    upright
+   *   1.50  0.873    inverted            <- chosen, the §29.1 state
+   *   2.50  1.002    flat (2-seed noise)
+   *   6.00  0.672    inverted hard, and transactions thin toward nothing
+   *
+   * The same value the broken ruler chose, kept for the right reason.
+   */
+  gain: 1.5,
   /**
    * How fast the price tracks demand, per market step. Deliberately slow.
    * §28.4: "if price responds too fast, capital oscillates between two
@@ -350,15 +383,40 @@ export function recomputeCompetition(world: World): void {
       world.demand[k] *= COMPETITION.decay
     }
   }
+
+  // the spatial median over live cells, for time-controlling the transaction
+  // record. Cells with no supply and no demand are dead ground, not quiet.
+  const live: number[] = []
+  for (let k = 0; k < cols * rows; k++) {
+    if (supply[k] > 0 || world.demand[k] > 0.01) live.push(world.competition[k])
+  }
+  live.sort((a, b) => a - b)
+  world.competitionMedian = live.length ? live[live.length >> 1] : 0
 }
 
 export function landValuePerM2(world: World, p: Parcel): number {
   const access = 0.35 + 0.65 * clamp01(p.accessScore)
   const intensity = 0.45 + 1.35 * normalisedIntensity(world, p.centroid[0], p.centroid[1])
-  // §27.5: the market term. Desirability sets the level, competition for what
-  // is left sets how far above it the price actually goes.
-  const bid = 1 + COMPETITION.gain * competitionAt(world, p.centroid[0], p.centroid[1])
-  return ECONOMY.landBase * access * intensity * bid
+  return ECONOMY.landBase * access * intensity
+}
+
+/**
+ * §29.1: what competition adds to the price of an asset here.
+ *
+ * Build 6 put this term on land value and it barely moved the outcome, because
+ * land is 17% of what a standing building is worth. Multiplying 17% of the
+ * price by up to 1.85 moves the price by 1.14, against a yield gradient of
+ * 1.63 — the mechanism was applied to the wrong sixth of the thing being bid
+ * for, which is a mechanism fault rather than a constant that wanted turning up.
+ *
+ * A bidding war is over the asset. Nobody bids for the land component of a
+ * building they intend to keep; the split into land and structure is an
+ * accounting decomposition, not what changes hands. So the premium goes on the
+ * transaction, once, and land value goes back to being the fundamental that
+ * §21.1's site value reads.
+ */
+export function competitionPremium(world: World, x: number, y: number): number {
+  return 1 + COMPETITION.gain * competitionAt(world, x, y)
 }
 
 export function recomputeLandValues(world: World): void {
@@ -368,7 +426,8 @@ export function recomputeLandValues(world: World): void {
 }
 
 export function parcelPrice(world: World, p: Parcel): number {
-  return p.landValue * p.areaM2 * (1 + ECONOMY.acquisitionPremium)
+  const bid = competitionPremium(world, p.centroid[0], p.centroid[1])
+  return p.landValue * p.areaM2 * (1 + ECONOMY.acquisitionPremium) * bid
 }
 
 export function buildingValue(world: World, b: Building): number {
@@ -379,7 +438,12 @@ export function buildingValue(world: World, b: Building): number {
 }
 
 export function acquisitionPrice(world: World, b: Building): number {
-  return buildingValue(world, b) * (1 + ECONOMY.acquisitionPremium)
+  const c = centroidFast(b)
+  return (
+    buildingValue(world, b) *
+    (1 + ECONOMY.acquisitionPremium) *
+    competitionPremium(world, c[0], c[1])
+  )
 }
 
 /**

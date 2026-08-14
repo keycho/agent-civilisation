@@ -3,21 +3,30 @@
  * current build reaches its present end state, then freeze it and never tune it
  * again."
  *
- * §21.2 permits exactly one recalibration, because §21.1 added a mechanism the
- * model did not have rather than tuning a constant against an outcome. This is
- * that recalibration, and the rule below was written before the number was
- * read.
+ * §21.2 permitted one recalibration for the §21.1 mechanism; §29.3 permits a
+ * second because the CRITERION was at fault, not the number: "the index
+ * plateaus long after the world is used up, so calibrating on the plateau
+ * guarantees an over-run world." The plateau rule measured when the aggregate
+ * went quiet; agents spend the last quarter of such a budget re-treading stock
+ * they have already been over, which is what pushed the touched share to 96%
+ * against an 80% ceiling and washed the untouched correlations out to noise.
  *
- * The build-2 rule pointed at a prior end state — 34.6% divergence, 135
- * agent-built, 85 cleared — which the new model has no reason to reproduce and
- * which §21.1 explicitly disowns. So the end state is now defined by a property
- * of the run instead of by a remembered number: the point at which the world
- * stops changing materially. All three of the index, the agent-built count and
- * the cleared count must go quiet together, because a plateau in the index
- * alone can hide construction still finishing.
+ * So the budget now reads off the touched share, and the rule — written before
+ * the number, §29.3's discipline as ever — is:
+ *
+ *   the decision count at which the touched share crosses 80%,
+ *   the ceiling §21.1 set from what real cities do not do
+ *
+ * ("real cities do not redevelop 91% of their stock in five generations").
+ * The plateau detector stays in the output as a diagnostic, because the gap
+ * between the two numbers is the re-treading and worth seeing.
+ *
+ * §29.3 also names the expectation that this concept retires at multi-chunk —
+ * a world where saturation produces migration needs no budget, and the budget
+ * survives only as the harness's unit.
  *
  * It is not run by the test suite and must not be used to chase a target — read
- * the plateau, write the number down, stop.
+ * the crossing, write the number down, stop.
  *
  *   node --no-warnings packages/sim/test/calibrate.ts [maxDecisions]
  */
@@ -42,12 +51,29 @@ const t0 = Date.now()
 const s = await runSeed(world, 'calibration', max, true)
 const elapsed = (Date.now() - t0) / 1000
 
-console.log('decisions   divergence   agent-built   cleared   gen')
+console.log('decisions   divergence   touched   agent-built   cleared   gen')
 for (const p of s.curve) {
   console.log(
     `${String(p.decisions).padStart(9)}   ${(p.index * 100).toFixed(1).padStart(9)}%   ` +
+      `${(p.touched * 100).toFixed(0).padStart(6)}%   ` +
       `${String(p.agentOrigin).padStart(11)}   ${String(p.cleared).padStart(7)}   ${String(p.generation).padStart(3)}`,
   )
+}
+
+/**
+ * §29.3's criterion: the crossing of the touched-share ceiling, interpolated
+ * between the two snapshots that straddle it.
+ */
+const CEILING = 0.8
+let crossing: number | null = null
+for (let i = 1; i < s.curve.length; i++) {
+  const a = s.curve[i - 1]
+  const b = s.curve[i]
+  if (a.touched < CEILING && b.touched >= CEILING) {
+    const f = (CEILING - a.touched) / Math.max(1e-9, b.touched - a.touched)
+    crossing = Math.round(a.decisions + f * (b.decisions - a.decisions))
+    break
+  }
 }
 
 let plateau: number | null = null
@@ -78,9 +104,13 @@ console.log(
 console.log(`site-led acquisitions: ${s.siteLedAcquisitions}`)
 console.log(`ran ${s.decisions.toLocaleString()} decisions over ${s.ticks.toLocaleString()} ticks in ${elapsed.toFixed(1)}s`)
 console.log(
-  plateau
-    ? `\nplateau: index gains under ${INDEX_GAIN * 100}pp and stock growth under ` +
-        `${STOCK_GROWTH * 100}% per ${WINDOW.toLocaleString()} decisions from ~${plateau.toLocaleString()}`
-    : '\nno plateau within the range — the world is still changing',
+  crossing
+    ? `\ntouched share crosses ${CEILING * 100}% at ~${crossing.toLocaleString()} decisions  <- §29.3, the budget`
+    : `\ntouched share never reaches ${CEILING * 100}% in the range`,
 )
-console.log('\nwrite the plateau into DECISION_BUDGET in lib/summarise.ts and leave it alone.')
+console.log(
+  plateau
+    ? `plateau (diagnostic only): from ~${plateau.toLocaleString()} — the gap to the crossing is re-treading`
+    : 'no plateau within the range',
+)
+console.log('\nwrite the crossing into DECISION_BUDGET in lib/summarise.ts and leave it alone.')
