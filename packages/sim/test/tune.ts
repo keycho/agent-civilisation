@@ -719,10 +719,27 @@ assert(
 )
 // The claim itself. 0.95 rather than 1.0 so a coin-flip result cannot pass as
 // compression; the threshold is on the wrong side of neutral on purpose.
-assert(
+known(
   retRatio < 0.95,
   'return on price compresses where agents concentrate',
   `${retRatio.toFixed(2)}x`,
+  'this was pre-registered as the measure that decides the verdict and it is ' +
+    'confounded, which the run is what showed. A place is contested *because* ' +
+    'it is desirable and desirable means high yield, so agents buying into ' +
+    'contested ground get better returns whatever the price does. Traced across ' +
+    'budgets to rule out saturation: competition keeps full spread while this ' +
+    'ratio sits at 1.3-1.6x from 5,000 decisions to 80,000. Both pre-registered ' +
+    'measures compare hot places against cold ones, and hot and cold differ for ' +
+    'reasons that are nothing to do with the mechanism — the cap-rate one leans ' +
+    'the other way and reads 0.61x, which is no more meaningful. ' +
+    'The deciding test is ab-pricing.ts, which runs one seed twice with ' +
+    'COMPETITION.gain as the only difference, so selection is identical and ' +
+    'whatever moves is the mechanism. seed-3 at 40,000: land value spread 5.43 ' +
+    '-> 10.06, transactions 2858 -> 2564, contested-quartile return -3.0% while ' +
+    'the quiet quartile rises 1.8%. Price responds to demand; compression is ' +
+    'directionally right and smaller than the 5% this threshold asks for. Kept ' +
+    'here rather than deleted because the confound is worth seeing, and gain is ' +
+    'not raised until it passes.',
 )
 
 // ---------------------------------------------------------------------------
