@@ -1,5 +1,5 @@
 import { type ChunkFrame, type WorldSeed, ringToWkt } from '@civ/core'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -7,7 +7,15 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 export const SEED_DIR = join(HERE, '..', '..', 'client', 'public', 'world')
 export const SQL_DIR = join(HERE, '..', '..', 'persistence', 'seed')
 
-export async function emitSeed(seed: WorldSeed): Promise<{ jsonPath: string; bytes: number }> {
+/**
+ * §21.4: the emitter hands back what it wrote, re-read from disk, not the
+ * object it was given. Millimetre quantisation happens in `JSON.stringify`, so
+ * anything validating the argument is validating a value that never reaches a
+ * consumer. The caller gets the artifact.
+ */
+export async function emitSeed(
+  seed: WorldSeed,
+): Promise<{ jsonPath: string; bytes: number; written: WorldSeed }> {
   await mkdir(SEED_DIR, { recursive: true })
   const jsonPath = join(SEED_DIR, `${seed.chunk.id}.json`)
   const text = JSON.stringify(seed, roundNumbers)
@@ -16,7 +24,8 @@ export async function emitSeed(seed: WorldSeed): Promise<{ jsonPath: string; byt
     join(SEED_DIR, 'index.json'),
     JSON.stringify({ chunks: [{ id: seed.chunk.id, name: seed.chunk.name, file: `${seed.chunk.id}.json` }] }, null, 2),
   )
-  return { jsonPath, bytes: Buffer.byteLength(text) }
+  const written = JSON.parse(await readFile(jsonPath, 'utf8')) as WorldSeed
+  return { jsonPath, bytes: Buffer.byteLength(text), written }
 }
 
 /** Coordinates at millimetre precision; the seed is served over the wire. */
@@ -75,6 +84,38 @@ export async function emitSql(seed: WorldSeed, frame: ChunkFrame): Promise<strin
   const text = lines.join('\n')
   await writeFile(path, text)
   return path
+}
+
+/**
+ * §21.4 applied to the other emitter. The SQL is a lossier artifact than the
+ * JSON: coordinates go through RD -> WGS84 with the Schreutelkamp/van Hees
+ * polynomials and are then written at 8 decimal places, and heights are cut to
+ * centimetres. None of that had a check on it, so this reads the file back,
+ * projects every footprint vertex to local metres again, and reports the worst
+ * round-trip error and any building that failed to make it into the file.
+ */
+export async function checkSql(
+  path: string,
+  seed: WorldSeed,
+  frame: ChunkFrame,
+): Promise<{ rows: number; missing: number; worstErrorM: number }> {
+  const text = await readFile(path, 'utf8')
+  const wkt = [...text.matchAll(/POLYGON\(\((.*?)\)\)/g)].map((m) => m[1])
+  const byIndex = seed.buildings
+
+  let worst = 0
+  for (let i = 0; i < Math.min(wkt.length, byIndex.length); i++) {
+    const pts = wkt[i]
+      .split(',')
+      .map((pair) => pair.trim().split(/\s+/).map(Number) as [number, number])
+    const ring = byIndex[i].footprint
+    for (let j = 0; j < ring.length; j++) {
+      const [lon, lat] = pts[j]
+      const [x, y] = frame.toLocal(lat, lon)
+      worst = Math.max(worst, Math.hypot(x - ring[j][0], y - ring[j][1]))
+    }
+  }
+  return { rows: wkt.length, missing: byIndex.length - wkt.length, worstErrorM: worst }
 }
 
 function q(s: string): string {

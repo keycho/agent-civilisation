@@ -9,14 +9,14 @@
  * committed output in packages/client/public/world is what the app loads.
  */
 import type { ChunkMeta, Provenance, Substrate, WorldSeed } from '@civ/core'
-import { boundsOfMany, rdFrame } from '@civ/core'
+import { boundsOfMany, rdFrame, seedChecks, validateSeed } from '@civ/core'
 import { AREAS, rdBboxOf, wgsBboxOf } from './areas.ts'
 import { extractBlocks } from './build/blocks.ts'
 import { buildBaselineBuildings } from './build/buildings.ts'
 import { deriveParcels } from './build/parcels.ts'
 import { buildRoadGraph } from './build/roads.ts'
 import { buildSubstrate, waterRings } from './build/substrate.ts'
-import { emitSeed, emitSql } from './emit.ts'
+import { checkSql, emitSeed, emitSql } from './emit.ts'
 import { readFile } from 'node:fs/promises'
 import {
   overpass,
@@ -41,7 +41,7 @@ const wgs = wgsBboxOf(area)
 const r = area.radiusM
 const clip = { minX: -r, minY: -r, maxX: r, maxY: r }
 
-log('\n[1/6] fetching sources')
+log('\n[1/7] fetching sources')
 const bag = await fetchBag(rd)
 const osmBuildings = await overpass(queryBuildings(wgs), 'buildings')
 const osmRoads = await overpass(queryRoads(wgs), 'roads')
@@ -52,7 +52,7 @@ log(
     `highways=${osmRoads.elements.length}  water=${osmWater.elements.length}  landcover=${osmLand.elements.length}`,
 )
 
-log('\n[2/6] buildings: 3dbag geometry + osm tags')
+log('\n[2/7] buildings: 3dbag geometry + osm tags')
 const built = buildBaselineBuildings(bag, osmBuildings.elements, frame, area.id, clip)
 log(
   `      ${built.buildings.length} baseline buildings  (tag match ${built.matched}, fallback ${built.unmatched})`,
@@ -60,17 +60,17 @@ log(
 log(`      purpose   ${fmtCounts(built.purposeCounts)}`)
 log(`      archetype ${fmtCounts(built.archetypeCounts)}`)
 
-log('\n[3/6] road graph')
+log('\n[3/7] road graph')
 const graph = buildRoadGraph(osmRoads.elements, frame)
 log(`      ${graph.nodes.length} nodes  ${graph.edges.length} edges  ${fmtCounts(graph.classCounts)}`)
 
-log('\n[4/6] blocks from planar faces')
+log('\n[4/7] blocks from planar faces')
 const { blocks, dropped } = extractBlocks(graph.nodes, graph.edges)
 log(
   `      ${blocks.length} blocks  (dropped: ${dropped.tooSmall} small, ${dropped.tooLarge} large, ${dropped.degenerate} degenerate)`,
 )
 
-log('\n[5/6] substrate + parcels')
+log('\n[5/7] substrate + parcels')
 const localBounds = boundsOfMany([
   built.buildings.flatMap((b) => b.footprint),
   [
@@ -202,11 +202,38 @@ const seed: WorldSeed = {
   },
 }
 
-log('\n[6/6] emitting')
-const { jsonPath, bytes } = await emitSeed(seed)
+log('\n[6/7] emitting')
+const { jsonPath, bytes, written } = await emitSeed(seed)
 const sqlPath = await emitSql(seed, frame)
 log(`      ${jsonPath}  (${(bytes / 1024 / 1024).toFixed(2)} MB)`)
 log(`      ${sqlPath}`)
+
+/**
+ * §21.4. The canaries run here, on the files that were just written and read
+ * back, not on the objects above. Twenty self-intersecting parcels once
+ * survived a fix because the validator saw the unrounded ring and the emitter
+ * wrote millimetre-quantised coordinates; a validator that never reads the
+ * artifact cannot catch anything the artifact introduces.
+ */
+log('\n[7/7] validating the emitted artifacts')
+const checks = seedChecks(validateSeed(written))
+for (const c of checks) log(`      ${c.ok ? 'ok  ' : 'FAIL'} ${c.label.padEnd(46)} ${c.detail}`)
+
+const sql = await checkSql(sqlPath, written, frame)
+const sqlOk = sql.missing === 0 && sql.worstErrorM < 0.05
+log(
+  `      ${sqlOk ? 'ok  ' : 'FAIL'} ${'sql round-trips to within 5 cm'.padEnd(46)} ` +
+    `${sql.rows} rows, worst ${(sql.worstErrorM * 1000).toFixed(1)} mm` +
+    (sql.missing ? `, ${sql.missing} MISSING` : ''),
+)
+
+const failed = checks.filter((c) => !c.ok).length + (sqlOk ? 0 : 1)
+if (failed > 0) {
+  throw new Error(
+    `${failed} structural check(s) failed against the emitted artifact. ` +
+      'The files are written; do not commit them.',
+  )
+}
 
 log(`\ndone in ${((Date.now() - t0) / 1000).toFixed(1)}s`)
 log(

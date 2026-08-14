@@ -3,13 +3,7 @@
  * about. Shared by calibrate.ts (one seed, verbose) and tune.ts (N seeds,
  * distribution).
  */
-import {
-  BLOCK_BOUNDING_CLASSES,
-  type Parcel,
-  type Ring,
-  type WorldSeed,
-  distanceToSegment,
-} from '@civ/core'
+import { type SeedReport, type WorldSeed, distanceToSegment, validateSeed } from '@civ/core'
 import { MemoryStore } from '@civ/persistence'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -100,28 +94,9 @@ export interface Summary {
    */
   untouchedByPurpose: Record<string, { untouched: number; total: number }>
   correlations: { access: number; landValue: number; adjacency: number }
-  /** structural canaries over the seed itself */
-  structural: StructuralReport
+  /** structural canaries over the emitted artifact (§21.4) */
+  structural: SeedReport
   curve: Array<{ decisions: number; index: number; agentOrigin: number; cleared: number; generation: number }>
-}
-
-export interface StructuralReport {
-  parcels: number
-  developableVacantShare: number
-  roadReachableShare: number
-  buildingsWithBackLinkedParcel: number
-  buildingsTotal: number
-  selfIntersectingParcels: number
-  /** derived (Voronoi) parcels laid over a carriageway — must be zero */
-  derivedParcelsOverCarriageway: number
-  /**
-   * Footprint-derived parcels containing a carriageway. These are real BAG
-   * buildings that OSM draws a road through — gatehouses, arcades, service
-   * passages. The parcel is the building's own footprint and the building
-   * genuinely stands there; dropping it would make a real building unownable,
-   * which is the unreachable-land class §18.2 exists to catch.
-   */
-  footprintParcelsOverCarriageway: number
 }
 
 export async function loadSeed(chunk = 'schiedam-havens'): Promise<WorldSeed> {
@@ -250,7 +225,7 @@ export async function runSeed(
       landValue: pearson(flags, value),
       adjacency: pearson(flags, degree),
     },
-    structural: structuralReport(world),
+    structural: validateSeed(world),
     curve,
   }
 }
@@ -275,142 +250,6 @@ function leverageOf(w: {
     everBorrowedShare: all.filter((a) => a.peakDebt > 0).length / Math.max(1, all.length),
     medianPeakDebt: median(all.map((a) => a.peakDebt)),
   }
-}
-
-// ---------------------------------------------------------------------------
-// §18.3 structural canaries — properties of the seed, checked once
-// ---------------------------------------------------------------------------
-
-export function structuralReport(world: WorldSeed): StructuralReport {
-  const parcels = world.parcels
-  const byId = new Map(parcels.map((p) => [p.id, p]))
-
-  const occupied = new Set<string>()
-  let backLinked = 0
-  for (const p of parcels) if (p.buildingId) occupied.add(p.buildingId)
-  for (const b of world.buildings) if (occupied.has(b.id)) backLinked++
-
-  const vacantDevelopable = parcels.filter((p) => !p.buildingId && p.developable).length
-  const reachable = parcels.filter((p) => p.roadDistanceM <= 60).length
-
-  let selfIntersecting = 0
-  for (const p of parcels) if (ringSelfIntersects(p.polygon)) selfIntersecting++
-
-  const over = countParcelsOverCarriageway(world, byId)
-
-  return {
-    parcels: parcels.length,
-    developableVacantShare: vacantDevelopable / Math.max(1, parcels.length),
-    roadReachableShare: reachable / Math.max(1, parcels.length),
-    buildingsWithBackLinkedParcel: backLinked,
-    buildingsTotal: world.buildings.length,
-    selfIntersectingParcels: selfIntersecting,
-    derivedParcelsOverCarriageway: over.derived,
-    footprintParcelsOverCarriageway: over.footprint,
-  }
-}
-
-/** O(n²) over a ring's segments; rings here are under ~30 vertices. */
-function ringSelfIntersects(ring: Ring): boolean {
-  const n = ring.length
-  if (n < 4) return false
-  for (let i = 0; i < n; i++) {
-    const a1 = ring[i]
-    const a2 = ring[(i + 1) % n]
-    for (let j = i + 2; j < n; j++) {
-      if (i === 0 && j === n - 1) continue // shares the closing vertex
-      const b1 = ring[j]
-      const b2 = ring[(j + 1) % n]
-      if (segmentsCross(a1, a2, b1, b2)) return true
-    }
-  }
-  return false
-}
-
-function segmentsCross(
-  a1: [number, number],
-  a2: [number, number],
-  b1: [number, number],
-  b2: [number, number],
-): boolean {
-  const d = (p: [number, number], q: [number, number], r: [number, number]) =>
-    (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
-  const d1 = d(b1, b2, a1)
-  const d2 = d(b1, b2, a2)
-  const d3 = d(a1, a2, b1)
-  const d4 = d(a1, a2, b2)
-  return ((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0))
-}
-
-/**
- * A parcel must not sit on the carriageway. Sampling the road centrelines and
- * asserting no sample lands inside a parcel is the direct test — this is the
- * sidewalk-as-block-face bug from build 1, which produced parcels covering the
- * street and looked entirely plausible in the numbers.
- */
-function countParcelsOverCarriageway(
-  world: WorldSeed,
-  byId: Map<string, Parcel>,
-): { derived: number; footprint: number } {
-  const nodes = new Map(world.roads.nodes.map((n) => [n.id, n]))
-  const grid = new Map<string, Parcel[]>()
-  const CELL = 30
-  const key = (x: number, y: number) => `${Math.floor(x / CELL)}:${Math.floor(y / CELL)}`
-  for (const p of byId.values()) {
-    let minX = Infinity
-    let minY = Infinity
-    let maxX = -Infinity
-    let maxY = -Infinity
-    for (const [x, y] of p.polygon) {
-      minX = Math.min(minX, x)
-      minY = Math.min(minY, y)
-      maxX = Math.max(maxX, x)
-      maxY = Math.max(maxY, y)
-    }
-    for (let x = minX; x <= maxX + CELL; x += CELL) {
-      for (let y = minY; y <= maxY + CELL; y += CELL) {
-        const k = key(x, y)
-        const arr = grid.get(k)
-        if (arr) arr.push(p)
-        else grid.set(k, [p])
-      }
-    }
-  }
-
-  const offenders = new Set<string>()
-  for (const e of world.roads.edges) {
-    // Footways and cycleways run through courtyards and alleys; a parcel
-    // containing one is normal. Only vehicular carriageways are the fault.
-    if (!BLOCK_BOUNDING_CLASSES.has(e.class)) continue
-    const a = nodes.get(e.a)
-    const b = nodes.get(e.b)
-    if (!a || !b) continue
-    for (const t of [0.25, 0.5, 0.75]) {
-      const x = a.x + (b.x - a.x) * t
-      const y = a.y + (b.y - a.y) * t
-      for (const p of grid.get(key(x, y)) ?? []) {
-        if (offenders.has(p.id)) continue
-        if (pointInRing(p.polygon, x, y)) offenders.add(p.id)
-      }
-    }
-  }
-  let derived = 0
-  let footprint = 0
-  for (const id of offenders) {
-    if (byId.get(id)?.blockId === 'blk-orphan') footprint++
-    else derived++
-  }
-  return { derived, footprint }
-}
-
-function pointInRing(ring: Ring, x: number, y: number): boolean {
-  let inside = false
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const [xi, yi] = ring[i]
-    const [xj, yj] = ring[j]
-    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside
-  }
-  return inside
 }
 
 // ---------------------------------------------------------------------------

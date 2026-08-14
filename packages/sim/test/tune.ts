@@ -17,6 +17,7 @@ import { availableParallelism } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
+import { seedChecks, validateSeed } from '@civ/core'
 import {
   ALL_ACTION_KINDS,
   DECISION_BUDGET,
@@ -26,7 +27,6 @@ import {
   median,
   percentile,
   stdev,
-  structuralReport,
 } from './lib/summarise.ts'
 
 const run = promisify(execFile)
@@ -56,39 +56,17 @@ function known(ok: boolean, label: string, detail: string, why: string): void {
 // structural canaries first — properties of the seed, not of any run
 // ---------------------------------------------------------------------------
 
+// §21.4: `loadSeed` reads the file the importer wrote, so every check below
+// runs against the emitted artifact after quantisation and serialisation — the
+// same function the importer runs on the same file at emit time.
 const world = await loadSeed()
-const st = structuralReport(world)
+const st = validateSeed(world)
 
 console.log(`# ${world.chunk.name}: ${world.buildings.length} baseline buildings`)
 console.log(`# ${SEEDS} seeds, ${DECISION_BUDGET.toLocaleString()} decisions each (frozen, §20.9)\n`)
 
-console.log('§18.3 structural canaries')
-assert(
-  st.buildingsWithBackLinkedParcel === st.buildingsTotal,
-  'every building has a parcel that points back',
-  `${st.buildingsWithBackLinkedParcel}/${st.buildingsTotal}`,
-)
-assert(
-  st.developableVacantShare > 0.05,
-  'developable vacant parcels > 5% of parcels',
-  `${(st.developableVacantShare * 100).toFixed(1)}%`,
-)
-assert(
-  st.roadReachableShare > 0.95,
-  'parcels reachable from the road graph > 95%',
-  `${(st.roadReachableShare * 100).toFixed(1)}%`,
-)
-assert(st.selfIntersectingParcels === 0, 'no parcel geometry self-intersects', `${st.selfIntersectingParcels} bad`)
-assert(
-  st.derivedParcelsOverCarriageway === 0,
-  'no derived parcel overlaps a carriageway',
-  `${st.derivedParcelsOverCarriageway} over`,
-)
-assert(
-  st.footprintParcelsOverCarriageway <= Math.ceil(st.parcels * 0.01),
-  'footprint parcels over a carriageway within 1%',
-  `${st.footprintParcelsOverCarriageway} (OSM draws a road through the building)`,
-)
+console.log('§18.3 structural canaries (against the emitted seed)')
+for (const c of seedChecks(st)) assert(c.ok, c.label, c.detail)
 
 // ---------------------------------------------------------------------------
 // N seeds, in parallel
