@@ -5,20 +5,20 @@ This is the index: what each section asks for, and where it lives.
 
 | § | Asks for | Implemented in |
 |---|---|---|
-| **0** | Thesis lock; the two governing questions | README "the two questions", and the divergence overlay + year scrub answer the first |
+| **0** | Thesis lock; the two governing questions | README "the two questions"; the divergence overlay and event scrub answer the first |
 | **1** | Split the import by mutability; voxcity is substrate only | `packages/importer` (buildings/roads/parcels as discrete rows), `tools/voxcity` (substrate only, build-time) |
 | **2** | The ratio problem; 400–1,500 baseline buildings; NL/3DBAG | `packages/importer/src/areas.ts`, `probe.ts`; ratio check printed by `main.ts` |
-| **3** | Tick = 1 simulated day; six speeds; agent motion threshold | `packages/core/src/types.ts` (`SPEEDS`, `AGENT_MOTION_MAX_TPS`), `packages/sim/src/tick.ts` |
+| **3** | Tick granularity; speed control; agent motion threshold | superseded by §20: `core/src/types.ts` (`THROUGHPUT`, `AGENT_MOTION_MAX_THROUGHPUT`) |
 | **4** | Property economy; nine actions; four gradients; tune to >30% | `packages/sim/src/economy.ts`, `actions.ts`; measured by `packages/sim/test/tune.ts` |
 | **5** | Three tables, three lifecycles; append-only events; snapshots | `packages/persistence/schema.sql`, `src/store.ts`, `src/memory.ts` |
 | **6** | Parcels derived from block faces + Voronoi | `packages/importer/src/build/blocks.ts`, `build/parcels.ts` |
 | **7** | Roads as a graph, never geometry | `packages/core/src/types.ts` (`RoadNode`/`RoadEdge`), `packages/client/src/render/roadMesh.ts` |
-| **8** | Divergence classes, three surfaces, divergence index | `packages/core/src/types.ts` (`DIVERGENCE`), `packages/sim/src/divergence.ts`, year scrub in `main.ts` |
+| **8** | Divergence classes, three surfaces, divergence index | `packages/core/src/types.ts` (`DIVERGENCE`), `packages/sim/src/divergence.ts`, event scrub in `main.ts` |
 | **9** | Async decision engine; `Observation`; LLM stub | `packages/sim/src/engine.ts` |
 | **10** | Chunk origins and local ENU frames | `packages/core/src/geo/frame.ts`, `types.ts` (`ChunkMeta`) |
 | **12** | Build order | commit history, one commit per stage group |
 | **13** | Cut list | nothing here gathers, eats or walks as a mechanic |
-| **14** | First-run targets | asserted by `packages/sim/test/tune.ts` |
+| **14** | First-run targets | rewritten by §20.8 in terms of generations; distribution asserted by `test/tune.ts` |
 | **15** | Visual direction | README "Visual decisions"; `palette.ts`, `environment.ts`, `tiltShift.ts` |
 | **16.1** | Archetype generator; agent vocabulary; preview harness | `packages/core/src/archetype/`, `packages/client/preview/` |
 | **16.2** | Batched geometry + data texture; two batches | `packages/client/src/render/batch.ts`, `buildingData.ts`, `buildingRenderer.ts` |
