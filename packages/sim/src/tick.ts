@@ -3,7 +3,10 @@ import { BASE_CINEMATIC_WEIGHT, type WorldStore } from '@civ/persistence'
 import { advanceConstruction, applyAction } from './actions.ts'
 import {
   ECONOMY,
+  borrow,
+  creditHeadroom,
   decayStep,
+  receive,
   recomputeIntensity,
   recomputeLandValues,
   recomputeYields,
@@ -123,6 +126,8 @@ export class Simulation {
         capital:
           ECONOMY.startingCapital[0] +
           this.rng() * (ECONOMY.startingCapital[1] - ECONOMY.startingCapital[0]),
+        debt: 0,
+        peakDebt: 0,
         strategy: strategies[i % strategies.length],
         bornTick: 0,
         generation: 1,
@@ -173,10 +178,20 @@ export class Simulation {
           const b = w.standing(id)
           if (b?.state === 'standing') income += b.yieldPerTick * INCOME_EVERY
         }
-        // §20.2: financing trickles per tick rather than arriving on a calendar
-        // boundary; there are no boundaries any more.
-        agent.capital +=
-          income + (ECONOMY.financingPerWindow * INCOME_EVERY) / RATE_WINDOW_TICKS
+        // §21.1: income services debt before it accrues to the owner, and what
+        // is left over pays it down. §20.2: both accrue per tick rather than on
+        // a calendar boundary; there are no boundaries any more.
+        const interest =
+          (agent.debt * ECONOMY.interestPerWindow * INCOME_EVERY) / RATE_WINDOW_TICKS
+        receive(agent, Math.max(0, income - interest))
+        if (income < interest) agent.capital -= interest - income
+        // an unserviced balance rolls onto the facility where there is room for
+        // it, and where there is not the agent simply cannot afford to act
+        if (agent.capital < 0) {
+          const draw = Math.min(-agent.capital, creditHeadroom(w, agent))
+          agent.capital += draw
+          borrow(agent, draw)
+        }
       }
     }
 
@@ -185,6 +200,7 @@ export class Simulation {
       recomputeIntensity(w)
       recomputeLandValues(w)
       recomputeYields(w)
+      w.siteResidualCache.clear()
     }
 
     for (const agent of w.agents.values()) {
@@ -294,7 +310,11 @@ export class Simulation {
       ...agent,
       id: heirId,
       name: `${FIRST_NAMES[hash(heirId) % FIRST_NAMES.length]} ${agent.name.split(' ').slice(1).join(' ')}`,
+      // cash takes an estate haircut; debt passes at face value with the
+      // property that secures it, so a leveraged dynasty inherits its leverage
       capital: agent.capital * 0.82,
+      debt: agent.debt,
+      peakDebt: agent.debt,
       bornTick: w.tick,
       diedTick: undefined,
       generation: agent.generation + 1,
@@ -309,6 +329,7 @@ export class Simulation {
     }
     agent.heirId = heirId
     agent.capital = 0
+    agent.debt = 0
     w.agents.set(heirId, heir)
 
     for (const id of heir.holdings) {

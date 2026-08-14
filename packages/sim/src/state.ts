@@ -33,6 +33,14 @@ export interface Agent {
   id: string
   name: string
   capital: number
+  /**
+   * §21.1: drawn credit. An agent borrows against what it holds and pays
+   * interest on the balance, so a portfolio is leverage as well as income and
+   * over-extending is a real way to stop being able to act.
+   */
+  debt: number
+  /** high-water mark of drawn credit, so "did capital ever bind?" is answerable */
+  peakDebt: number
   strategy: Strategy
   bornTick: number
   diedTick?: number
@@ -121,6 +129,12 @@ export class World {
    * the log fills with tens of thousands of acquisitions that change nothing.
    */
   readonly lastTransfer = new Map<string, number>()
+
+  /**
+   * §21.1's site residual, per parcel and density appetite. Cleared whenever
+   * the market is recomputed, which is the only thing that can change it.
+   */
+  readonly siteResidualCache = new Map<string, number>()
 
   private nextBuildingSerial = 0
   private nextNodeSerial = 0

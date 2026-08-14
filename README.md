@@ -54,8 +54,8 @@ npm test
 **Can a spectator see how far the agent world has drifted from the real one?**
 Yes, three ways: the divergence overlay as a per-building lerp (§16.4), the
 event scrub restoring snapshots at the same viewpoint, and the divergence index.
-Across 20 seeds at the frozen decision budget the index runs **median 35.2%,
-p10 34.0%, stdev/median 0.028**, with a peak district around 56%.
+Across 20 seeds at the frozen decision budget the index runs **median 49.3%,
+p10 47.1%, stdev/median 0.030**, with a peak district around 67%.
 
 **Does it look like a handcrafted miniature world rather than a GIS viewport?**
 That was the harder half. See "Visual decisions" below.
@@ -88,30 +88,91 @@ inventing a date.
 
 `tune.ts` runs 20 seeds in parallel to a frozen decision budget and asserts on
 the distribution, because §14's targets passing once is not evidence. The budget
-was calibrated once by `calibrate.ts` — the decision count at which this build
-first reaches the end state it already had (34.6% index, 135 agent-built, 85
-cleared, all three together): 39,050, frozen at 39,000. It is not adjusted to
-make assertions pass.
+is calibrated by `calibrate.ts` and frozen; it has been set twice, and the rule
+for reading it was written before the number in both cases.
+
+| | budget | rule |
+|---|---|---|
+| build 2 | 39,000 | the decision count at which the build first reached the end state it had before the calendar came out |
+| build 3 | 65,000 | the plateau: index gains under 1pp and both agent-built and cleared growing under 5% per 5,000 decisions |
+
+Build 3's recalibration is the one §21.2 permits — site value and capital are a
+mechanism the model lacked, not constants tuned against an outcome. The larger
+number is not the model running slower; it is ~40% more stock being reachable
+and every purchase competing for finite credit.
 
 Structural canaries run over the seed itself before any simulation. Four of them
 caught real faults on first run — see the commit history; each produced output
 that looked entirely plausible.
 
-### One check reports KNOWN rather than passing
+### The KNOWN entry is gone
 
-Every utility building, every industrial one and every civic one is untouched in
-all 20 runs — 83% of the residue is identical across seeds. That is structural
-exclusion, not economics: utility rent barely clears its own maintenance, so its
-cap rate is ~0, and acquisition scores on income yield alone. No agent has ever
-considered a garage under any seed.
+Build 2 carried one check that printed KNOWN rather than passing: every utility,
+industrial and civic building was untouched in all 20 runs. That was structural
+exclusion rather than economics — utility rent barely clears its own
+maintenance, so its cap rate is ~0, and acquisition scored on income yield
+alone. No agent had ever considered a garage under any seed.
 
-The fix — valuing a building at the better of its income and its site, which is
-what acquisition actually is — was implemented and measured. It moves the median
-index from 35.9% to 54.9% and the touched share from 58% to 91%, because it
-unlocks roughly 40% of the stock. That is a decision about the model rather than
-a bug fix, and it collides with a budget that is deliberately frozen, so it is
-left for §18.4's yield rework on the second chunk. `tune.ts` prints it on every
-run instead of hiding it behind a green suite.
+§21.1 put site value in, and both of those are assertions now. The residue is
+periphery again: untouched correlates with land value at **r = -0.458**, which
+is §18.2's healthy reading, and the classes that were entirely excluded now run
+22% (industrial) and 69% (utility) untouched — half of that utility residue
+sitting on parcels under 60 m², which physically cannot carry a redevelopment.
+
+### What is judged (§21.1)
+
+Not the headline index. "That number came from an incomplete model and has no
+claim on the new one." The action mix, at the median across seeds:
+
+```
+acquire_building  45.7%     demolish   1.5%     assemble    0.3%
+renovate          23.0%     develop    1.8%     build_road  0.1%
+convert           18.8%     acquire_parcel 3.3%     expand   5.7%
+```
+
+Which reads as a property market: mostly trades and improvements, teardowns rare
+and expensive. 21% of the baseline is cleared and 29% of standing stock is agent
+built by the end. Capital binds — **95% of agents borrow at some point**, median
+peak debt 8,346 against a starting balance around 2,800.
+
+One assertion here was written as "demolish and develop are each ≥2% of applied
+actions" and failed at 1.5% and 1.8%. The threshold was not moved. It measured
+the wrong thing: decision share is not physical consequence, and redevelopment
+is the expensive rare action — 1.5% of decisions is 190 buildings cleared. What
+is asserted is what "vestigial" actually means, the share of the stock reshaped.
+
+### Is the engine deciding, or sorting? (§21.3)
+
+Build 2's stdev/median of 0.028 was suspiciously tight, and the reading that
+explains it is that the reachable stock was structurally fixed and the budget
+large enough to saturate it. The prediction was that unlocking ~40% more stock
+would loosen the spread.
+
+**It did not.** stdev/median went 0.028 → 0.030. Two diagnostics were added to
+tell the two cases apart:
+
+```
+spread along the run     25% of budget  0.023      75%  0.023
+                         50% of budget  0.021     100%  0.030
+
+divergence-class entropy per building, across the 20 seeds
+                         781 buildings touched in >= 1 run
+                         24% treated identically every seed
+                         median 0.61 bits, max 2.04 of a possible 4.32
+```
+
+So the aggregate is tight the whole way through rather than converging at the
+end — this is not a saturation artifact of stopping at the plateau. But three
+quarters of the touched stock does *not* get the same treatment every seed, and
+the typical touched building splits roughly 80/20 between two divergence
+classes. By §21.3's own criterion that is the healthy case: many paths, one
+equilibrium.
+
+The honest caveat is that a rule engine sorting a scoring function with a
+three-way random tie-break produces exactly this signature, and local
+substitution — this building renovated here, its neighbour there — is not the
+same as different strategic reasoning. The diagnostic rules out the degenerate
+case. It does not establish the good one. The §9 swap remains the real test.
 
 ## Data
 
@@ -218,17 +279,18 @@ reality being overtaken" effect — and the mode transition animates.
 
 ## Tuning
 
-§4 is explicit that if divergence does not reach 30% in 20 years, *the constants
-are wrong rather than the code*. `packages/sim/test/tune.ts` measures it:
+§4 is explicit that if divergence does not reach 30%, *the constants are wrong
+rather than the code*. `packages/sim/test/tune.ts` measures it, at the median of
+20 seeds run to the frozen budget:
 
 ```
-year  divergence  touched  peak district  agent-built  cleared
-2046      34.6%    56.4%          55.6%          135       85
+divergence  touched  peak district  agent-built  cleared  generations completed
+     49.3%      77%            67%          260      190                    203
 ```
 
-All six §14 first-run targets pass. Four tuning rounds each produced a
-plausible-looking number while being wrong; the failures are recorded in the
-commit history because they are the actual content of the tuning work:
+All five §20.8 targets pass. Five rounds each produced a plausible-looking
+number while being wrong; the failures are recorded in the commit history
+because they are the actual content of the tuning work:
 
 1. **Parcels pointed at buildings but buildings did not point back.** Every
    land-based action was silently unreachable. The run looked healthy at 11.8%
@@ -242,6 +304,12 @@ commit history because they are the actual content of the tuning work:
 4. **No demand saturation.** Retail rent is well above residential, so two
    thirds of the centre converted to shops. Demand now divides by the local
    share of floor area already in that purpose.
+5. **Acquisition priced on income alone.** A garage earns nothing, so no agent
+   ever considered one — every utility, industrial and civic building survived
+   every seed. It read as 35% divergence and was 35% of a subset. §21.1's
+   `max(income value, site value − demolition − risk)` is what a purchase
+   actually is; the capital constraint shipped with it is what stops the fix
+   overshooting to 91% of stock redeveloped.
 
 ---
 
@@ -258,14 +326,16 @@ triggers that genuinely refuse baseline mutation and event updates — and the
 importer emits baseline rows against it. The runtime implements the same shapes
 behind `WorldStore`. Swapping in a Postgres implementation is one class.
 
-**voxcity runs; its output is not adopted.** The pipeline executes end to end
-and the swap works in both directions. Two findings came out of running it (full
-account in `tools/voxcity/README.md`): the Netherlands DEM is AHN4 via Google
-Earth Engine and returns an all-zero grid without credentials *while reporting
-success*, and its OSM land cover yields no water at all — swapping it in loses
-every canal in a canal district. The importer now refuses a zero-relief
-substrate by name and warns about lost water. The committed seed stays
-`flat-datum`; stage 10 is worth doing on a chunk with real relief.
+**voxcity is retired for this chunk; the seam stays (§21.5).** The pipeline was
+run end to end and the swap works in both directions, which is what stage 10
+asked for. Two findings came out of running it (full account in
+`tools/voxcity/README.md`): the Netherlands DEM is AHN4 via Google Earth Engine
+and returns an all-zero grid without credentials *while reporting success*, and
+its OSM land cover yields no water at all — swapping it in loses every canal in
+a canal district. For a Dutch chunk the direct path is better in every respect,
+so terrain comes from AHN GeoTIFF (`tools/ahn`) and water keeps coming from the
+importer. voxcity is worth revisiting on a chunk in a country with no national
+lidar product.
 
 **Parcels are seeded on open ground as well as on buildings.** §6's recipe
 seeds Voronoi cells on building centroids alone, which gives every cell a
@@ -273,8 +343,9 @@ building and therefore no development inventory at all. Open ground is seeded on
 a jittered lattice, kept only where genuinely clear of existing stock.
 
 **Generations landed early.** §12 puts them last; estate transfer was nearly
-free once ownership existed, so it is in. Careers run 13–21 years so the
-2026–2045 window actually contains a handover.
+free once ownership existed, so it is in. §20.5 then made a career a finite
+effort budget rather than a span, so a busy district cycles through owners while
+a quiet one does not.
 
 ## Not built
 

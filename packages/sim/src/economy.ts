@@ -1,6 +1,6 @@
 import type { Building, Parcel, Purpose } from '@civ/core'
 import { RATE_WINDOW_TICKS, clamp, clamp01 } from '@civ/core'
-import { type World, floorArea } from './state.ts'
+import { type Agent, type World, floorArea } from './state.ts'
 
 /**
  * §4. The economy is property, not survival.
@@ -59,11 +59,42 @@ export const ECONOMY = {
 
   /** starting capital range for a first-generation agent */
   startingCapital: [1400, 4200] as [number, number],
+
   /**
-   * Capital an agent draws from outside the chunk, per rate window. Financing
-   * is what keeps the economy from stalling once the cheap stock is bought.
+   * §21.1's capital constraint.
+   *
+   * Build 2 gave every agent a flat draw per rate window regardless of what it
+   * owned or owed, which is an allowance rather than a balance sheet: capital
+   * was never the thing that stopped anyone buying. What stops real buyers is
+   * credit, and credit is secured against a portfolio and costs interest.
+   *
+   * So an agent can borrow up to `loanToValue` of what it holds, plus a small
+   * unsecured line that lets a first purchase happen at all, and pays
+   * `interestPerWindow` on the drawn balance. Buying more requires either
+   * income to service it or equity to secure it, which is the rate limit §21.1
+   * asks for — and it is what stops site value turning every building into a
+   * redevelopment candidate at once.
+   *
+   * Values are ordinary commercial-property terms rather than fitted numbers:
+   * a ~65% LTV against income-producing property at a ~5% cost of debt.
    */
-  financingPerWindow: 260,
+  loanToValue: 0.65,
+  interestPerWindow: 0.05,
+  /** unsecured line, so an agent holding nothing can still transact */
+  seedCredit: 1200,
+
+  /**
+   * The yield an income buyer capitalises at, used to convert a rent stream
+   * into a price and a redevelopment residual back into a yield (§21.1).
+   */
+  capRate: 0.06,
+  /**
+   * Developer's profit and risk, as a share of gross development value. This
+   * is §21.1's "risk discount": the standard deduction in a residual land
+   * appraisal, not a knob. Without it a site is worth its full theoretical
+   * upside and every scheme pencils.
+   */
+  developmentRisk: 0.17,
 
   /** radius over which built intensity is felt, metres */
   intensityRadius: 80,
@@ -234,6 +265,76 @@ export function buildingValue(world: World, b: Building): number {
 
 export function acquisitionPrice(world: World, b: Building): number {
   return buildingValue(world, b) * (1 + ECONOMY.acquisitionPremium)
+}
+
+/** A rent stream expressed as a price, at the market's capitalisation rate. */
+export function capitalise(perTick: number): number {
+  return (perTick * RATE_WINDOW_TICKS) / ECONOMY.capRate
+}
+
+// ---------------------------------------------------------------------------
+// §21.1 credit
+// ---------------------------------------------------------------------------
+
+/** Property only. Cash is not collateral and debt is netted off separately. */
+export function portfolioValue(world: World, agent: Agent): number {
+  let sum = 0
+  for (const id of agent.holdings) {
+    const b = world.standing(id)
+    if (b) sum += buildingValue(world, b)
+  }
+  for (const id of agent.parcels) {
+    const p = world.parcels.get(id)
+    if (p && !p.buildingId) sum += p.landValue * p.areaM2
+  }
+  return sum
+}
+
+export function creditLimit(world: World, agent: Agent): number {
+  return ECONOMY.seedCredit + ECONOMY.loanToValue * portfolioValue(world, agent)
+}
+
+export function creditHeadroom(world: World, agent: Agent): number {
+  return Math.max(0, creditLimit(world, agent) - agent.debt)
+}
+
+/**
+ * What an agent can actually commit: cash plus undrawn credit. Every
+ * affordability test in the engine and every one in `actions.ts` reads this
+ * rather than the cash balance, so the constraint binds in one place.
+ */
+export function availableFunds(world: World, agent: Agent): number {
+  return agent.capital + creditHeadroom(world, agent)
+}
+
+/** Draw on the facility, tracking the high-water mark. */
+export function borrow(agent: Agent, amount: number): void {
+  agent.debt += amount
+  if (agent.debt > agent.peakDebt) agent.peakDebt = agent.debt
+}
+
+/** Cash first, then the facility. Returns false if the money is not there. */
+export function spend(world: World, agent: Agent, amount: number): boolean {
+  if (amount <= agent.capital) {
+    agent.capital -= amount
+    return true
+  }
+  const draw = amount - agent.capital
+  if (draw > creditHeadroom(world, agent)) return false
+  agent.capital = 0
+  borrow(agent, draw)
+  return true
+}
+
+/**
+ * Proceeds retire debt before they become spendable cash. Without this a sale
+ * hands the seller a lump sum it immediately redeploys, which is how build 1
+ * produced 28,000 acquisitions that changed nothing.
+ */
+export function receive(agent: Agent, amount: number): void {
+  const repay = Math.min(agent.debt, amount)
+  agent.debt -= repay
+  agent.capital += amount - repay
 }
 
 /**

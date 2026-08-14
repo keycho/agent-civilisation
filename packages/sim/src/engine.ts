@@ -5,7 +5,10 @@ import { developableFootprint } from './actions.ts'
 import {
   ECONOMY,
   acquisitionPrice,
+  availableFunds,
   buildingValue,
+  capitalise,
+  creditHeadroom,
   conversionCost,
   demolitionCost,
   developmentCost,
@@ -13,6 +16,7 @@ import {
   normalisedIntensity,
   parcelPrice,
   paybackWindows,
+  portfolioValue,
   renovationCost,
   renovationUplift,
   yieldPerTick,
@@ -57,6 +61,10 @@ export interface Observation {
     id: string
     name: string
     capital: number
+    /** §21.1: drawn credit, and what is still undrawn against the portfolio */
+    debt: number
+    creditAvailable: number
+    portfolioValue: number
     strategy: string
     holdingCount: number
     /** internal ordering key, never rendered (§20.2) */
@@ -148,6 +156,9 @@ export function observe(world: World, agent: Agent): Observation {
       id: agent.id,
       name: agent.name,
       capital: agent.capital,
+      debt: agent.debt,
+      creditAvailable: creditHeadroom(world, agent),
+      portfolioValue: portfolioValue(world, agent),
       strategy: agent.strategy,
       holdingCount: agent.holdings.size,
       tick: world.tick,
@@ -165,7 +176,7 @@ export function observe(world: World, agent: Agent): Observation {
       accessScore: averageAccess(world, focus),
       recentActivity: recent.length / 60,
     },
-    market: { materialCost: ECONOMY.buildCost, capitalRate: 0.05 },
+    market: { materialCost: ECONOMY.buildCost, capitalRate: ECONOMY.interestPerWindow },
     memory: agent.memory.slice(-12),
   }
 }
@@ -259,6 +270,10 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
   async decide(obs: Observation, world: World, agent: Agent): Promise<AgentAction | null> {
     const options: Scored[] = []
     const s = STRATEGY[agent.strategy]
+    // §21.1: what an agent can commit is cash plus undrawn credit, and credit
+    // is secured against the portfolio. Every affordability test below reads
+    // this one number.
+    const funds = availableFunds(world, agent)
 
     // -- improve what is already owned
     for (const h of obs.holdings) {
@@ -268,7 +283,7 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
       if (b.condition < 0.82) {
         const cost = renovationCost(b)
         const payback = paybackWindows(cost, renovationUplift(world, b))
-        if (cost <= agent.capital && payback < s.maxPayback) {
+        if (cost <= funds && payback < s.maxPayback) {
           options.push({
             action: {
               kind: 'renovate',
@@ -281,7 +296,7 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
       }
 
       const best = bestConversion(world, b)
-      if (best && conversionCost(b) <= agent.capital) {
+      if (best && conversionCost(b) <= funds) {
         const payback = paybackWindows(conversionCost(b), best.uplift)
         if (payback < s.maxPayback) {
           options.push({
@@ -315,7 +330,7 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
       const cost = expansionCost(b, addLevels)
       if (
         expandable &&
-        cost <= agent.capital &&
+        cost <= funds &&
         b.levels + addLevels <= maxLevels &&
         b.condition >= 0.5
       ) {
@@ -353,7 +368,7 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
           const payback = paybackWindows(cost, uplift)
           const ratio = potential.yieldPerTick / Math.max(1e-6, b.yieldPerTick)
           if (
-            cost <= agent.capital &&
+            cost <= funds &&
             (worn ? ratio > 1.5 : ratio > 2.2) &&
             payback < s.maxPayback * 1.7
           ) {
@@ -383,7 +398,7 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
         const area = areaOf(footprint)
         const levels = chooseLevels(obs.neighbourhood.intensity, s.intensityAppetite)
         const cost = developmentCost(area, levels)
-        if (cost > agent.capital) continue
+        if (cost > funds) continue
         const purpose = choosePurpose(world, parcels[0], obs.neighbourhood.intensity)
         const uplift =
           (area * levels * (ECONOMY.rentPerM2[purpose] ?? 0.1) * 1.1) / RATE_WINDOW_TICKS
@@ -413,12 +428,12 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
     })
     if (assemblable.length >= 1 && agent.parcels.size >= 1) {
       const affordable = assemblable
-        .filter((p) => p.price <= agent.capital)
+        .filter((p) => p.price <= funds)
         .sort((a, b) => b.areaM2 / b.price - a.areaM2 / a.price)
         .slice(0, 3)
       if (affordable.length >= 2) {
         const total = affordable.reduce((sum, p) => sum + p.price, 0)
-        if (total <= agent.capital) {
+        if (total <= funds) {
           options.push({
             action: {
               kind: 'assemble',
@@ -446,7 +461,7 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
       if (!p || p.buildingId) continue
       if (p.roadDistanceM < 24) continue
       const cost = p.roadDistanceM * ECONOMY.roadCostPerM * 1.4
-      if (cost > agent.capital * 0.5) continue
+      if (cost > funds * 0.5) continue
       options.push({
         action: {
           kind: 'build_road',
@@ -468,29 +483,33 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
       if (traded !== undefined && world.tick - traded < RESALE_LOCK_TICKS) continue
 
       const price = acquisitionPrice(world, b)
-      if (price > agent.capital) continue
+      if (price > funds) continue
 
       /**
-       * NOTE (§18.2, unfixed): scoring acquisition purely on income yield makes
-       * a whole purpose class structurally invisible. Utility stock — garages,
-       * sheds — earns rent barely above its own maintenance, so its cap rate is
-       * ~0 and no agent considers one under any seed. All of it, plus most
-       * industrial, survives every run in the untouched residue: excluded
-       * rather than unattractive.
+       * §21.1. A building is worth the better of what it earns and what its
+       * site is worth cleared:
        *
-       * The fix is to value a building at the better of its income and its
-       * site, which is what acquisition actually is. It was implemented and
-       * measured, and it moves the median index from 35.9% to 54.9% and the
-       * touched share from 58% to 91% at the frozen decision budget — because
-       * unlocking ~40% of the stock is a large change, not a small one. That
-       * makes it a decision about the model rather than a bug fix, and it
-       * belongs with §18.4's mispriced yield model on the second chunk, where
-       * the 1909-space-on-a-1909-curve asymmetry gets priced properly.
+       *   acquire score = max(income value, site value - demolition - risk)
        *
-       * Left as-is deliberately. tune.ts reports it every run.
+       * Scoring on income alone made a whole purpose class structurally
+       * invisible: utility stock — garages, sheds — earns rent barely above its
+       * own maintenance, so its cap rate is ~0 and no agent considered one
+       * under any seed. All of it, plus most industrial, survived every run in
+       * the §18.2 residue: excluded rather than unattractive. That is not a
+       * fastidious edge case. Buying a low-earning structure because the land
+       * under it is worth more than the building on it is the most common
+       * redevelopment transaction there is, and a model that cannot express it
+       * is not producing 35% divergence, it is producing 35% of a subset.
+       *
+       * Both terms are converted to an annual return before scoring, so the
+       * strategy weights and thresholds keep their old meaning and the
+       * expression reduces exactly to the old one wherever income wins.
        */
-      const annual = b.yieldPerTick * RATE_WINDOW_TICKS
+      const incomeAnnual = b.yieldPerTick * RATE_WINDOW_TICKS
+      const site = siteValue(world, agent, b, s)
+      const annual = Math.max(incomeAnnual, site * ECONOMY.capRate)
       const cap = annual / Math.max(1, price)
+      const forSite = site * ECONOMY.capRate > incomeAnnual
 
       // §9: adjacency is weighted above yield, which is what consolidates blocks
       const adjacent = b.parcelId ? isAdjacentToHoldings(world, agent, b.parcelId) : false
@@ -502,9 +521,11 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
         action: {
           kind: 'acquire_building',
           buildingId: b.id,
-          rationale: adjacent
-            ? `adjacent to holdings, ${(cap * 100).toFixed(1)}% yield`
-            : `${(cap * 100).toFixed(1)}% yield on ${price.toFixed(0)}`,
+          rationale: forSite
+            ? `site is worth ${(site / Math.max(1, price)).toFixed(1)}x the ${b.purpose} on it`
+            : adjacent
+              ? `adjacent to holdings, ${(cap * 100).toFixed(1)}% yield`
+              : `${(cap * 100).toFixed(1)}% yield on ${price.toFixed(0)}`,
         },
         score: s.acquire * cap * 12 * upside * fromAgent * (adjacent ? s.adjacencyBonus : 1),
       })
@@ -515,7 +536,7 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
     // `assemble` and `build_road` are all unreachable.
     for (const p of obs.candidates.vacantParcels) {
       if (p.ownedBySelf || p.hasBuilding || !p.developable) continue
-      if (p.price > agent.capital * 0.6) continue
+      if (p.price > funds * 0.6) continue
       const parcel = world.parcels.get(p.id)
       if (!parcel) continue
       const lastTraded = world.lastTransfer.get(p.id)
@@ -766,6 +787,41 @@ function developPotential(
     ownerId: agent.id,
   }
   return { levels, purpose, areaM2, cost, yieldPerTick: yieldPerTick(world, hypothetical) }
+}
+
+/**
+ * §21.1's site value: the developer's residual.
+ *
+ *   site value = capitalised value of what could stand here
+ *              - what it costs to build
+ *              - what it costs to clear what is there now
+ *              - profit and risk
+ *
+ * Which is the standard residual land appraisal, and the only way a garage on
+ * a good corner can be worth more than the rent it collects.
+ *
+ * Intensity is read at the parcel rather than from the observer, so the number
+ * is a property of the site and not of who happens to be looking at it — and
+ * because it varies across the chunk, so does what agents go after.
+ */
+function siteValue(world: World, agent: Agent, b: Building, s: StrategyWeights): number {
+  const parcel = world.parcelOf(b)
+  if (!parcel || !parcel.developable) return 0
+
+  // The residual depends on the site and the strategy's appetite for density,
+  // not on the caller, and both are stable between market recomputes. Without
+  // the cache this runs once per candidate per decision and dominates the run.
+  const key = `${parcel.id}:${s.intensityAppetite}`
+  let residual = world.siteResidualCache.get(key)
+  if (residual === undefined) {
+    const intensity = normalisedIntensity(world, parcel.centroid[0], parcel.centroid[1])
+    const potential = developPotential(world, agent, parcel, intensity, s)
+    residual = potential
+      ? capitalise(potential.yieldPerTick) * (1 - ECONOMY.developmentRisk) - potential.cost
+      : 0
+    world.siteResidualCache.set(key, residual)
+  }
+  return Math.max(0, residual - demolitionCost(b))
 }
 
 function areaOf(ring: Array<[number, number]>): number {

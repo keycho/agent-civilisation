@@ -21,21 +21,31 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 /**
  * §20.9: the run budget, in agent decisions.
  *
- * CALIBRATED ONCE, then frozen.
+ * CALIBRATED ONCE, then frozen. Recalibrated once, under §21.2, because §21.1
+ * added a mechanism the model lacked rather than tuning a constant against an
+ * outcome — "the freeze blocks tuning constants against observed outcomes, it
+ * does not block adding a mechanism the model lacks."
  *
- * Measured by calibrate.ts: running one seed and recording the decision count
- * at which the build first reaches the end state it already had before the
- * calendar was removed — 34.6% divergence, 135 agent-built structures, 85
- * cleared. All three together, not whichever arrives first; the index alone
- * crosses 34.6% at ~22,600 while the physical stock is still less than half
- * built. The composite lands at 39,050.
+ *   build 2   39,000   the decision count at which the pre-calendar end state
+ *                      (34.6% / 135 agent-built / 85 cleared) was reached
+ *   build 3   65,000   the plateau of the model that has site value and a
+ *                      capital constraint in it
+ *
+ * The build-3 rule was written into calibrate.ts before the number was read,
+ * and it names no target: the first point past which the index gains under 1pp
+ * and both the agent-built and cleared counts grow under 5% over the following
+ * 5,000 decisions. All three together, because a flat index can hide
+ * construction still finishing. Measured at 64,894 on one seed.
+ *
+ * The larger budget is not the model being slower. It is ~40% more stock being
+ * reachable and every purchase now competing for finite credit, so the same
+ * world takes more decisions to arrive at.
  *
  * It is not adjusted until the assertions pass. Tuning the budget to hit a
  * target is precisely the hill-climb error §18 exists to catch, so this number
- * does not move. If the model changes enough to invalidate it, re-run
- * calibrate.ts deliberately and record why in the commit.
+ * does not move. One recalibration, not an iterative approach to a target.
  */
-export const DECISION_BUDGET = 39_000
+export const DECISION_BUDGET = 65_000
 
 export const ALL_ACTION_KINDS = [
   'acquire_building',
@@ -66,9 +76,23 @@ export interface Summary {
   /** §18.3 */
   acquisitionsPerMutation: number
   actionKindsFired: number
+  /** §21.1: the new mechanism, and the constraint that is supposed to bind */
+  siteLedAcquisitions: number
+  /** share of applied actions taken by the single most common kind */
+  dominantActionShare: number
+  leverage: {
+    medianDebt: number
+    medianCash: number
+    withDebt: number
+    agents: number
+    everBorrowedShare: number
+    medianPeakDebt: number
+  }
   /** §18.2 */
   untouchedIds: string[]
   untouchedShare: number
+  /** §21.3: divergence class per baseline building, for cross-seed entropy */
+  divergenceByBuilding: Record<string, number>
   /**
    * Purpose mix of the residue. A whole class appearing here at 100% is the
    * signature of structural exclusion rather than economic disinterest, which
@@ -134,8 +158,15 @@ export async function runSeed(
   const w = sim.world
 
   const eventCounts: Record<string, number> = {}
+  // §21.1: how many acquisitions were led by the site rather than by the rent.
+  // A mechanism that is present in the code and never fires is not in the
+  // model, which is the same class of fault as a dead action branch (§18.3).
+  let siteLedAcquisitions = 0
   for (const e of store.events({ limit: 1e9 })) {
     eventCounts[e.type] = (eventCounts[e.type] ?? 0) + 1
+    if (e.type === 'building_acquired' && (e.rationale ?? '').startsWith('site is worth')) {
+      siteLedAcquisitions++
+    }
   }
 
   const actionCounts: Record<string, number> = {}
@@ -154,8 +185,17 @@ export async function runSeed(
   const acquisitionsPerMutation = acquisitions / Math.max(1, mutations)
 
   // §18.2: the untouched set is a diagnostic, not a result
+  //
+  // Purpose is read from the emitted seed rather than from the building in
+  // memory (§21.4). Converting is a mutation of `purpose`, so a class measured
+  // after the run loses exactly the members that were touched: every class an
+  // agent converts *out of* reads as more untouched than it is, and one that is
+  // wholly converted away reads as 100% untouched while being 100% touched.
+  // Build 2's "all industrial is excluded" was partly this.
+  const baselinePurpose = new Map(world.buildings.map((b) => [b.id, b.purpose]))
   const untouchedIds: string[] = []
   const byPurpose: Record<string, { untouched: number; total: number }> = {}
+  const divergenceByBuilding: Record<string, number> = {}
   const flags: number[] = []
   const access: number[] = []
   const value: number[] = []
@@ -165,12 +205,15 @@ export async function runSeed(
     const parcel = w.parcelOf(b)
     if (!parcel) continue
     const untouched = b.divergence === 0 ? 1 : 0
-    const row = (byPurpose[b.purpose] ??= { untouched: 0, total: 0 })
+    const row = (byPurpose[baselinePurpose.get(b.id) ?? b.purpose] ??= { untouched: 0, total: 0 })
     row.total++
     if (untouched) {
       row.untouched++
       untouchedIds.push(b.id)
     }
+    // §21.3: the class each baseline building ended in, for the cross-seed
+    // entropy that separates "many paths to one equilibrium" from "one path".
+    divergenceByBuilding[b.id] = b.divergence
     flags.push(untouched)
     access.push(parcel.accessScore)
     value.push(parcel.landValue)
@@ -193,7 +236,13 @@ export async function runSeed(
     eventCounts,
     acquisitionsPerMutation,
     actionKindsFired: ALL_ACTION_KINDS.filter((k) => actionCounts[k] > 0).length,
+    siteLedAcquisitions,
+    dominantActionShare:
+      Math.max(...ALL_ACTION_KINDS.map((k) => actionCounts[k])) /
+      Math.max(1, ALL_ACTION_KINDS.reduce((sum, k) => sum + actionCounts[k], 0)),
+    leverage: leverageOf(w),
     untouchedIds,
+    divergenceByBuilding,
     untouchedByPurpose: byPurpose,
     untouchedShare: flags.length ? flags.reduce((a, b) => a + b, 0) / flags.length : 0,
     correlations: {
@@ -203,6 +252,28 @@ export async function runSeed(
     },
     structural: structuralReport(world),
     curve,
+  }
+}
+
+/**
+ * §21.1: is capital actually the constraint? A population sitting on idle cash
+ * with no borrowings has a credit mechanism that does nothing.
+ */
+function leverageOf(w: {
+  agents: Map<string, { diedTick?: number; debt: number; peakDebt: number; capital: number }>
+}) {
+  const all = [...w.agents.values()]
+  const living = all.filter((a) => !a.diedTick)
+  return {
+    medianDebt: median(living.map((a) => a.debt)),
+    medianCash: median(living.map((a) => a.capital)),
+    withDebt: living.filter((a) => a.debt > 0).length,
+    agents: living.length,
+    // Over a whole life, not at the moment the run stopped. A mature portfolio
+    // deleverages, so an end-of-run snapshot understates how hard the
+    // constraint bit while the buying was happening.
+    everBorrowedShare: all.filter((a) => a.peakDebt > 0).length / Math.max(1, all.length),
+    medianPeakDebt: median(all.map((a) => a.peakDebt)),
   }
 }
 

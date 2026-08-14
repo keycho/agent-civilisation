@@ -17,13 +17,16 @@ import { BASE_CINEMATIC_WEIGHT, type EventType } from '@civ/persistence'
 import {
   ECONOMY,
   acquisitionPrice,
+  availableFunds,
   buildingValue,
   conversionCost,
   demolitionCost,
   developmentCost,
   expansionCost,
   parcelPrice,
+  receive,
   renovationCost,
+  spend,
 } from './economy.ts'
 import { type Agent, type World, floorArea } from './state.ts'
 
@@ -135,12 +138,10 @@ function acquireBuilding(
   if (!b) return { ok: false, reason: 'gone' }
   if (b.ownerId === agent.id) return { ok: false, reason: 'already owned' }
   const price = acquisitionPrice(world, b)
-  if (agent.capital < price) return { ok: false, reason: 'insufficient capital' }
-
   const seller = b.ownerId ? world.agents.get(b.ownerId) : undefined
-  agent.capital -= price
+  if (!spend(world, agent, price)) return { ok: false, reason: 'insufficient capital' }
   if (seller) {
-    seller.capital += price
+    receive(seller, price)
     seller.holdings.delete(b.id)
   }
   b.ownerId = agent.id
@@ -177,12 +178,10 @@ function acquireParcel(
   if (p.ownerId === agent.id) return { ok: false, reason: 'already owned' }
   if (!p.developable) return { ok: false, reason: 'undevelopable' }
   const price = parcelPrice(world, p)
-  if (agent.capital < price) return { ok: false, reason: 'insufficient capital' }
-
   const seller = p.ownerId ? world.agents.get(p.ownerId) : undefined
-  agent.capital -= price
+  if (!spend(world, agent, price)) return { ok: false, reason: 'insufficient capital' }
   if (seller) {
-    seller.capital += price
+    receive(seller, price)
     seller.parcels.delete(p.id)
   }
   p.ownerId = agent.id
@@ -215,7 +214,7 @@ function assemble(
   for (const p of parcels) {
     if (p.ownerId !== agent.id) total += parcelPrice(world, p)
   }
-  if (agent.capital < total) return { ok: false, reason: 'insufficient capital' }
+  if (availableFunds(world, agent) < total) return { ok: false, reason: 'insufficient capital' }
 
   for (const p of parcels) {
     if (p.ownerId === agent.id) continue
@@ -251,9 +250,8 @@ function renovate(
   if (!b || b.ownerId !== agent.id) return { ok: false, reason: 'not owned' }
   if (b.condition > 0.94) return { ok: false, reason: 'already sound' }
   const cost = renovationCost(b)
-  if (agent.capital < cost) return { ok: false, reason: 'insufficient capital' }
+  if (!spend(world, agent, cost)) return { ok: false, reason: 'insufficient capital' }
 
-  agent.capital -= cost
   b.condition = 1
   raiseDivergence(b, DIVERGENCE.renovated)
   emit(world, 'building_renovated', {
@@ -276,9 +274,8 @@ function convert(
   if (!b || b.ownerId !== agent.id) return { ok: false, reason: 'not owned' }
   if (b.purpose === to) return { ok: false, reason: 'no change' }
   const cost = conversionCost(b)
-  if (agent.capital < cost) return { ok: false, reason: 'insufficient capital' }
+  if (!spend(world, agent, cost)) return { ok: false, reason: 'insufficient capital' }
 
-  agent.capital -= cost
   const from = b.purpose
   b.purpose = to
   b.condition = Math.max(b.condition, 0.85)
@@ -314,9 +311,8 @@ function expand(
   if (!b || b.ownerId !== agent.id) return { ok: false, reason: 'not owned' }
   if (addLevels < 1) return { ok: false, reason: 'nothing to add' }
   const cost = expansionCost(b, addLevels)
-  if (agent.capital < cost) return { ok: false, reason: 'insufficient capital' }
+  if (!spend(world, agent, cost)) return { ok: false, reason: 'insufficient capital' }
 
-  agent.capital -= cost
   const before = b.levels
   b.levels += addLevels
   b.heightM += addLevels * 3.2
@@ -356,9 +352,8 @@ function demolish(
   if (!b || b.ownerId !== agent.id) return { ok: false, reason: 'not owned' }
   if (b.state !== 'standing') return { ok: false, reason: 'busy' }
   const cost = demolitionCost(b)
-  if (agent.capital < cost) return { ok: false, reason: 'insufficient capital' }
+  if (!spend(world, agent, cost)) return { ok: false, reason: 'insufficient capital' }
 
-  agent.capital -= cost
   b.state = 'under_demolition'
   b.progress = 1
   agent.activity = 'demolishing'
@@ -398,9 +393,8 @@ function develop(
 
   const levels = Math.max(1, Math.round(action.levels))
   const cost = developmentCost(areaM2, levels)
-  if (agent.capital < cost) return { ok: false, reason: 'insufficient capital' }
+  if (!spend(world, agent, cost)) return { ok: false, reason: 'insufficient capital' }
 
-  agent.capital -= cost
   const heightM = levels * 3.4 + 1.2
   const replaced = parcels.map((p) => p.buildingId).find((id) => id && world.buildings.get(id))
 
@@ -519,8 +513,7 @@ function buildRoad(
   if (!best) return { ok: false, reason: 'no network' }
 
   const cost = best.d * ECONOMY.roadCostPerM
-  if (agent.capital < cost) return { ok: false, reason: 'insufficient capital' }
-  agent.capital -= cost
+  if (!spend(world, agent, cost)) return { ok: false, reason: 'insufficient capital' }
 
   const from = world.nodes.get(best.id)!
   const nodeId = world.newNodeId()
@@ -614,7 +607,7 @@ export function advanceConstruction(world: World): void {
 }
 
 export function agentNetWorth(world: World, agent: Agent): number {
-  let sum = agent.capital
+  let sum = agent.capital - agent.debt
   for (const id of agent.holdings) {
     const b = world.standing(id)
     if (b) sum += buildingValue(world, b)

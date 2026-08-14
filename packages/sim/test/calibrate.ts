@@ -3,17 +3,32 @@
  * current build reaches its present end state, then freeze it and never tune it
  * again."
  *
- * This is that calibration, kept so the number in DECISION_BUDGET is
- * reproducible and its provenance is visible. It prints the divergence curve
- * against cumulative decisions (§20.7's x axis) and reports where the curve
- * flattens. It is not run by the test suite and must not be used to chase a
- * target — read the plateau, write the number down, stop.
+ * §21.2 permits exactly one recalibration, because §21.1 added a mechanism the
+ * model did not have rather than tuning a constant against an outcome. This is
+ * that recalibration, and the rule below was written before the number was
+ * read.
+ *
+ * The build-2 rule pointed at a prior end state — 34.6% divergence, 135
+ * agent-built, 85 cleared — which the new model has no reason to reproduce and
+ * which §21.1 explicitly disowns. So the end state is now defined by a property
+ * of the run instead of by a remembered number: the point at which the world
+ * stops changing materially. All three of the index, the agent-built count and
+ * the cleared count must go quiet together, because a plateau in the index
+ * alone can hide construction still finishing.
+ *
+ * It is not run by the test suite and must not be used to chase a target — read
+ * the plateau, write the number down, stop.
  *
  *   node --no-warnings packages/sim/test/calibrate.ts [maxDecisions]
  */
 import { loadSeed, runSeed } from './lib/summarise.ts'
 
-const max = Number(process.argv[2] ?? 60_000)
+/** Saturation: over a window this wide, gains fall below all three bounds. */
+const WINDOW = 5_000
+const INDEX_GAIN = 0.01
+const STOCK_GROWTH = 0.05
+
+const max = Number(process.argv[2] ?? 90_000)
 const world = await loadSeed()
 
 console.log(`# calibration: ${world.buildings.length} baseline buildings, one seed`)
@@ -31,43 +46,37 @@ for (const p of s.curve) {
   )
 }
 
-// §20.9's definition: the decision count at which the build reaches the end
-// state it already had before the calendar was removed.
-const PRIOR_END_STATE = { index: 0.346, agentOrigin: 135, cleared: 85 }
-const match = s.curve.find(
-  (p) =>
-    p.index >= PRIOR_END_STATE.index &&
-    p.agentOrigin >= PRIOR_END_STATE.agentOrigin &&
-    p.cleared >= PRIOR_END_STATE.cleared,
-)
-console.log(
-  match
-    ? `\nprior end state (34.6% / 135 agent-built / 85 cleared) first reached at ${match.decisions.toLocaleString()} decisions`
-    : '\nprior end state not reached within the range',
-)
-
-// where does it flatten? report the first point past which the index gains
-// less than 1 percentage point over the following 5,000 decisions
-const PLATEAU_GAIN = 0.01
-const PLATEAU_WINDOW = 5000
 let plateau: number | null = null
-for (let i = 0; i < s.curve.length; i++) {
-  const here = s.curve[i]
-  const later = s.curve.find((p) => p.decisions >= here.decisions + PLATEAU_WINDOW)
+for (const here of s.curve) {
+  const later = s.curve.find((p) => p.decisions >= here.decisions + WINDOW)
   if (!later) break
-  if (later.index - here.index < PLATEAU_GAIN) {
+  const grew = (a: number, b: number) => (b - a) / Math.max(1, a)
+  if (
+    later.index - here.index < INDEX_GAIN &&
+    grew(here.agentOrigin, later.agentOrigin) < STOCK_GROWTH &&
+    grew(here.cleared, later.cleared) < STOCK_GROWTH
+  ) {
     plateau = here.decisions
     break
   }
 }
 
-console.log(`\nfinal: index ${(s.divergenceIndex * 100).toFixed(1)}%, ` +
-  `${s.agentOrigin} agent-built, ${s.cleared} cleared, ` +
-  `generation ${s.generation}, ${s.generationsCompleted} completed`)
+console.log(
+  `\nfinal: index ${(s.divergenceIndex * 100).toFixed(1)}%, ` +
+    `touched ${(s.touchedShare * 100).toFixed(0)}%, ` +
+    `${s.agentOrigin} agent-built, ${s.cleared} cleared, ` +
+    `generation ${s.generation}, ${s.generationsCompleted} completed`,
+)
+console.log(
+  `leverage: ${s.leverage.withDebt}/${s.leverage.agents} agents carrying debt, ` +
+    `median debt ${s.leverage.medianDebt.toFixed(0)}, median cash ${s.leverage.medianCash.toFixed(0)}`,
+)
+console.log(`site-led acquisitions: ${s.siteLedAcquisitions}`)
 console.log(`ran ${s.decisions.toLocaleString()} decisions over ${s.ticks.toLocaleString()} ticks in ${elapsed.toFixed(1)}s`)
 console.log(
   plateau
-    ? `\nplateau: gains fall below ${PLATEAU_GAIN * 100}pp per ${PLATEAU_WINDOW.toLocaleString()} decisions at ~${plateau.toLocaleString()}`
-    : '\nno plateau within the range — the curve is still climbing',
+    ? `\nplateau: index gains under ${INDEX_GAIN * 100}pp and stock growth under ` +
+        `${STOCK_GROWTH * 100}% per ${WINDOW.toLocaleString()} decisions from ~${plateau.toLocaleString()}`
+    : '\nno plateau within the range — the world is still changing',
 )
 console.log('\nwrite the plateau into DECISION_BUDGET in lib/summarise.ts and leave it alone.')
