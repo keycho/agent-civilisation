@@ -1,24 +1,30 @@
 /**
- * Stages 3, 7, 8, 9 and 11 (§12): the running world.
+ * Stages 3, 7, 8, 9 and 11 (§12): the running world, watched.
  *
  * §15's world-as-spectacle: the default experience is mostly world, UI is
  * secondary, and the thing can be left running.
+ *
+ * §21.6: and it is not this process that runs it. There is no `Simulation`
+ * here, no `World`, no store and no rng — one server owns those and every
+ * viewer is looking at the same one. What is left in this file is a renderer, a
+ * camera, and a socket.
  */
-import { DIVERGENCE_LABEL, PURPOSE_INDEX, THROUGHPUT, type WorldSeed } from '@civ/core'
-import { EVENT_TONE, MemoryStore, type WorldEvent } from '@civ/persistence'
-import { Simulation, agentNetWorth, buildingValue } from '@civ/sim'
+import { DIVERGENCE_LABEL, EVENT_TONE, PURPOSE_INDEX } from '@civ/core'
+import type { BuildingDetail, EventWire, Frame, Hello, Readouts, ScrubResult } from '@civ/protocol'
+import { FRAME_INTERVAL_MS } from '@civ/protocol'
 import { Raycaster, Scene, Vector2, Vector3, WebGLRenderer } from 'three'
 import { CameraDirector } from './camera/director.ts'
 import { CameraRig, attachRigControls } from './camera/rig.ts'
 import { TiltShiftPass } from './postfx/tiltShift.ts'
-import { AgentMarkers } from './render/agents.ts'
+import { AgentMarkers, type AgentPresence } from './render/agents.ts'
 import { BuildingRenderer } from './render/buildingRenderer.ts'
 import { configureRenderer, createEnvironment } from './render/environment.ts'
 import { createRoadMeshes } from './render/roadMesh.ts'
 import { ConstructionOverlay } from './render/scaffold.ts'
 import { createSubstrateView } from './render/substrateMesh.ts'
-import { SimBridge } from './world/bridge.ts'
+import { AgentInterpolator, Connection, fromBase64 } from './world/connection.ts'
 import { loadChunk } from './world/load.ts'
+import { Observer } from './world/observer.ts'
 
 const canvas = document.createElement('canvas')
 document.body.insertBefore(canvas, document.body.firstChild)
@@ -26,6 +32,8 @@ const renderer = new WebGLRenderer({ canvas, antialias: true })
 configureRenderer(renderer)
 
 const scene = new Scene()
+// The baseline is immutable and served as a static file (§5, §21.6): it never
+// travels over the socket, and every viewer already has the same copy.
 const { seed, items, statics } = await loadChunk()
 
 const radius =
@@ -57,29 +65,87 @@ const construction = new ConstructionOverlay()
 scene.add(construction.scaffold)
 scene.add(construction.siteMarks)
 
-const agentMarkers = new AgentMarkers(160)
+const agentMarkers = new AgentMarkers(200)
 scene.add(agentMarkers.mesh)
 
 // ---------------------------------------------------------------------------
-// simulation
+// the connection to the world (§21.6)
 // ---------------------------------------------------------------------------
 
-const store = new MemoryStore()
-const sim = new Simulation(seed as WorldSeed, store, {
-  agentCount: 58,
-  // §20.4: snapshots key on event ordinal, not on a calendar boundary
-  onSnapshot({ ordinal, generation, report }) {
-    bridge.sync()
-    bridge.captureSnapshot(ordinal, generation, report.index, {
-      touched: report.touchedShare,
-      agentOrigin: report.agentOrigin,
-      demolished: report.demolished,
-    })
-    refreshReadouts()
+const observer = new Observer(seed, buildings, roads.agent, substrate.heightAt)
+const presence = new AgentInterpolator(FRAME_INTERVAL_MS)
+/** Who each agent is, remembered from birth — the wire only sends where. */
+const roster = new Map<string, { name: string; strategy: string; colourIndex: number; generation: number }>()
+/** Where things happened, so §17's director can point the camera at them. */
+const places = new Map<string, [number, number]>()
+
+let readouts: Readouts | null = null
+let durability: Hello['durability'] = 'memory'
+let scrubbing = false
+let liveTick = 0
+
+const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
+
+const connection = new Connection(serverUrl(), {
+  onHello(h: Hello) {
+    for (const a of h.agents) roster.set(a.id, a)
+    observer.applyHello(h)
+    for (const e of h.events) pushFeedRow(e)
+    durability = h.durability
+    acceptReadouts(h.readouts)
+  },
+  onFrame(f: Frame) {
+    for (const a of f.born) roster.set(a.id, a)
+    for (const id of f.retired) roster.delete(id)
+    observer.applyFrame(f)
+    presence.accept(f.agents, f.retired)
+    for (const e of f.events) {
+      if (e.x !== undefined && e.y !== undefined && e.buildingId) places.set(e.buildingId, [e.x, e.y])
+      pushFeedRow(e)
+      director.consider(e)
+    }
+    acceptReadouts(f.readouts)
+  },
+  onScrub(s: ScrubResult) {
+    observer.applyScrubTexture(fromBase64(s.buildingData))
+    scrubbing = true
+    scrubOut.value = `gen ${s.generation}`
+    setReadouts(s.divergenceIndex, s.generation, 'at this point in the record')
+  },
+  onBuilding(b: BuildingDetail) {
+    showInspector(b)
+  },
+  onStatus(state) {
+    el('link').textContent =
+      state === 'live' ? 'live' : state === 'connecting' ? 'connecting…' : 'reconnecting…'
+    el('link').className = state
   },
 })
-const bridge = new SimBridge(sim, buildings, roads.agent, substrate.heightAt, store)
-bridge.captureSnapshot(0, 1, 0, {})
+
+/**
+ * Where the world is. Vercel serves this file; the sim server is elsewhere, so
+ * the origin cannot be assumed.
+ */
+function serverUrl(): string {
+  const override = new URLSearchParams(location.search).get('server')
+  if (override) return override
+  const configured = (import.meta as { env?: Record<string, string> }).env?.VITE_SERVER_URL
+  if (configured) return configured
+  const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
+  return `${scheme}://${location.hostname}:8787`
+}
+
+function acceptReadouts(r: Readouts): void {
+  readouts = r
+  liveTick = r.tick
+  el('pace').textContent = r.pace.label
+  el('durability').textContent =
+    `${r.viewers} watching` + (durability === 'postgres' ? '' : ' · in memory')
+  if (scrubbing) return
+  setReadouts(r.divergenceIndex, r.generation, `baseline stock touched · ${r.agentOrigin} agent-built`)
+  scrub.max = String(Math.max(1, r.eventCount))
+  scrub.value = String(r.eventCount)
+}
 
 // ---------------------------------------------------------------------------
 // camera and director
@@ -97,20 +163,14 @@ rig.flyTo(new Vector3(0, substrate.groundY, 0), CITY_FRAMING, {
   duration: 0.01,
 })
 
-const director = new CameraDirector(rig, store, {
+const director = new CameraDirector(rig, {
   locateBuilding(id) {
-    const b = sim.world.buildings.get(id)
-    if (!b || !b.footprint.length) return null
-    return pointAt(b.footprint[0][0], b.footprint[0][1])
-  },
-  locateEdge(id) {
-    const e = sim.world.edges.get(id)
-    const n = e ? sim.world.nodes.get(e.b) : undefined
-    return n ? pointAt(n.x, n.y) : null
+    const at = places.get(id)
+    return at ? pointAt(at[0], at[1]) : null
   },
   locateAgent(id) {
-    const a = sim.world.agents.get(id)
-    return a ? pointAt(a.x, a.y) : null
+    for (const a of presence.positions()) if (a.id === id) return pointAt(a.x, a.y)
+    return null
   },
   locatePoint: (x, y) => pointAt(x, y),
   onShot(label) {
@@ -131,31 +191,13 @@ const tiltShift = new TiltShiftPass(innerWidth, innerHeight)
 // UI
 // ---------------------------------------------------------------------------
 
-const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
-
 el('chunkName').textContent = seed.chunk.name
 el('chunkNote').textContent = seed.chunk.sourceNote
 el('chunkStats').innerHTML =
   `${seed.stats.baselineBuildings} baseline buildings · ${seed.stats.areaKm2} km²<br>` +
   `${seed.stats.parcels} parcels (${seed.stats.vacantParcels} vacant) · ${seed.stats.blocks} blocks<br>` +
-  `${buildings.triangles.toLocaleString()} triangles · 58 agents`
+  `${buildings.triangles.toLocaleString()} triangles`
 el('chunkProv').innerHTML = seed.provenance.map((p) => `${p.source} — ${p.licence}`).join('<br>')
-
-// §20.3: this dials how fast the civilization thinks, not how fast a clock runs
-let speedIndex = 0
-const speeds = el('speeds')
-speeds.innerHTML = THROUGHPUT.map(
-  (t, i) => `<button data-i="${i}" aria-pressed="${i === 0}">${t.label}</button>`,
-).join('')
-speeds.addEventListener('click', (e) => {
-  const btn = (e.target as HTMLElement).closest('button')
-  if (!btn) return
-  speedIndex = Number(btn.dataset.i)
-  for (const b of speeds.querySelectorAll('button')) {
-    b.setAttribute('aria-pressed', String(Number(b.dataset.i) === speedIndex))
-  }
-  if (scrubbing) exitScrub()
-})
 
 const modeInput = el<HTMLInputElement>('mode')
 const modeOut = el<HTMLOutputElement>('modeOut')
@@ -167,40 +209,28 @@ modeInput.addEventListener('input', () => {
 
 /**
  * §20.4: the scrub travels the event log, keyed on event ordinal, and its
- * handle is labelled by generation. "Show me 2033" is now "show me generation
- * 3" — which is more honest to the architecture, since the log was always the
- * source of truth and the year boundaries were an overlay on it.
+ * handle is labelled by generation. §21.6: and it is a question asked of the
+ * server, not a read of this tab's memory — which is what makes it the same
+ * history for everyone watching, and what makes it survive a refresh.
  */
 const scrub = el<HTMLInputElement>('scrub')
 const scrubOut = el<HTMLOutputElement>('scrubOut')
-let scrubbing = false
 scrub.addEventListener('input', () => {
   const ordinal = Number(scrub.value)
-  if (ordinal >= store.eventCount()) {
+  if (readouts && ordinal >= readouts.eventCount) {
     exitScrub()
     return
   }
-  const restored = bridge.restoreSnapshot(ordinal)
-  if (!restored) return
-  scrubbing = true
-  scrubOut.value = `gen ${restored.generation}`
-  setReadouts(restored.divergenceIndex, restored.generation, 'at this point in the record')
+  connection.send({ t: 'scrub', ordinal })
 })
 
 function exitScrub(): void {
   if (!scrubbing) return
   scrubbing = false
   scrubOut.value = 'live'
-  bridge.sync()
-  refreshReadouts()
-}
-
-function refreshReadouts(): void {
-  if (scrubbing) return
-  const r = sim.report
-  setReadouts(r.index, sim.generation, `baseline stock touched · ${r.agentOrigin} agent-built`)
-  scrub.max = String(Math.max(1, store.eventCount()))
-  scrub.value = String(store.eventCount())
+  // rejoin the world where it is now: ask for the current texture again
+  connection.close()
+  location.reload()
 }
 
 /** §20.6: divergence index primary, generation secondary, no third readout. */
@@ -217,30 +247,21 @@ function setReadouts(index: number, generation: number, label: string): void {
 const feedList = el('feedList')
 let lastFeedId = 0
 
-function pumpFeed(): void {
-  const fresh = store
-    .events({ sinceTick: Math.max(0, sim.tick - 400), limit: 40, minWeight: 15 })
-    .filter((e) => e.id > lastFeedId)
-    .reverse()
-  if (fresh.length === 0) return
-  lastFeedId = Math.max(lastFeedId, ...fresh.map((e) => e.id))
-  for (const e of fresh) feedList.insertAdjacentHTML('afterbegin', feedRow(e))
-  while (feedList.childElementCount > 11) feedList.lastElementChild?.remove()
-}
-
-function feedRow(e: WorldEvent): string {
-  const who = e.agentId ? sim.world.agents.get(e.agentId) : undefined
-  const text = e.rationale ?? describe(e)
+function pushFeedRow(e: EventWire): void {
+  if (e.id <= lastFeedId) return
+  lastFeedId = e.id
+  const who = e.agentId ? roster.get(e.agentId) : undefined
+  const text = e.rationale ?? e.type.replace(/_/g, ' ')
   // §20.2: the feed never prints the tick. Generation is the public vocabulary.
-  return (
+  feedList.insertAdjacentHTML(
+    'afterbegin',
     `<div class="e"><span class="dot" style="background:${EVENT_TONE[e.type]}"></span>` +
-    `<span class="yr">g${who?.generation ?? sim.generation}</span>` +
-    `<span class="t">${who ? `<b>${escapeHtml(who.name.split(' ')[0])}</b> ` : ''}${escapeHtml(text)}</span></div>`
+      `<span class="yr">g${who?.generation ?? e.generation}</span>` +
+      `<span class="t">${
+        e.agentName ? `<b>${escapeHtml(e.agentName.split(' ')[0])}</b> ` : ''
+      }${escapeHtml(text)}</span></div>`,
   )
-}
-
-function describe(e: WorldEvent): string {
-  return e.type.replace(/_/g, ' ')
+  while (feedList.childElementCount > 11) feedList.lastElementChild?.remove()
 }
 
 function escapeHtml(s: string): string {
@@ -248,7 +269,7 @@ function escapeHtml(s: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// inspection: provenance and lineage
+// inspection: provenance and lineage, answered by the writer
 // ---------------------------------------------------------------------------
 
 const raycaster = new Raycaster()
@@ -270,93 +291,65 @@ function select(index: number | null): void {
     inspector.classList.remove('on')
     return
   }
-  const id = buildings.idAt(index)
-  const b = id ? sim.world.buildings.get(id) : undefined
-  if (!b) {
+  const id = observer.idAt(index)
+  if (!id) {
+    inspector.classList.remove('on')
+    return
+  }
+  // §21.6: what this building is, and what happened to it, is a server query.
+  connection.send({ t: 'inspect', buildingId: id })
+}
+
+function showInspector(b: BuildingDetail): void {
+  if (!b.found) {
     inspector.classList.remove('on')
     return
   }
   inspector.classList.add('on')
-
-  const baseline = b.baselineId ? seed.buildings.find((x) => x.id === b.baselineId) : undefined
-  const owner = b.ownerId ? sim.world.agents.get(b.ownerId) : undefined
-
-  el('insTitle').textContent = b.name ?? titleFor(b.purpose, b.source)
+  el('insTitle').textContent = b.name ?? titleFor(b.purpose ?? 'building', b.divergence ?? 0)
   el('insSub').textContent =
-    `${b.purpose} · ${DIVERGENCE_LABEL[b.divergence]}` +
-    (b.state !== 'standing' ? ` · ${b.state.replace(/_/g, ' ')}` : '')
+    `${b.purpose} · ${DIVERGENCE_LABEL[b.divergence ?? 0]}` +
+    (b.state && b.state !== 'standing' ? ` · ${b.state.replace(/_/g, ' ')}` : '')
 
   el('insFacts').innerHTML = facts([
     // §20.1: a real building's construction year is a fact about it, the same
     // kind of fact as its footprint. It stays, and it is shown.
     ['Built', b.constructionYear ? String(b.constructionYear) : 'agent-built, new'],
-    ['Height', `${b.heightM.toFixed(1)} m`],
-    ['Levels', String(b.levels)],
-    ['Archetype', b.archetype],
-    ['Condition', `${(b.condition * 100).toFixed(0)}%`],
-    ['Owner', owner ? `${owner.name} (gen ${owner.generation})` : 'unowned'],
-    ['Value', buildingValue(sim.world, b).toFixed(0)],
-    ...(baseline
+    ['Height', `${(b.heightM ?? 0).toFixed(1)} m`],
+    ['Levels', String(b.levels ?? 0)],
+    ['Archetype', b.archetype ?? '—'],
+    ['Condition', `${((b.condition ?? 0) * 100).toFixed(0)}%`],
+    ['Owner', b.ownerName ? `${b.ownerName} (gen ${b.ownerGeneration})` : 'unowned'],
+    ['Value', (b.value ?? 0).toFixed(0)],
+    ...(b.baseline
       ? ([
-          ['Was', `${baseline.purpose}, ${baseline.levels} levels`],
-          ['BAG id', baseline.bagId?.replace('NL.IMBAG.Pand.', '') ?? '—'],
+          ['Was', `${b.baseline.purpose}, ${b.baseline.levels} levels`],
+          ['BAG id', b.baseline.bagId?.replace('NL.IMBAG.Pand.', '') ?? '—'],
         ] as Array<[string, string]>)
       : ([['Origin', 'built by an agent']] as Array<[string, string]>)),
   ])
 
   // §5: clicking a 2045 tower should walk back to the warehouse under it
-  const chain = lineage(b.id)
-  const history = store.events({ buildingId: b.id, limit: 14 })
   const box = el('insLineageBox')
-  if (chain.length > 1 || history.length > 0) {
+  const steps = [...b.lineage, ...b.history]
+  if (steps.length > 1) {
     box.classList.remove('hidden')
-    el('insLineage').innerHTML =
-      chain
-        .map(
-          (c) =>
-            `<div class="step"><span class="yr">${c.label}</span><span>${escapeHtml(c.text)}</span></div>`,
-        )
-        .join('') +
-      history
-        .slice(0, 8)
-        .reverse()
-        .map((e) => {
-          const g = e.agentId ? sim.world.agents.get(e.agentId)?.generation : undefined
-          return `<div class="step"><span class="yr">${g ? `g${g}` : '·'}</span><span>${escapeHtml(
-            e.rationale ?? describe(e),
-          )}</span></div>`
-        })
-        .join('')
+    el('insLineage').innerHTML = steps
+      .map(
+        (c) =>
+          `<div class="step"><span class="yr">${escapeHtml(c.label)}</span><span>${escapeHtml(
+            c.text,
+          )}</span></div>`,
+      )
+      .join('')
   } else {
     box.classList.add('hidden')
   }
 }
 
-/**
- * §5: clicking a replacement should walk back to what stood under it. The left
- * column is the real construction year where there is one, and 'new' where the
- * structure is an agent's — no invented dates.
- */
-function lineage(id: string): Array<{ label: string; text: string }> {
-  const out: Array<{ label: string; text: string }> = []
-  let cur = sim.world.buildings.get(id)
-  let guard = 0
-  while (cur && guard++ < 8) {
-    out.push({
-      label: cur.constructionYear ? String(cur.constructionYear) : 'new',
-      text:
-        cur.source === 'agent_built'
-          ? `agent-built ${cur.purpose}, ${cur.levels} levels`
-          : `${cur.purpose}${cur.demolishedTick !== undefined ? ' — demolished' : ''}`,
-    })
-    cur = cur.replaces ? sim.world.buildings.get(cur.replaces) : undefined
-  }
-  return out.reverse()
-}
-
-function titleFor(purpose: string, source: string): string {
+function titleFor(purpose: string, divergence: number): string {
   const p = purpose.charAt(0).toUpperCase() + purpose.slice(1)
-  return source === 'agent_built' ? `${p} — agent built` : `${p} building`
+  return divergence === 7 ? `${p} — agent built` : `${p} building`
 }
 
 function facts(rows: Array<[string, string]>): string {
@@ -376,10 +369,8 @@ function resize(): void {
 addEventListener('resize', resize)
 resize()
 el('loading').remove()
-refreshReadouts()
 
 let last = performance.now()
-let stepping = false
 let clock = 0
 
 renderer.setAnimationLoop(() => {
@@ -388,26 +379,18 @@ renderer.setAnimationLoop(() => {
   last = now
   clock += dt
 
-  const dps = THROUGHPUT[speedIndex].decisionsPerSecond
-  if (dps > 0 && !stepping && !scrubbing) {
-    // §20.3: advance until the requested number of decisions have been issued,
-    // time-budgeted so a fast setting never starves the frame
-    stepping = true
-    void sim.runToThroughput(Math.max(1, Math.round(dps * dt)), 7).then(() => {
-      stepping = false
-      bridge.sync()
-      pumpFeed()
-      sim.refreshReport()
-      refreshReadouts()
-    })
-  }
+  // §5/§21.6: positions are interpolated between frames rather than simulated.
+  // Nothing in this loop advances the world.
+  presence.advance(dt)
 
   rig.update(dt)
-  director.update(dt, sim.tick)
+  director.update(dt, liveTick)
   if (!director.inControl) el('shot').classList.remove('on')
 
-  agentMarkers.update(sim.world.agents.values(), substrate.groundY, dt, dps, clock)
-  construction.update(sim.world.buildings.values(), clock)
+  // §21.6: one upload per rendered frame, however many arrived since the last
+  observer.flush()
+  agentMarkers.update(withIdentity(), substrate.groundY, dt, clock)
+  construction.update(observer.sites(), clock)
 
   if (scene.fog && 'near' in scene.fog) {
     scene.fog.near = rig.distance * 0.8
@@ -418,6 +401,13 @@ renderer.setAnimationLoop(() => {
   tiltShift.focusRange = Math.max(30, rig.distance * 0.055)
   tiltShift.render(renderer, scene, rig.camera, rig.distance, 1 - rig.streetness * 0.85)
 })
+
+function* withIdentity(): Generator<AgentPresence> {
+  for (const a of presence.positions()) {
+    const who = roster.get(a.id)
+    yield { ...a, strategy: who?.strategy ?? 'consolidator', colourIndex: who?.colourIndex ?? 0 }
+  }
+}
 
 // ambient mode: §15's "leave it running"
 function toggleAmbient(): void {
@@ -432,42 +422,24 @@ addEventListener('keydown', (e) => {
 // exposed for tooling and for driving screenshots
 ;(window as unknown as Record<string, unknown>).civ = {
   rig,
-  sim,
-  store,
   buildings,
-  bridge,
+  observer,
   director,
+  connection,
   select,
-  setSpeed(i: number) {
-    speedIndex = i
-    for (const b of speeds.querySelectorAll('button')) {
-      b.setAttribute('aria-pressed', String(Number(b.dataset.i) === speedIndex))
-    }
+  get readouts() {
+    return readouts
+  },
+  get roster() {
+    return roster
   },
   setMode(v: number) {
     modeInput.value = String(v)
     modeInput.dispatchEvent(new Event('input'))
   },
-  /** Run to a decision budget — the §20.9 unit. */
-  async runDecisions(budget: number) {
-    director.takeControl()
-    await sim.runToDecisionBudget(budget)
-    bridge.sync()
-    pumpFeed()
-    sim.refreshReport()
-    refreshReadouts()
-  },
   scrubTo(ordinal: number) {
     scrub.value = String(ordinal)
     scrub.dispatchEvent(new Event('input'))
-  },
-  scrubToStart() {
-    scrub.value = '0'
-    scrub.dispatchEvent(new Event('input'))
-  },
-  netWorth: (id: string) => {
-    const a = sim.world.agents.get(id)
-    return a ? agentNetWorth(sim.world, a) : 0
   },
   get selected() {
     return selectedIndex

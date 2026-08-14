@@ -10,17 +10,32 @@ construction years.
 
 ```bash
 npm install
-npm run dev              # the world           -> http://127.0.0.1:5173/
+npm run server           # the world           -> ws://127.0.0.1:8787
+npm run dev              # a window onto it    -> http://127.0.0.1:5173/
 npm run dev -- --open /preview/   # archetype harness (§16.1)
 ```
 
-**Shape, plainly: this is a single-process local app.** There is no server, no
-Postgres, no WebSocket. The simulation runs in the browser main thread and
-`MemoryStore` holds the event log in tab memory until you refresh. `schema.sql`
-is a contract nothing connects to. N viewers means N independent worlds, not N
-viewers of one world. The seams for changing that are `WorldStore` and
-`Simulation.runToThroughput`; everything else in the client assumes it owns the
-world.
+**Shape, plainly: one world, many viewers.** §21.6 moved the simulation out of
+the browser. A server process owns the tick loop, the rng and the store; the
+client is a pure observer that receives deltas over a WebSocket at 10 Hz and
+interpolates between them. `@civ/sim` is not a dependency of `@civ/client` and
+does not appear in the Vercel bundle — the client cannot run a simulation
+because it cannot reach one.
+
+```
+railway    the sim server, authoritative, single writer
+supabase   DATABASE_URL — events append-only, snapshots on event ordinal
+vercel     the client, no simulation code
+transport  websocket, frames at ~10 Hz, client interpolates
+```
+
+Verified with two browsers on one server: identical tick, identical decision
+count, frames ~60 ms apart. Full account in `packages/server/README.md`.
+
+Build 2 was the opposite of this and the README said so: a single-process
+browser app where N viewers meant N private worlds, which is worse for a
+spectator product than divergent copies because there is nothing shared to
+witness together.
 
 The world seed is committed, so nothing is fetched at runtime. To rebuild it
 from source data:
@@ -315,16 +330,19 @@ because they are the actual content of the tuning work:
 
 ## Deliberate deviations from the spec
 
-**The simulation runs in the main thread, not a worker.** The renderer owns the
-building-index space (a building can occupy several indices over its life as its
-geometry mutates), and a worker would need that mapping mirrored across a
-boundary for no gain at this scale. Stepping is time-budgeted per frame so a
-fast speed never starves rendering. `Simulation.runBudgeted` is the seam.
+**The simulation runs in one server process, not a worker and not the browser.**
+§21.6. The renderer owns the building-index space (a building can occupy several
+indices over its life as its geometry mutates), so what crosses the wire is a
+texel delta rather than a world. Stepping is wall-clock budgeted, and the client
+never steps at all.
 
-**Persistence runs in memory.** `schema.sql` is the canonical contract — with
-triggers that genuinely refuse baseline mutation and event updates — and the
-importer emits baseline rows against it. The runtime implements the same shapes
-behind `WorldStore`. Swapping in a Postgres implementation is one class.
+**Persistence is write-behind.** `WorldStore` is synchronous and stays that way:
+the tick loop calls `appendEvent` tens of thousands of times a run, and awaiting
+a database inside it would put network latency in the middle of the simulation.
+`DurableStore` writes to memory at memory speed and drains the tail to Postgres
+on an interval. The simulation reads its own recent history from memory; a
+*spectator* reading history reads the database, because that is the read that
+has to survive the process and be the same for everyone watching.
 
 **voxcity is retired for this chunk; the seam stays (§21.5).** The pipeline was
 run end to end and the swap works in both directions, which is what stage 10
@@ -363,13 +381,14 @@ a quiet one does not.
 
 ## Not built
 
-- **no server.** See the top of this file. A spectator platform needs a
-  server-authoritative sim, Postgres and a WebSocket fan-out; none of that
-  exists yet
-- acquisition ignores site value, so non-earning stock is invisible — measured,
-  reported by `tune.ts` as KNOWN, deferred to §18.4
+- **not deployed.** The server runs, has been verified against a live Postgres
+  and against two browsers on one world, and carries Railway and Vercel configs.
+  It has not been put on the internet
 - one chunk. §10's composition is architecture, not a tested claim, and §18.5's
-  cross-area validation is unexercised
+  cross-area validation is unexercised — and it is the first thing to do, because
+  every constant in the economy has only ever seen this fabric
+- the ~10 Hz frame is JSON with base64 blobs. Fine at a couple of kilobytes a
+  frame and the obvious thing to change first if it stops being
 - `before_after` camera intent is defined and queued but composes as a single
   pullback rather than a true A/B cut
 - multi-chunk worlds — the registry and local frames are in place, one chunk is

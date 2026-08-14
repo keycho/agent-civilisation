@@ -10,7 +10,7 @@ This is the index: what each section asks for, and where it lives.
 | **2** | The ratio problem; 400–1,500 baseline buildings; NL/3DBAG | `packages/importer/src/areas.ts`, `probe.ts`; ratio check printed by `main.ts` |
 | **3** | Tick granularity; speed control; agent motion threshold | superseded by §20: `core/src/types.ts` (`THROUGHPUT`, `AGENT_MOTION_MAX_THROUGHPUT`) |
 | **4** | Property economy; nine actions; four gradients; tune to >30% | `packages/sim/src/economy.ts`, `actions.ts`; measured by `packages/sim/test/tune.ts` |
-| **5** | Three tables, three lifecycles; append-only events; snapshots | `packages/persistence/schema.sql`, `src/store.ts`, `src/memory.ts` |
+| **5** | Three tables, three lifecycles; append-only events; snapshots | `packages/persistence/schema.sql`, `src/store.ts`, `src/memory.ts`, `src/durable.ts` |
 | **6** | Parcels derived from block faces + Voronoi | `packages/importer/src/build/blocks.ts`, `build/parcels.ts` |
 | **7** | Roads as a graph, never geometry | `packages/core/src/types.ts` (`RoadNode`/`RoadEdge`), `packages/client/src/render/roadMesh.ts` |
 | **8** | Divergence classes, three surfaces, divergence index | `packages/core/src/types.ts` (`DIVERGENCE`), `packages/sim/src/divergence.ts`, event scrub in `main.ts` |
@@ -39,6 +39,7 @@ This is the index: what each section asks for, and where it lives.
 | **21.3** | Divergence-class entropy across seeds | `test/tune.ts` §21.3 sections |
 | **21.4** | Validators read the emitter's output | `core/src/validate.ts`, `importer/src/emit.ts` (`emitSeed` returns the re-read file, `checkSql`), `importer/test/artifacts.test.ts` |
 | **21.5** | AHN direct, voxcity retired, seam kept | `tools/ahn/`, `importer/src/main.ts` substrate swap, `client/src/render/substrateMesh.ts` |
+| **21.6** | One world, many viewers | `packages/server` (tick loop, rng, broadcast), `packages/protocol` (the wire), `persistence/src/durable.ts` (Postgres), `client/src/world/{connection,observer}.ts` |
 
 ## Where the spec was not followed literally
 

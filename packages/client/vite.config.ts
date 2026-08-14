@@ -6,12 +6,17 @@ import { defineConfig } from 'vite'
  * generator is iterated against the preview harness (§16.1) and a compile
  * between every tweak is exactly the slow, miserable loop the harness exists
  * to avoid.
+ *
+ * §21.6: `@civ/sim` is deliberately absent. The client is a pure observer, and
+ * the surest way to keep it one is for the simulation to be unreachable from
+ * here — not a rule anyone has to remember, a missing edge in the graph. It is
+ * also what makes the Vercel bundle small: the sim never ships to a browser.
  */
 export default defineConfig({
   resolve: {
     alias: {
       '@civ/core': resolve(__dirname, '../core/src/index.ts'),
-      '@civ/sim': resolve(__dirname, '../sim/src/index.ts'),
+      '@civ/protocol': resolve(__dirname, '../protocol/src/index.ts'),
     },
   },
   build: {

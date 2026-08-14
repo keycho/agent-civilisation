@@ -47,6 +47,11 @@
       #clock .label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.09em;
                       color: var(--muted); font-weight: 600; }
       #clock .speeds { display: flex; gap: 3px; }
+      #clock .pace { font-weight: 600; letter-spacing: 0.02em; }
+      #clock .link,
+      #clock .viewers { opacity: 0.55; font-size: 11px; }
+      #clock .link.live { color: #6fbf7a; opacity: 0.9; }
+      #clock .link.lost { color: #d08b6a; opacity: 0.9; }
       #clock button {
         font: inherit; font-size: 11px; padding: 4px 8px; cursor: pointer;
         border: 1px solid var(--line); background: transparent; border-radius: 6px; color: var(--ink);
@@ -123,9 +128,17 @@
       <div class="prov" id="chunkProv"></div>
     </div>
 
+    <!--
+      §21.6: there is no speed control any more. Throughput is a property of the
+      world, which one server owns and everyone is watching; a viewer reads the
+      pace and cannot set it. That is the difference between a shared world and
+      a synchronised one.
+    -->
     <div class="panel" id="clock">
-      <span class="label">throughput</span>
-      <span class="speeds" id="speeds"></span>
+      <span class="label">the world thinks</span>
+      <span class="pace" id="pace">—</span>
+      <span class="link" id="link">connecting…</span>
+      <span class="viewers" id="durability"></span>
       <button id="ambient" aria-pressed="true" title="ambient mode — the director drives the camera (a)">ambient</button>
     </div>
 

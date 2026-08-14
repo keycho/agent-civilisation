@@ -10,8 +10,8 @@
   },
   "dependencies": {
     "@civ/core": "*",
-    "@civ/sim": "*",
-    "three": "^0.170.0"
+    "three": "^0.170.0",
+    "@civ/protocol": "*"
   },
   "devDependencies": {
     "@types/three": "^0.170.0",

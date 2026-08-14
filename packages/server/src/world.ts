@@ -1,0 +1,265 @@
+import { RATE_WINDOW_TICKS, THROUGHPUT, type WorldSeed } from '@civ/core'
+import { DurableStore } from '@civ/persistence'
+import type { AgentIdentity, EventWire, Frame, Hello, MaterialiseSpec, Readouts, RoadEdgeWire } from '@civ/protocol'
+import { toBase64 } from '@civ/protocol'
+import { Simulation } from '@civ/sim'
+import {
+  BuildingTexture,
+  agentIdentity,
+  agentWire,
+  eventWire,
+  materialiseSpec,
+  progressOf,
+  purposeIndexOf,
+  roadWire,
+} from './frames.ts'
+
+/**
+ * §21.6: the authoritative world. One instance, one writer, one tick loop.
+ *
+ * The rng lives here — that is what makes the world shared rather than
+ * synchronised. Two viewers are not running the same seed in parallel and
+ * hoping; there is one world and they are both looking at it.
+ *
+ * Throughput is a property of the world, not of a session. A spectator cannot
+ * step it, seed it or steer it, so nothing a client sends can advance the
+ * simulation. That is the difference the protocol enforces.
+ */
+
+export interface WorldServiceOptions {
+  seed: WorldSeed
+  databaseUrl?: string
+  /** index into THROUGHPUT; the pace the world thinks at */
+  throughput?: number
+  agentCount?: number
+  snapshotEveryEvents?: number
+  /** run seed for the rng — fixed for reproducibility, one per world */
+  rngSeed?: string
+}
+
+export class WorldService {
+  readonly sim: Simulation
+  readonly store: DurableStore
+  readonly texture: BuildingTexture
+  readonly chunkId: string
+
+  private throughputIndex: number
+  private lastBroadcastBytes: Uint8Array
+  private lastEventId = 0
+  /** every agent-built structure ever materialised, for clients that join late */
+  private readonly materialised = new Map<string, MaterialiseSpec>()
+  private readonly agentRoads = new Map<string, RoadEdgeWire>()
+  private pendingMaterialise: MaterialiseSpec[] = []
+  private pendingRoads: RoadEdgeWire[] = []
+  private retiredSinceFrame: string[] = []
+  private bornSinceFrame: AgentIdentity[] = []
+  private known = new Set<string>()
+  private ticking = false
+
+  constructor(opts: WorldServiceOptions) {
+    this.store = new DurableStore({ url: opts.databaseUrl })
+    this.chunkId = opts.seed.chunk.id
+    this.throughputIndex = opts.throughput ?? 2
+    this.sim = new Simulation(opts.seed, this.store, {
+      agentCount: opts.agentCount ?? 58,
+      seed: opts.rngSeed ?? 'world-1',
+      snapshotEveryEvents: opts.snapshotEveryEvents ?? 350,
+      onSnapshot: ({ ordinal, generation, report }) => {
+        this.pump()
+        // §20.4: keyed on event ordinal. This is what the scrub later queries.
+        this.store.putSnapshot({
+          chunkId: this.chunkId,
+          ordinal,
+          generation,
+          tick: this.sim.world.tick,
+          buildingData: this.texture.bytes.slice(),
+          divergenceIndex: report.index,
+          stats: {
+            touched: report.touchedShare,
+            agentOrigin: report.agentOrigin,
+            demolished: report.demolished,
+          },
+        })
+      },
+    })
+
+    this.texture = new BuildingTexture(opts.seed.buildings.map((b) => b.id))
+    for (const b of this.sim.world.buildings.values()) this.known.add(b.id)
+    this.pump()
+    // the founding population arrives in `hello`, not as a birth
+    this.bornSinceFrame = []
+    this.lastBroadcastBytes = this.texture.bytes.slice()
+    this.store.putSnapshot({
+      chunkId: this.chunkId,
+      ordinal: 0,
+      generation: 1,
+      tick: 0,
+      buildingData: this.texture.bytes.slice(),
+      divergenceIndex: 0,
+      stats: {},
+    })
+  }
+
+  get throughput(): number {
+    return this.throughputIndex
+  }
+
+  /**
+   * Advance the world by wall-clock time at the current throughput. The loop
+   * calls this; nothing a client sends does.
+   */
+  async advance(dtSeconds: number): Promise<void> {
+    if (this.ticking) return
+    const dps = THROUGHPUT[this.throughputIndex].decisionsPerSecond
+    if (dps <= 0) return
+    this.ticking = true
+    try {
+      await this.sim.runToThroughput(Math.max(1, Math.round(dps * dtSeconds)), 60)
+      this.sim.refreshReport()
+      this.pump()
+    } finally {
+      this.ticking = false
+    }
+  }
+
+  /** Fold everything the simulation changed into the texture and the queues. */
+  private pump(): void {
+    const w = this.sim.world
+
+    if (w.pendingGeometry.length > 0) {
+      for (const id of w.pendingGeometry) {
+        const b = w.buildings.get(id)
+        if (!b) continue
+        const spec = materialiseSpec(b)
+        this.texture.reslot(b.id)
+        this.materialised.set(b.id, spec)
+        this.pendingMaterialise.push(spec)
+      }
+      w.pendingGeometry.length = 0
+    }
+
+    for (const b of w.buildings.values()) {
+      const slot = this.texture.slotOf(b.id)
+      if (slot === undefined) continue
+      this.texture.set(slot, progressOf(b), b.divergence, purposeIndexOf(b), b.condition)
+    }
+
+    for (const e of w.edges.values()) {
+      if (!e.agentBuilt || this.agentRoads.has(e.id)) continue
+      const wire = roadWire(this.sim, e.id)
+      if (!wire) continue
+      this.agentRoads.set(e.id, wire)
+      this.pendingRoads.push(wire)
+    }
+    w.pendingRoads.length = 0
+
+    // §12: an heir is a new agent with a name and a colour, and the client has
+    // to be told who it is once rather than every frame.
+    for (const a of w.agents.values()) {
+      if (a.diedTick) {
+        if (this.known.delete(a.id)) this.retiredSinceFrame.push(a.id)
+      } else if (!this.known.has(a.id)) {
+        this.known.add(a.id)
+        this.bornSinceFrame.push(agentIdentity(a))
+      }
+    }
+  }
+
+  /** Set by the transport; it is the only thing here that is not the world. */
+  viewers = 0
+
+  readouts(): Readouts {
+    const r = this.sim.report
+    return {
+      viewers: this.viewers,
+      pace: THROUGHPUT[this.throughputIndex],
+      divergenceIndex: r.index,
+      generation: this.sim.generation,
+      touchedShare: r.touchedShare,
+      agentOrigin: r.agentOrigin,
+      demolished: r.demolished,
+      tick: this.sim.world.tick,
+      decisions: this.sim.decisionsIssued,
+      eventCount: this.store.eventCount(),
+    }
+  }
+
+  /** The delta since the last broadcast, as [slot, r, g, b, a] runs. */
+  nextFrame(): Frame {
+    const texels: number[] = []
+    const now = this.texture.bytes
+    const before = this.lastBroadcastBytes
+    for (let i = 0; i < now.length; i += 4) {
+      if (
+        now[i] !== before[i] ||
+        now[i + 1] !== before[i + 1] ||
+        now[i + 2] !== before[i + 2] ||
+        now[i + 3] !== before[i + 3]
+      ) {
+        texels.push(i >> 2, now[i], now[i + 1], now[i + 2], now[i + 3])
+        before[i] = now[i]
+        before[i + 1] = now[i + 1]
+        before[i + 2] = now[i + 2]
+        before[i + 3] = now[i + 3]
+      }
+    }
+
+    const fresh = this.store
+      .events({ sinceTick: Math.max(0, this.sim.world.tick - 400), limit: 60, minWeight: 15 })
+      .filter((e) => e.id > this.lastEventId)
+      .reverse()
+    if (fresh.length) this.lastEventId = Math.max(...fresh.map((e) => e.id))
+
+    const frame: Frame = {
+      t: 'frame',
+      readouts: this.readouts(),
+      texels,
+      materialise: this.pendingMaterialise,
+      roads: this.pendingRoads,
+      agents: agentWire(this.sim),
+      born: this.bornSinceFrame,
+      events: fresh.map((e) => eventWire(this.sim, e)),
+      retired: this.retiredSinceFrame,
+    }
+    this.pendingMaterialise = []
+    this.pendingRoads = []
+    this.retiredSinceFrame = []
+    this.bornSinceFrame = []
+    return frame
+  }
+
+  /** Everything a joining spectator needs to be looking at *now*. */
+  hello(viewers: number): Hello {
+    const recent = this.store
+      .events({ sinceTick: Math.max(0, this.sim.world.tick - 900), limit: 11, minWeight: 15 })
+      .reverse()
+    return {
+      t: 'hello',
+      protocol: 1,
+      chunkId: this.chunkId,
+      buildingData: toBase64(this.texture.bytes),
+      materialise: [...this.materialised.values()],
+      roads: [...this.agentRoads.values()],
+      agents: [...this.sim.world.agents.values()]
+        .filter((a) => !a.diedTick)
+        .map((a) => agentIdentity(a)),
+      readouts: this.readouts(),
+      events: recent.map((e) => eventWire(this.sim, e)),
+      viewers,
+      durability: this.store.durability,
+    }
+  }
+
+  /** Recent history for a client that has just connected, oldest first. */
+  recentEvents(limit: number): EventWire[] {
+    return this.store
+      .events({ limit, minWeight: 15 })
+      .reverse()
+      .map((e) => eventWire(this.sim, e))
+  }
+
+  /** §20.2: never rendered, but the log's window is expressed in it. */
+  get rateWindow(): number {
+    return RATE_WINDOW_TICKS
+  }
+}

@@ -8,7 +8,9 @@
     "packages/core",
     "packages/importer",
     "packages/persistence",
+    "packages/protocol",
     "packages/sim",
+    "packages/server",
     "packages/client"
   ],
   "scripts": {
@@ -17,7 +19,8 @@
     "test": "node --test packages/*/test/*.test.ts",
     "import": "npm run import -w @civ/importer",
     "dev": "npm run dev -w @civ/client",
-    "preview:archetypes": "npm run dev -w @civ/client -- --open /preview/"
+    "preview:archetypes": "npm run dev -w @civ/client -- --open /preview/",
+    "server": "npm run start -w @civ/server"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",

@@ -1,0 +1,20 @@
+{
+  "name": "@civ/server",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/main.ts",
+  "scripts": {
+    "start": "node --no-warnings src/main.ts",
+    "dev": "node --no-warnings --watch src/main.ts"
+  },
+  "dependencies": {
+    "@civ/core": "*",
+    "@civ/persistence": "*",
+    "@civ/protocol": "*",
+    "@civ/sim": "*",
+    "postgres": "^3.4.9",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": { "@types/ws": "^8.5.13" }
+}

@@ -8,6 +8,7 @@
     "./*": "./src/*"
   },
   "dependencies": {
-    "@civ/core": "*"
+    "@civ/core": "*",
+    "postgres": "^3.4.9"
   }
 }

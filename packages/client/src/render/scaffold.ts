@@ -1,5 +1,5 @@
 import { footprintMetrics, scaffoldOpacity, siteMarkOpacity } from '@civ/core'
-import type { Building } from '@civ/core'
+import type { Ring } from '@civ/core'
 import {
   BoxGeometry,
   BufferAttribute,
@@ -26,7 +26,21 @@ import {
  * Both of these are instanced: a scaffold cage is a generic box frame scaled to
  * a building's oriented bounding box, and a site mark is a quad. Unlike the
  * buildings themselves, they genuinely do share one mesh.
+ *
+ * §21.6: this takes sites rather than `Building`s, because the client no longer
+ * has any. Everything it needs is the shape, where the ground is, and which way
+ * the progress float is travelling.
  */
+
+export interface ConstructionSite {
+  footprint: Ring
+  groundM: number
+  heightM: number
+  /** §16.5's single float */
+  progress: number
+  /** descending progress is a demolition */
+  falling: boolean
+}
 
 const MAX_ACTIVE = 96
 
@@ -64,12 +78,11 @@ export class ConstructionOverlay {
     this.siteMarks.renderOrder = 2
   }
 
-  update(buildings: Iterable<Building>, time: number): void {
+  update(sites: Iterable<ConstructionSite>, time: number): void {
     let cages = 0
     let marks = 0
 
-    for (const b of buildings) {
-      if (b.state !== 'under_construction' && b.state !== 'under_demolition') continue
+    for (const b of sites) {
       const m = footprintMetrics(b.footprint)
 
       const scaffoldA = scaffoldOpacity(b.progress)
@@ -82,7 +95,7 @@ export class ConstructionOverlay {
         this.dummy.scale.set(m.obb.length + 1.4, h, m.obb.width + 1.4)
         this.dummy.updateMatrix()
         this.scaffold.setMatrixAt(cages, this.dummy.matrix)
-        this.colour.set(b.state === 'under_demolition' ? '#a8705c' : '#9a927f')
+        this.colour.set(b.falling ? '#a8705c' : '#9a927f')
         this.scaffold.setColorAt(cages, this.colour)
         cages++
       }
@@ -95,7 +108,7 @@ export class ConstructionOverlay {
         this.dummy.scale.set((m.obb.length + 3) * pulse, 1, (m.obb.width + 3) * pulse)
         this.dummy.updateMatrix()
         this.siteMarks.setMatrixAt(marks, this.dummy.matrix)
-        this.colour.set(b.state === 'under_demolition' ? '#c98a6e' : '#d8c48a')
+        this.colour.set(b.falling ? '#c98a6e' : '#d8c48a')
         this.siteMarks.setColorAt(marks, this.colour)
         marks++
       }

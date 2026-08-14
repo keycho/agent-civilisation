@@ -90,7 +90,12 @@ export class BuildingDataTexture {
     this.staticDirty = true
   }
 
-  /** Bulk replace for the year scrub — a snapshot is just the mutable half. */
+  /** §21.6: the frame delta writes `data` straight, then says so. */
+  markDirty(): void {
+    this.dirty = true
+  }
+
+  /** Bulk replace for the event scrub — a snapshot is just the mutable half. */
   loadFrame(frame: Uint8Array): void {
     this.data.set(frame.subarray(0, this.data.length))
     this.dirty = true

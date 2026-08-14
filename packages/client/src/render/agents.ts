@@ -1,5 +1,4 @@
-import { AGENT_MOTION_MAX_THROUGHPUT } from '@civ/core'
-import type { Agent } from '@civ/sim'
+import type { AgentIdentity, AgentWire } from '@civ/protocol'
 import {
   BufferAttribute,
   BufferGeometry,
@@ -52,31 +51,20 @@ export class AgentMarkers {
   }
 
   /**
-   * `interpolate` is false above the motion threshold: markers snap to where
-   * the agent is working rather than sliding around at surge throughput.
+   * §21.6: positions arrive already interpolated between server frames — this
+   * process does not own the agents and has nothing to step. §3's threshold
+   * still applies and still keys off throughput: above it, agents stop reading
+   * as moving and become presence markers, which is what `motion` carries.
    */
   update(
-    agents: Iterable<Agent>,
+    agents: Iterable<AgentPresence>,
     groundY: number,
-    dt: number,
-    decisionsPerSecond: number,
+    _dt: number,
     time: number,
   ): void {
-    const interpolate =
-      decisionsPerSecond > 0 && decisionsPerSecond <= AGENT_MOTION_MAX_THROUGHPUT
     let i = 0
     for (const a of agents) {
-      if (a.diedTick) continue
       if (i >= this.capacity) break
-
-      if (interpolate) {
-        const k = 1 - Math.pow(0.02, dt)
-        a.x += (a.targetX - a.x) * k
-        a.y += (a.targetY - a.y) * k
-      } else {
-        a.x = a.targetX
-        a.y = a.targetY
-      }
 
       // activity pulse: the marker breathes while the agent is doing something
       const busy = a.activity !== 'idle'
@@ -99,6 +87,9 @@ export class AgentMarkers {
     if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true
   }
 }
+
+/** Position from the frame, identity from the roster the client remembers. */
+export type AgentPresence = AgentWire & Pick<AgentIdentity, 'strategy' | 'colourIndex'>
 
 /** A pin: a tapered body under a marker cap. Reads as a presence, not a person. */
 function markerGeometry(): BufferGeometry {
