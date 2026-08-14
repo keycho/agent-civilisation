@@ -147,6 +147,7 @@ function recordDecision(world: World, agent: Agent, action: ScoredAction): void 
       tick: world.tick,
       clearedAfter: false,
       developedAfter: false,
+      spannedByOneBuilding: 0,
       baselineAreaM2: action.parcelIds.reduce((sum, id) => sum + baselineAreaOf(world, id), 0),
       builtAreaM2: 0,
       landValueRatio: here / Math.max(1e-9, medianLandValue(world)),
@@ -168,9 +169,13 @@ function recordDecision(world: World, agent: Agent, action: ScoredAction): void 
     const built = world.lastDevelopedId ? world.buildings.get(world.lastDevelopedId) : undefined
     for (const a of world.assemblies) {
       if (!sameHolding(a.agentId, agent.id)) continue
-      if (!action.parcelIds.some((id) => a.parcelIds.includes(id))) continue
+      const span = action.parcelIds.filter((id) => a.parcelIds.includes(id)).length
+      if (span === 0) continue
       a.developedAfter = true
       a.builtAreaM2 += built?.areaM2 ?? 0
+      // §21.4 applied to a metric: how much of the assembly one structure
+      // actually covers, read off the building rather than off the sequence.
+      if (span > a.spannedByOneBuilding) a.spannedByOneBuilding = span
     }
   }
 }

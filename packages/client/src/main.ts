@@ -162,12 +162,36 @@ function acceptReadouts(r: Readouts): void {
 
 const rig = new CameraRig(innerWidth / innerHeight)
 rig.limits.panRadius = radius * 1.1
-const CITY_FRAMING = rig.distanceToFrame(radius * 2.3)
+
+/**
+ * §24.1: "zoom so the diamond's width fills the frame width, accepting corner
+ * crop."
+ *
+ * `distanceToFrame` fits a span to the *vertical* fov, so framing the plate
+ * that way put the whole horizontal margin on screen as dead grey — at 16:9 the
+ * camera was showing about 1.8x more world across than down, and the plate is
+ * only as wide as it is tall. Frame on the width instead and let the corners go
+ * off-frame.
+ *
+ * The plate is a square seen rotated, which is the §24.2 problem showing up in
+ * the camera: a square of half-extent h turned by `az` projects to a horizontal
+ * half-width of h*(|cos az| + |sin az|), independent of the tilt, since tilt
+ * compresses the vertical only. At the default azimuth that is 1.36 h rather
+ * than h — the diamond really is wider than the square it is cut from, and the
+ * framing has to know that or it crops the corners it was told to keep.
+ */
+const CITY_AZIMUTH = -0.5
+function frameThePlate(aspect: number, azimuth = CITY_AZIMUTH): number {
+  const spread = Math.abs(Math.cos(azimuth)) + Math.abs(Math.sin(azimuth))
+  const widthM = 2 * HALF_EXTENT * spread
+  return rig.distanceToFrame(widthM / aspect)
+}
+const CITY_FRAMING = frameThePlate(innerWidth / innerHeight)
 rig.limits.maxDistance = CITY_FRAMING * 1.25
 rig.distance = CITY_FRAMING
 rig.target.set(0, substrate.groundY, 0)
 rig.flyTo(new Vector3(0, substrate.groundY, 0), CITY_FRAMING, {
-  azimuth: -0.5,
+  azimuth: CITY_AZIMUTH,
   polar: 0.66,
   duration: 0.01,
 })
@@ -381,7 +405,15 @@ function facts(rows: Array<[string, string]>): string {
 
 function resize(): void {
   renderer.setSize(innerWidth, innerHeight, false)
-  rig.setAspect(innerWidth / innerHeight)
+  const aspect = innerWidth / innerHeight
+  rig.setAspect(aspect)
+  // §24.1: the city framing is derived from the frame width, so a narrower
+  // window has to pull back or it crops the plate rather than filling with it.
+  // Clamping into the new limit is enough on its own: a viewer who has zoomed
+  // in is already below the maximum and is left alone, and one sitting at city
+  // framing lands on the new city framing.
+  rig.limits.maxDistance = frameThePlate(aspect) * 1.25
+  rig.distance = Math.min(rig.distance, rig.limits.maxDistance)
   const pr = renderer.getPixelRatio()
   tiltShift.setSize(Math.floor(innerWidth * pr), Math.floor(innerHeight * pr))
 }
@@ -417,7 +449,25 @@ renderer.setAnimationLoop(() => {
   }
   env.sky.position.copy(rig.camera.position)
 
-  tiltShift.focusRange = Math.max(30, rig.distance * 0.055)
+  /**
+   * §24.1: "widen the tilt-shift sharp band so it covers the plate rather than
+   * a strip."
+   *
+   * At 0.055 the sharp band was about 100 m of depth against a plate that
+   * spans roughly 370 m front to back at this tilt, so the top and bottom
+   * thirds blurred out and the world read as small rather than as miniature.
+   * Those are different effects and the old setting delivered both.
+   *
+   * The width is derived rather than dialled. A 604 m plate seen from 52
+   * degrees above the horizontal has a depth extent of 604*cos(52) = 370 m, so
+   * half of that is 185 m either side of the focal plane — and at the city
+   * distance of about 1835 m that is 0.10. Which is the number to use: it puts
+   * the plate inside the band and nothing else, so the falloff still lands on
+   * the water and the far edge, which is where the diorama read comes from. A
+   * first pass at 0.16 covered the plate and a long way past it, and turned the
+   * effect off.
+   */
+  tiltShift.focusRange = Math.max(30, rig.distance * 0.1)
   tiltShift.render(renderer, scene, rig.camera, rig.distance, 1 - rig.streetness * 0.85)
 })
 
@@ -432,6 +482,10 @@ function* withIdentity(): Generator<AgentPresence> {
 function toggleAmbient(): void {
   director.enabled = !director.enabled
   el('ambient').setAttribute('aria-pressed', String(director.enabled))
+  // §24.1: "panels ... gone entirely in ambient." The clock keeps the ambient
+  // button itself reachable, so it is exempt — leaving it running must not mean
+  // leaving it with no way out.
+  document.body.classList.toggle('ambient', director.enabled)
 }
 el('ambient').addEventListener('click', toggleAmbient)
 addEventListener('keydown', (e) => {

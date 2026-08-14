@@ -21,18 +21,57 @@
       }
       canvas { display: block; }
 
-      /* §15: the default experience is mostly world. UI is secondary. */
+      /*
+       * §24.1: transparent panels need something to sit on or the provenance
+       * text vanishes into the terrain. This is not the old card coming back —
+       * it is a corner vignette with no edge and no shape, so it reads as
+       * atmosphere rather than as an object framing the world. The panels lie
+       * on top of it.
+       */
+      #scrim {
+        position: fixed; inset: 0; pointer-events: none; z-index: 0;
+        /* edge gradients, not corner ones: the panels hug the left and right
+           edges over their full height, and corner blobs left the middle of the
+           feed sitting on bare terrain. */
+        background:
+          linear-gradient(to right,  rgba(233,237,239,0.94) 0%, rgba(233,237,239,0.55) 14%, rgba(233,237,239,0) 27%),
+          linear-gradient(to left,   rgba(233,237,239,0.94) 0%, rgba(233,237,239,0.55) 15%, rgba(233,237,239,0) 28%),
+          linear-gradient(to bottom, rgba(233,237,239,0.80) 0%, rgba(233,237,239,0) 9%),
+          linear-gradient(to top,    rgba(233,237,239,0.72) 0%, rgba(233,237,239,0) 7%);
+        transition: opacity 420ms ease;
+      }
+      body.ambient #scrim { opacity: 0; }
+
+      /*
+       * §15: the default experience is mostly world. UI is secondary.
+       *
+       * §24.1: "panels to transparent overlays at the extreme edges." They were
+       * opaque fills with a border and a drop shadow, one in each corner, which
+       * made them objects sitting on top of the world and bracketing it on
+       * every side — ui framing the world rather than the other way round. No
+       * fill, no border, no shadow: the text sits directly on the world and the
+       * only concession to legibility is a soft shadow on the glyphs.
+       */
       .panel {
         position: fixed;
-        background: var(--panel);
-        border: 1px solid var(--line);
-        border-radius: 11px;
-        backdrop-filter: blur(10px);
-        box-shadow: 0 6px 24px rgba(20, 25, 30, 0.09);
+        z-index: 1;
+        background: none;
+        border: 0;
+        border-radius: 0;
+        backdrop-filter: none;
+        box-shadow: none;
+        text-shadow: 0 1px 3px rgba(232, 236, 238, 0.85), 0 0 12px rgba(232, 236, 238, 0.6);
+        transition: opacity 420ms ease;
       }
 
+      /* gone entirely in ambient, per §24.1. The clock stays: it carries the
+         ambient toggle, and hiding the way out with the ui is a trap. */
+      body.ambient .panel:not(#clock) { opacity: 0; pointer-events: none; }
+      body.ambient #clock > :not(#ambient) { opacity: 0; transition: opacity 420ms ease; }
+      body.ambient #hint { opacity: 0; transition: opacity 420ms ease; }
+
       #titlecard {
-        top: 18px; left: 18px; padding: 13px 16px 14px; max-width: 300px;
+        top: 10px; left: 12px; padding: 0; max-width: 300px;
       }
       #titlecard h1 { margin: 0; font-size: 13.5px; letter-spacing: 0.01em; font-weight: 600; }
       #titlecard .place { margin: 1px 0 0; font-size: 12px; color: var(--muted); }
@@ -41,8 +80,8 @@
       #titlecard .prov { margin-top: 7px; font-size: 10.5px; color: var(--muted); line-height: 1.45; }
 
       #clock {
-        top: 18px; left: 50%; transform: translateX(-50%);
-        padding: 9px 16px; display: flex; align-items: center; gap: 14px;
+        top: 10px; left: 50%; transform: translateX(-50%);
+        padding: 0; display: flex; align-items: center; gap: 14px;
       }
       #clock .label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.09em;
                       color: var(--muted); font-weight: 600; }
@@ -59,7 +98,7 @@
       }
       #clock button[aria-pressed="true"] { background: var(--ink); color: #f8f7f4; border-color: var(--ink); }
 
-      #modes { bottom: 18px; left: 18px; padding: 11px 13px; width: 264px; }
+      #modes { bottom: 10px; left: 12px; padding: 0; width: 264px; }
       #modes .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 11.5px; }
       #modes .row label { flex: 0 0 74px; color: var(--muted); }
       #modes input[type="range"] { flex: 1; }
@@ -74,7 +113,7 @@
                         font-variant-numeric: tabular-nums; }
 
       #inspector {
-        top: 18px; right: 18px; width: 296px; padding: 14px 16px; display: none;
+        top: 10px; right: 12px; width: 296px; padding: 0; display: none;
         max-height: calc(100vh - 36px); overflow-y: auto;
       }
       #inspector.on { display: block; }
@@ -92,7 +131,7 @@
       #close { position: absolute; top: 10px; right: 12px; border: 0; background: none;
                font-size: 15px; color: var(--muted); cursor: pointer; line-height: 1; }
 
-      #feed { bottom: 18px; right: 18px; width: 300px; padding: 11px 13px; max-height: 40vh; overflow: hidden; }
+      #feed { bottom: 10px; right: 12px; width: 300px; padding: 0; max-height: 40vh; overflow: hidden; }
       #feed h3 { margin: 0 0 7px; font-size: 10.5px; text-transform: uppercase;
                  letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
       #feed .e { display: flex; gap: 8px; font-size: 11.5px; padding: 2.5px 0; }
@@ -120,6 +159,7 @@
     </style>
   </head>
   <body>
+    <div id="scrim"></div>
     <div id="loading">loading the real world…</div>
 
     <div class="panel" id="titlecard">

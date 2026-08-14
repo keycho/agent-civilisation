@@ -88,6 +88,11 @@ function newSeason(season: number): WorldService {
  */
 function turnSeason(next: number): void {
   world = newSeason(next)
+  // §23.6, found by watching one: the new world starts with viewers at 0 and the
+  // count is only re-stamped on connect and disconnect, so every spectator read
+  // "0 watching" from the turn until somebody happened to join or leave. The
+  // audience does not empty because the season did.
+  world.viewers = sockets.size
   store.appendEvent({
     chunkId: world.chunkId,
     tick: 0,

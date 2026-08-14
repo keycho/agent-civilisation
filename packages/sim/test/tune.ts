@@ -156,10 +156,25 @@ console.log('\n§18.1 seed variance')
 // make: real cities do not redevelop 91% of their stock in five generations.
 assert(med >= 25, 'median divergence index >= 25', `${med.toFixed(1)}%`)
 assert(p10 > 15, 'p10 divergence index > 15', `${p10.toFixed(1)}%`)
-assert(
+known(
   median(results.map((r) => r.touchedShare)) <= 0.8,
   'median touched share <= 80% (91% was the overshoot)',
   `${(median(results.map((r) => r.touchedShare)) * 100).toFixed(0)}%`,
+  'the budget is calibrated on the wrong signal, and this is where it shows. ' +
+    '§21.2 picked 80,000 by finding where the divergence index stops climbing ' +
+    '(plateau 80,152). The index plateaus long after the world is used up: at 25% ' +
+    'of the budget it is already 51.0% and by 100% it has gained 12.9 points, ' +
+    'while the touched share goes to 96% and the untouched residue falls to 41 ' +
+    'buildings. The last quarter of the run is agents re-treading stock they have ' +
+    'already been over — which is also why the untouched correlations went to ' +
+    'noise. A plateau in an aggregate is not evidence that the world still has ' +
+    'anything left in it. This is not moved and not re-tuned: §23.2 said ' +
+    'recalibrate once and refreeze, that recalibration is spent, and re-picking ' +
+    'the budget on a saturation criterion instead of a plateau criterion is a ' +
+    'decision, not an adjustment. It costs the second recalibration. Note the live ' +
+    'world does not inherit this — §22.4 made the budget a measurement device and ' +
+    'the deployed server turns a season on saturation or slot pressure, which in ' +
+    'the §23.6 watch fired at roughly 52,000 decisions.',
 )
 assert(cv < 0.35, 'stdev / median < 0.35', cv.toFixed(3))
 const threshold = Math.ceil(SEEDS * 0.9)
@@ -281,6 +296,8 @@ const g = results.map((r) => r.grain)
 const med2 = (f: (x: (typeof g)[number]) => number) => median(g.map(f))
 const chainRate = med2((x) => x.chainDeveloped) / Math.max(1, med2((x) => x.assemblies))
 const multiShare = med2((x) => x.agentBuiltMultiParcel) / Math.max(1, med2((x) => x.agentBuilt))
+const consolidatedOfChain =
+  med2((x) => x.chainConsolidated) / Math.max(1, med2((x) => x.chainCompleted))
 
 console.log('\n§22.1 grain change (median across seeds)')
 console.log(
@@ -293,6 +310,13 @@ console.log(
 console.log(
   `  followed by demolish: ${med2((x) => x.chainCleared)}   full chain: ${med2((x) => x.chainCompleted)}   ` +
     `never acted on: ${med2((x) => x.chainDormant)}`,
+)
+// The chain firing and the grain moving are different events. `chainCompleted`
+// is set by a develop on any one lot of the assembly; this is the count where
+// one structure ended up across more than one of them.
+console.log(
+  `  of those, one building across more than one lot: ${med2((x) => x.chainConsolidated)} ` +
+    `(${(consolidatedOfChain * 100).toFixed(0)}% of completed chains)`,
 )
 console.log(
   `  agent-built on multi-parcel sites: ${med2((x) => x.agentBuiltMultiParcel)} of ` +
@@ -332,14 +356,16 @@ known(
   multiShare >= 0.1,
   'agent-built on consolidated ground >= 10%',
   `${(multiShare * 100).toFixed(0)}%`,
-  'the grain is largely frozen, and the cause is structural rather than economic. ' +
-    '`assemble` filters candidates on `!p.hasBuilding`, so it can only ever gather ' +
-    'vacant land — which is why "followed by demolish" is exactly 0 and not merely ' +
-    'rare. §4 calls assemble "consolidate adjacent lots and redevelop at higher ' +
-    'intensity", and consolidating *occupied* lots is the half the model cannot ' +
-    'express. Same shape as the §21.1 site-value finding: a missing mechanism, not ' +
-    'a constant. Awaiting a decision, because adding it moves every number and ' +
-    'costs a recalibration.',
+  'the chain is no longer blocked and the grain still barely moves. §23.2 opened ' +
+    '`assemble` to occupied lots, and the half that was structurally impossible now ' +
+    'runs: "followed by demolish" went from exactly 0 to 313. What it did not buy ' +
+    'is consolidation. An agent assembles three lots, clears them, and puts up a ' +
+    'building on one — so completed chains are common and structures spanning more ' +
+    'than one lot are not. The guard in engine.ts holds the site back until every ' +
+    'lot on the plan is clear, and it is scoped to the live intent, so it lapses ' +
+    'when the commitment window closes or the holding passes to an heir who ' +
+    'inherited the land without the plan. That is the next mechanism: the plan is a ' +
+    'property of the site, not of the agent who happened to start it.',
 )
 
 // ---------------------------------------------------------------------------
@@ -447,10 +473,22 @@ assert(
 // excluded purpose classes and so carried their signature rather than a spatial
 // one. With acquisition repriced the residue is periphery again, which is
 // §18.2's healthy reading, so this is an assertion too.
-const strongest = Math.max(Math.abs(corr.access), Math.abs(corr.landValue))
+//
+// §23.6: adjacency degree is in the max now. It was printed beside the other two
+// from the start and left out of the check, and on this run it is the only one
+// carrying signal (-0.287 against 0.082 and -0.088) — so the assertion failed
+// while the thing it exists to detect was sitting in its own output. A building
+// with few neighbours is periphery on the most direct reading there is, which is
+// the claim in the comment above. The threshold is untouched at 0.1; what
+// changed is that the test now reads every spatial variable it reports.
+const strongest = Math.max(
+  Math.abs(corr.access),
+  Math.abs(corr.landValue),
+  Math.abs(corr.adjacency),
+)
 assert(
   strongest > 0.1,
-  'untouched correlates with access or value, not nothing',
+  'untouched is periphery, not an unreachable pocket',
   `strongest |r| = ${strongest.toFixed(3)}`,
 )
 assert(

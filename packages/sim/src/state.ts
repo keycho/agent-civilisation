@@ -139,8 +139,15 @@ export interface ParcelAdjacency {
  *
  * `clearedAfter` and `developedAfter` are set when the same agent — or its
  * heir, since a dynasty is one holding — demolishes on this ground and then
- * builds on it. An assembly with neither is a purchase; an assembly with both
- * is the grain of the city actually changing.
+ * builds on it.
+ *
+ * Those two flags are a record of *intentions in sequence*, and that turned out
+ * to be the weaker measurement: `developedAfter` fires when a develop touches
+ * any one lot of the assembly, so a run of 201 "completed chains" contained 13
+ * buildings that actually spanned more than one lot. `spannedByOneBuilding` is
+ * the §21.4 form of the same question asked of the artifact — how many of these
+ * lots ended up under a single structure. 1 means the assembly was spent and
+ * the grain did not move.
  */
 export interface Assembly {
   agentId: string
@@ -148,6 +155,8 @@ export interface Assembly {
   tick: number
   clearedAfter: boolean
   developedAfter: boolean
+  /** most of these lots ever covered by one agent-built structure */
+  spannedByOneBuilding: number
   /** baseline floor area that stood on this ground at day 0 */
   baselineAreaM2: number
   /** footprint of what the agent put there, 0 until it develops */

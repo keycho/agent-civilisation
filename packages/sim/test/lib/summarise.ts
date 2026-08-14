@@ -127,8 +127,14 @@ export interface Summary {
 export interface GrainReport {
   assemblies: number
   medianParcelsPerAssembly: number
-  /** assemblies ever followed by demolish *and* develop on the same holding */
+  /**
+   * Assemblies ever followed by demolish *and* develop on the same holding.
+   * Weaker than it sounds: a develop on one lot of three sets it. Read
+   * `chainConsolidated` for the number that means the grain moved.
+   */
   chainCompleted: number
+  /** the chain that ended with one structure across more than one of the lots */
+  chainConsolidated: number
   /** followed by a demolition on the assembled ground */
   chainCleared: number
   /** followed by a building on it — the half that is reachable at all */
@@ -362,6 +368,7 @@ function grainOf(w: {
     parcelIds: string[]
     clearedAfter: boolean
     developedAfter: boolean
+    spannedByOneBuilding: number
     landValueRatio: number
     occupiedCount: number
   }>
@@ -391,6 +398,7 @@ function grainOf(w: {
     assemblies: a.length,
     medianParcelsPerAssembly: median(a.map((x) => x.parcelIds.length)),
     chainCompleted: a.filter((x) => x.clearedAfter && x.developedAfter).length,
+    chainConsolidated: a.filter((x) => x.spannedByOneBuilding > 1).length,
     chainCleared: a.filter((x) => x.clearedAfter).length,
     chainDeveloped: a.filter((x) => x.developedAfter).length,
     chainDormant: a.filter((x) => !x.clearedAfter && !x.developedAfter).length,
