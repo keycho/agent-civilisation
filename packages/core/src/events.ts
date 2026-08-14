@@ -24,6 +24,8 @@ export const EVENT_TYPES = [
   'agent_died',
   'estate_transferred',
   'district_formed',
+  'season_ended',
+  'season_began',
 ] as const
 
 export type EventType = (typeof EVENT_TYPES)[number]
@@ -34,6 +36,9 @@ export type EventType = (typeof EVENT_TYPES)[number]
  * an assembly followed by demolition and construction compounds.
  */
 export const BASE_CINEMATIC_WEIGHT: Record<EventType, number> = {
+  // §22.3: a season boundary is the largest thing that happens to this world
+  season_ended: 100,
+  season_began: 100,
   district_formed: 90,
   parcels_assembled: 60,
   construction_started: 45,
@@ -68,4 +73,6 @@ export const EVENT_TONE: Record<EventType, string> = {
   agent_died: '#8d8d8d',
   estate_transferred: '#b57ad0',
   district_formed: '#7fe3e0',
+  season_ended: '#e0d5b0',
+  season_began: '#e0d5b0',
 }

@@ -104,6 +104,12 @@ export interface EventWire {
 }
 
 export interface Readouts {
+  /**
+   * §22.3: which run of this chunk. The world has a horizon rather than a
+   * budget — when the reachable stock saturates the season turns, and that is a
+   * product event rather than the world stalling.
+   */
+  season: number
   /** §20.3: the world's throughput, reported. A viewer reads it, never sets it. */
   pace: Pace
   /** §20.6: primary */

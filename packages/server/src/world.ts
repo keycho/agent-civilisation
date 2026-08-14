@@ -1,8 +1,8 @@
-import { RATE_WINDOW_TICKS, THROUGHPUT, type WorldSeed } from '@civ/core'
+import { BASE_CINEMATIC_WEIGHT, RATE_WINDOW_TICKS, THROUGHPUT, type WorldSeed } from '@civ/core'
 import { DurableStore } from '@civ/persistence'
 import type { AgentIdentity, EventWire, Frame, Hello, MaterialiseSpec, Readouts, RoadEdgeWire } from '@civ/protocol'
 import { toBase64 } from '@civ/protocol'
-import { Simulation } from '@civ/sim'
+import { SaturationWatch, Simulation } from '@civ/sim'
 import {
   BuildingTexture,
   agentIdentity,
@@ -35,6 +35,12 @@ export interface WorldServiceOptions {
   snapshotEveryEvents?: number
   /** run seed for the rng — fixed for reproducibility, one per world */
   rngSeed?: string
+  /** §22.3: which season this is. Increments when the world saturates. */
+  season?: number
+  /** §22.3: called when the world stops changing and the season should turn */
+  onSaturated?: (season: number) => void
+  /** existing store, so a new season keeps writing to the same log */
+  store?: DurableStore
 }
 
 export class WorldService {
@@ -42,10 +48,19 @@ export class WorldService {
   readonly store: DurableStore
   readonly texture: BuildingTexture
   readonly chunkId: string
+  /** §22.3: which run of this chunk the spectator is watching */
+  readonly season: number
 
   private throughputIndex: number
   private lastBroadcastBytes: Uint8Array
   private lastEventId = 0
+  /**
+   * §22.3: the log spans every season, but a new season's tick restarts at 0 —
+   * so filtering recent events by tick alone would hand a joining spectator the
+   * *previous* season's feed. Everything this world reports is bounded below by
+   * the id the log had reached when the season began.
+   */
+  private readonly firstEventId: number
   /** every agent-built structure ever materialised, for clients that join late */
   private readonly materialised = new Map<string, MaterialiseSpec>()
   private readonly agentRoads = new Map<string, RoadEdgeWire>()
@@ -55,11 +70,19 @@ export class WorldService {
   private bornSinceFrame: AgentIdentity[] = []
   private known = new Set<string>()
   private ticking = false
+  private readonly saturation = new SaturationWatch()
+  private readonly onSaturated?: (season: number) => void
+  private saturatedAlready = false
 
   constructor(opts: WorldServiceOptions) {
-    this.store = new DurableStore({ url: opts.databaseUrl })
+    this.store = opts.store ?? new DurableStore({ url: opts.databaseUrl })
+    this.firstEventId = this.store.eventCount()
+    this.lastEventId = this.firstEventId
     this.chunkId = opts.seed.chunk.id
+    this.season = opts.season ?? 1
+    this.onSaturated = opts.onSaturated
     this.throughputIndex = opts.throughput ?? 2
+    this.store.season = this.season
     this.sim = new Simulation(opts.seed, this.store, {
       agentCount: opts.agentCount ?? 58,
       seed: opts.rngSeed ?? 'world-1',
@@ -69,6 +92,7 @@ export class WorldService {
         // §20.4: keyed on event ordinal. This is what the scrub later queries.
         this.store.putSnapshot({
           chunkId: this.chunkId,
+          season: this.season,
           ordinal,
           generation,
           tick: this.sim.world.tick,
@@ -91,6 +115,7 @@ export class WorldService {
     this.lastBroadcastBytes = this.texture.bytes.slice()
     this.store.putSnapshot({
       chunkId: this.chunkId,
+      season: this.season,
       ordinal: 0,
       generation: 1,
       tick: 0,
@@ -115,8 +140,43 @@ export class WorldService {
     this.ticking = true
     try {
       await this.sim.runToThroughput(Math.max(1, Math.round(dps * dtSeconds)), 60)
-      this.sim.refreshReport()
+      const r = this.sim.refreshReport()
       this.pump()
+
+      /**
+       * §22.3: the world has no budget, it has a horizon. When the reachable
+       * stock is used up the season ends rather than the world stalling with
+       * agents trading a finished city — the alternative §22.3 names as the
+       * cost of running continuously.
+       */
+      if (!this.saturatedAlready) {
+        const done = this.saturation.sample({
+          decisions: this.sim.decisionsIssued,
+          index: r.index,
+          agentOrigin: r.agentOrigin,
+          cleared: r.demolished,
+        })
+        if (done) {
+          this.saturatedAlready = true
+          this.store.appendEvent({
+            chunkId: this.chunkId,
+            tick: this.sim.world.tick,
+            type: 'season_ended',
+            cinematicWeight: BASE_CINEMATIC_WEIGHT.season_ended,
+            rationale:
+              `season ${this.season} reached ${(r.index * 100).toFixed(1)}% divergence over ` +
+              `${this.sim.world.generationsCompleted} completed generations and stopped changing`,
+            payload: {
+              season: this.season,
+              divergenceIndex: r.index,
+              agentOrigin: r.agentOrigin,
+              cleared: r.demolished,
+              decisions: this.sim.decisionsIssued,
+            },
+          })
+          this.onSaturated?.(this.season)
+        }
+      }
     } finally {
       this.ticking = false
     }
@@ -172,6 +232,7 @@ export class WorldService {
     const r = this.sim.report
     return {
       viewers: this.viewers,
+      season: this.season,
       pace: THROUGHPUT[this.throughputIndex],
       divergenceIndex: r.index,
       generation: this.sim.generation,
@@ -206,7 +267,7 @@ export class WorldService {
 
     const fresh = this.store
       .events({ sinceTick: Math.max(0, this.sim.world.tick - 400), limit: 60, minWeight: 15 })
-      .filter((e) => e.id > this.lastEventId)
+      .filter((e) => e.id > this.lastEventId && e.id > this.firstEventId)
       .reverse()
     if (fresh.length) this.lastEventId = Math.max(...fresh.map((e) => e.id))
 
@@ -232,6 +293,7 @@ export class WorldService {
   hello(viewers: number): Hello {
     const recent = this.store
       .events({ sinceTick: Math.max(0, this.sim.world.tick - 900), limit: 11, minWeight: 15 })
+      .filter((e) => e.id > this.firstEventId)
       .reverse()
     return {
       t: 'hello',
@@ -254,6 +316,7 @@ export class WorldService {
   recentEvents(limit: number): EventWire[] {
     return this.store
       .events({ limit, minWeight: 15 })
+      .filter((e) => e.id > this.firstEventId)
       .reverse()
       .map((e) => eventWire(this.sim, e))
   }

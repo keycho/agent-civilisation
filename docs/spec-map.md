@@ -40,6 +40,11 @@ This is the index: what each section asks for, and where it lives.
 | **21.4** | Validators read the emitter's output | `core/src/validate.ts`, `importer/src/emit.ts` (`emitSeed` returns the re-read file, `checkSql`), `importer/test/artifacts.test.ts` |
 | **21.5** | AHN direct, voxcity retired, seam kept | `tools/ahn/`, `importer/src/main.ts` substrate swap, `client/src/render/substrateMesh.ts` |
 | **21.6** | One world, many viewers | `packages/server` (tick loop, rng, broadcast), `packages/protocol` (the wire), `persistence/src/durable.ts` (Postgres), `client/src/world/{connection,observer}.ts` |
+| **22.1** | Grain and churn, not decision share | `sim/src/state.ts` (`Assembly`, `acquisitionCount`), `sim/src/actions.ts` (`recordDecision`), `test/lib/summarise.ts` (`grainOf`, `churnOf`) |
+| **22.2** | Entropy against score margin | `sim/src/engine.ts` (margin on the chosen action), `sim/src/state.ts` (`decisionMargins`), `test/tune.ts` §22.2 |
+| **22.3** | The budget is not the world's lifetime; seasons | `sim/src/saturation.ts`, `server/src/world.ts` (`onSaturated`), `server/src/main.ts` (`turnSeason`), `server/test/boundaries.test.ts` |
+| **22.4** | Server hardening before deploy | `server/src/main.ts` (resync cap/backoff/drop, `/health`), `persistence/src/durable.ts` (`flushMs`, `highWaterOrdinal`, `pruneSeasons`, pool) |
+| **22.5** | The throughput control is retired | removed from `client/index.html` and `main.ts`; the pace is a readout on `Readouts.pace` |
 
 ## Where the spec was not followed literally
 
@@ -67,5 +72,15 @@ Each of these is argued in the README and in the commit that introduced it.
   removed the other half of that argument — acquisition is priced on site value
   now — but a floor added to a 1909 building is still 1909-quality space on a
   1909 decay curve, and nothing prices that yet. Revisit on chunk two.
-- Nothing is reported as KNOWN by `tune.ts` any more. The one entry — acquisition
-  ignoring site value — was fixed by §21.1 and both of its checks are assertions.
+- **`assemble` cannot gather occupied lots** (§22.1). It filters on
+  `!p.hasBuilding`, so assemble → demolish → develop is structurally impossible
+  and the 1909 lot pattern survives: 3% of agent-built structures stand on
+  consolidated ground. Same shape as the site-value finding — a mechanism the
+  model lacks, not a constant — and it costs a recalibration, so it waits on a
+  decision. `tune.ts` reports it as KNOWN.
+- **Acquisition churn is 6.77 per altered building** (§22.1), against §22.1's
+  own bar of four. The cooling-off period is the obvious lever and it is a
+  tuning constant, which is what the freeze forbids adjusting against an
+  observed outcome. Also KNOWN, also waiting on a decision.
+- The build-3 entry — acquisition ignoring site value — was fixed by §21.1 and
+  both of its checks are assertions now.

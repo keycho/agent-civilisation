@@ -15,6 +15,8 @@ import type { EventType, WorldEvent } from './events.ts'
  */
 export interface Snapshot {
   chunkId: string
+  /** §22.3: which run of this chunk. Ordinals restart when a season does. */
+  season: number
   /** number of events in the log when this was taken; the scrub's x axis */
   ordinal: number
   /** the public label for this point in the run (§20.6) */

@@ -48,6 +48,7 @@
                       color: var(--muted); font-weight: 600; }
       #clock .speeds { display: flex; gap: 3px; }
       #clock .pace { font-weight: 600; letter-spacing: 0.02em; }
+      #clock .season { font-weight: 600; letter-spacing: 0.02em; }
       #clock .link,
       #clock .viewers { opacity: 0.55; font-size: 11px; }
       #clock .link.live { color: #6fbf7a; opacity: 0.9; }
@@ -135,7 +136,8 @@
       a synchronised one.
     -->
     <div class="panel" id="clock">
-      <span class="label">the world thinks</span>
+      <span class="season" id="season">season 1</span>
+      <span class="label">thinking</span>
       <span class="pace" id="pace">—</span>
       <span class="link" id="link">connecting…</span>
       <span class="viewers" id="durability"></span>

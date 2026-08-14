@@ -38,13 +38,16 @@ export class Observer {
   private readonly agentRoadMesh: Mesh
   private readonly ground: (x: number, y: number) => number
   private readonly nodeIndex: Map<string, RoadNode>
+  private readonly baselineSeed: WorldSeed
   private readonly agentEdges = new Map<string, RoadEdge>()
   /** what stands in each texture slot, so progress can drive scaffolding */
   private readonly shapeBySlot = new Map<number, ShapeRef>()
   private readonly progressBySlot = new Map<number, number>()
   private readonly fallingSlots = new Set<number>()
+  private readonly baselineCount: number
   private lastRoadRebuildTick = -1
   private tick = 0
+  private season = 0
   private dirty = false
   /** frames applied since the last render, for the lag readout */
   private appliedSinceRender = 0
@@ -60,6 +63,8 @@ export class Observer {
     this.agentRoadMesh = agentRoadMesh
     this.ground = ground
     this.nodeIndex = indexNodes(seed.roads.nodes)
+    this.baselineCount = seed.buildings.length
+    this.baselineSeed = seed
     seed.buildings.forEach((b, i) => {
       this.shapeBySlot.set(i, {
         id: b.id,
@@ -71,8 +76,17 @@ export class Observer {
     })
   }
 
-  /** A joining spectator starts from the world as it is, not from day 0. */
+  /**
+   * A joining spectator starts from the world as it is, not from day 0.
+   *
+   * §22.3: this is also the season turn. The server sends a `hello` when a
+   * season ends, and it is the right message for it — "here is the world as it
+   * is now" is what a spectator needs at a boundary as much as at a join. What
+   * differs is that everything the last season built has to go first.
+   */
   applyHello(h: Hello): void {
+    if (this.season !== 0 && h.readouts.season !== this.season) this.resetToBaseline()
+    this.season = h.readouts.season
     for (const spec of h.materialise) this.materialise(spec)
     for (const w of h.roads) this.addRoad(w)
     this.renderer.data.loadFrame(fromBase64(h.buildingData))
@@ -133,6 +147,25 @@ export class Observer {
     if (!this.dirty) return
     this.dirty = false
     this.renderer.flush()
+  }
+
+  /** §22.3: back to the ground the first season started on. */
+  private resetToBaseline(): void {
+    this.renderer.resetToBaseline(this.baselineCount)
+    this.agentEdges.clear()
+    this.shapeBySlot.clear()
+    this.progressBySlot.clear()
+    this.fallingSlots.clear()
+    this.baselineSeed.buildings.forEach((b, i) => {
+      this.shapeBySlot.set(i, {
+        id: b.id,
+        footprint: b.footprint,
+        groundM: b.groundM,
+        heightM: b.heightM,
+      })
+      this.progressBySlot.set(i, 1)
+    })
+    this.lastRoadRebuildTick = -1
   }
 
   /** §20.4: the scrub is a texture swap, now from a server query. */

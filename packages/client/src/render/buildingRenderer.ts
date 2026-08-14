@@ -105,6 +105,18 @@ export class BuildingRenderer {
     return index
   }
 
+  /**
+   * §22.3: a season turns and everything the last one built is gone. Drops the
+   * dynamic batch and returns every slot past the baseline, so the next season
+   * starts from the same ground the first one did rather than accumulating.
+   */
+  resetToBaseline(baselineCount: number): void {
+    this.dynamicItems = []
+    this.dynamicDirty = true
+    for (const [id, slot] of this.slots) if (slot.index >= baselineCount) this.slots.delete(id)
+    this.nextIndex = baselineCount
+  }
+
   /** Rebuild the dynamic batch if anything moved. Call once per frame. */
   flush(): void {
     if (this.dynamicDirty) {

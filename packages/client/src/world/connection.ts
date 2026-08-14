@@ -108,6 +108,15 @@ export class AgentInterpolator {
   private t = 1
   private readonly period: number
 
+  /**
+   * §22.5: the one idea that survives the retired throughput dial. §3 observed
+   * that above roughly a week per second continuous agent motion is nonsense,
+   * and that threshold still applies — it just keys off the rate the *server*
+   * runs at, which a viewer reads and cannot set. Below it agents glide; above
+   * it they are presence markers that appear where the work is.
+   */
+  motion = true
+
   constructor(frameIntervalMs: number) {
     this.period = frameIntervalMs / 1000
   }
@@ -137,7 +146,7 @@ export class AgentInterpolator {
 
   /** Present agents, at their interpolated positions. */
   *positions(): Generator<AgentWire> {
-    const k = Math.min(1, this.t)
+    const k = this.motion ? Math.min(1, this.t) : 1
     for (const [id, a] of this.to) {
       const f = this.from.get(id)
       if (!f) {

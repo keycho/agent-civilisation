@@ -21,12 +21,16 @@
  *
  *   node --no-warnings packages/sim/test/calibrate.ts [maxDecisions]
  */
+import { SATURATION } from '../src/index.ts'
 import { loadSeed, runSeed } from './lib/summarise.ts'
 
-/** Saturation: over a window this wide, gains fall below all three bounds. */
-const WINDOW = 5_000
-const INDEX_GAIN = 0.01
-const STOCK_GROWTH = 0.05
+/**
+ * Saturation: over a window this wide, gains fall below all three bounds.
+ * §22.3: the constants live in `src/saturation.ts` because the live world uses
+ * the same rule to end a season. One definition, two jobs — the budget is
+ * derived from the rule, it does not govern the world.
+ */
+const { windowDecisions: WINDOW, indexGain: INDEX_GAIN, stockGrowth: STOCK_GROWTH } = SATURATION
 
 const max = Number(process.argv[2] ?? 90_000)
 const world = await loadSeed()

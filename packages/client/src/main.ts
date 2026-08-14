@@ -9,7 +9,7 @@
  * viewer is looking at the same one. What is left in this file is a renderer, a
  * camera, and a socket.
  */
-import { DIVERGENCE_LABEL, EVENT_TONE, PURPOSE_INDEX } from '@civ/core'
+import { AGENT_MOTION_MAX_THROUGHPUT, DIVERGENCE_LABEL, EVENT_TONE, PURPOSE_INDEX } from '@civ/core'
 import type { BuildingDetail, EventWire, Frame, Hello, Readouts, ScrubResult } from '@civ/protocol'
 import { FRAME_INTERVAL_MS } from '@civ/protocol'
 import { Raycaster, Scene, Vector2, Vector3, WebGLRenderer } from 'three'
@@ -139,6 +139,9 @@ function acceptReadouts(r: Readouts): void {
   readouts = r
   liveTick = r.tick
   el('pace').textContent = r.pace.label
+  el('season').textContent = `season ${r.season}`
+  // §22.5: the presence-marker threshold, keyed off the server's rate
+  presence.motion = r.pace.decisionsPerSecond <= AGENT_MOTION_MAX_THROUGHPUT
   el('durability').textContent =
     `${r.viewers} watching` + (durability === 'postgres' ? '' : ' · in memory')
   if (scrubbing) return

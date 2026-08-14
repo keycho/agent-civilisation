@@ -25,6 +25,7 @@ import {
   jaccard,
   loadSeed,
   median,
+  pearson,
   percentile,
   stdev,
 } from './lib/summarise.ts'
@@ -43,9 +44,15 @@ function assert(ok: boolean, label: string, detail: string): void {
  * A check that currently fails for a reason that is understood, recorded and
  * deliberately not fixed. It prints loudly and does not fail the run.
  *
- * This exists for exactly one entry and is not a place to park inconvenient
- * results: a green suite that hides a known defect is worse than a red one.
- * Anything added here needs a written reason and an owner in the README.
+ * This is not a place to park inconvenient results: a green suite that hides a
+ * known defect is worse than a red one. Anything here needs a written reason
+ * and an owner in the README, and the bar is the one the §18.2 site-value entry
+ * met — measured, diagnosed to a mechanism, and waiting on a decision that
+ * costs a recalibration rather than on someone getting around to it.
+ *
+ * Build 3 cleared its one entry when §21.1 landed. Build 4 opens two, both from
+ * §22.1, both about the same thing: how much of the world's activity a
+ * spectator can actually see.
  */
 function known(ok: boolean, label: string, detail: string, why: string): void {
   console.log(`  ${ok ? 'PASS' : 'KNOWN'} ${label.padEnd(46)} ${detail}`)
@@ -259,6 +266,106 @@ assert(
 )
 
 // ---------------------------------------------------------------------------
+// §22.1 grain: is the lot pattern changing, or only what stands on it?
+// ---------------------------------------------------------------------------
+//
+// "21 percent cleared and 29 percent agent-built is real replacement, but
+// replacement at 1:1 on inherited footprints leaves the 1909 urban grain
+// intact. The street reads as the same street with newer buildings on it."
+//
+// So the same restatement made for demolish and develop — decision share is not
+// physical consequence — applied to `assemble`, and to the chain rather than
+// the action. An assembly that is never built on has changed nothing.
+
+const g = results.map((r) => r.grain)
+const med2 = (f: (x: (typeof g)[number]) => number) => median(g.map(f))
+const chainRate = med2((x) => x.chainDeveloped) / Math.max(1, med2((x) => x.assemblies))
+const multiShare = med2((x) => x.agentBuiltMultiParcel) / Math.max(1, med2((x) => x.agentBuilt))
+
+console.log('\n§22.1 grain change (median across seeds)')
+console.log(
+  `  assemblies ${med2((x) => x.assemblies)}, median ${med2((x) => x.medianParcelsPerAssembly)} parcels each`,
+)
+console.log(
+  `  followed by develop on the same holding: ${med2((x) => x.chainDeveloped)} ` +
+    `(${(chainRate * 100).toFixed(0)}% of assemblies)`,
+)
+console.log(
+  `  followed by demolish: ${med2((x) => x.chainCleared)}   full chain: ${med2((x) => x.chainCompleted)}   ` +
+    `never acted on: ${med2((x) => x.chainDormant)}`,
+)
+console.log(
+  `  agent-built on multi-parcel sites: ${med2((x) => x.agentBuiltMultiParcel)} of ` +
+    `${med2((x) => x.agentBuilt)} (${(multiShare * 100).toFixed(0)}%)`,
+)
+console.log(
+  `  footprint vs baseline on the same ground: ${med2((x) => x.medianFootprintRatioAll).toFixed(2)}x all, ` +
+    `${med2((x) => x.medianFootprintRatio).toFixed(2)}x on multi-parcel sites`,
+)
+
+// The threshold below was written before the run. "If the chain assemble ->
+// demolish -> develop is rare, the grain is frozen and 49.3 percent divergence
+// is a repainted city rather than a rebuilt one." Rare is the claim to test, so
+// the bar is that consolidation is a route the model actually takes rather than
+// a branch that fires and dead-ends: a fifth of assemblies carried through.
+assert(
+  chainRate >= 0.2,
+  'assemblies carried through to a building >= 20%',
+  `${(chainRate * 100).toFixed(0)}%`,
+)
+known(
+  multiShare >= 0.1,
+  'agent-built on consolidated ground >= 10%',
+  `${(multiShare * 100).toFixed(0)}%`,
+  'the grain is largely frozen, and the cause is structural rather than economic. ' +
+    '`assemble` filters candidates on `!p.hasBuilding`, so it can only ever gather ' +
+    'vacant land — which is why "followed by demolish" is exactly 0 and not merely ' +
+    'rare. §4 calls assemble "consolidate adjacent lots and redevelop at higher ' +
+    'intensity", and consolidating *occupied* lots is the half the model cannot ' +
+    'express. Same shape as the §21.1 site-value finding: a missing mechanism, not ' +
+    'a constant. Awaiting a decision, because adding it moves every number and ' +
+    'costs a recalibration.',
+)
+
+// ---------------------------------------------------------------------------
+// §22.1 churn: how much of this reaches the screen?
+// ---------------------------------------------------------------------------
+
+const c = results.map((r) => r.churn)
+const medC = (f: (x: (typeof c)[number]) => number) => median(c.map(f))
+
+console.log('\n§22.1 acquisition churn (median across seeds)')
+console.log(
+  `  ${medC((x) => x.acquisitions)} acquisitions across ${medC((x) => x.buildingsEverAcquired)} buildings; ` +
+    `worst-traded changed hands ${medC((x) => x.worstChurn)}x`,
+)
+console.log(
+  `  per building ever altered (divergence >= 2):     ${medC((x) => x.acquisitionsPerAltered).toFixed(2)}`,
+)
+console.log(
+  `  per building whose silhouette changed (>= 4):    ${medC((x) => x.acquisitionsPerResilhouetted).toFixed(2)}`,
+)
+console.log(
+  `  acquisitions landing on stock nobody ever alters: ${(medC((x) => x.intoNothingShare) * 100).toFixed(0)}%`,
+)
+
+// "If a building changes hands four times and is altered once, that is a
+// property market rather than a construction narrative." Four is the number
+// §22.2 names, so four is the bar.
+known(
+  medC((x) => x.acquisitionsPerAltered) < 4,
+  'acquisitions per altered building < 4',
+  medC((x) => x.acquisitionsPerAltered).toFixed(2),
+  'this is a property market, by §22.1\'s own number: a building changes hands ' +
+    'nearly seven times per alteration and the worst-traded changes hands 15 times. ' +
+    'Every trade is invisible from the city camera. The cooling-off period ' +
+    '(RESALE_LOCK_TICKS) is the obvious lever and it is a tuning constant, which is ' +
+    'exactly what the freeze forbids adjusting against an observed outcome. ' +
+    'Awaiting a decision on whether the fix is the lock, a transaction cost, or a ' +
+    'holding period that makes trading expensive relative to building.',
+)
+
+// ---------------------------------------------------------------------------
 // §18.2 the untouched set is a diagnostic, not a result
 // ---------------------------------------------------------------------------
 
@@ -380,6 +487,7 @@ for (const r of results) {
 }
 
 const entropies: number[] = []
+const entropyById = new Map<string, number>()
 for (const id of touchedIds) {
   const counts = new Map<number, number>()
   let n = 0
@@ -395,9 +503,96 @@ for (const id of touchedIds) {
     h -= p * Math.log2(p)
   }
   entropies.push(h)
+  entropyById.set(id, h)
 }
 const zeroEntropy = entropies.filter((h) => h === 0).length
 const zeroShare = zeroEntropy / Math.max(1, entropies.length)
+
+// ---------------------------------------------------------------------------
+// §22.2 the discriminator: is that entropy tie-break noise, or path variation?
+// ---------------------------------------------------------------------------
+//
+// "A scoring function with a random tie-break produces the same 80/20
+// local-substitution signature as genuine strategic variation. Entropy alone
+// cannot tell them apart." So each building's entropy is correlated against how
+// clear-cut the decisions that touched it were — the gap between the top-scored
+// action and the runner-up, recorded at the moment of the decision.
+//
+//   entropy only where the margin is near zero    a sort order with noise on it
+//   entropy at wide margins, or concentrated on
+//   large parcels and assembly candidates         real path variation
+//
+// This runs before the §9 swap, not after: it is the difference between the
+// swap being an upgrade and the swap being a rewrite.
+
+interface Site {
+  id: string
+  entropy: number
+  margin: number
+  areaM2: number
+  degree: number
+}
+
+const sites: Site[] = []
+for (const id of touchedIds) {
+  const e = entropyById.get(id)
+  if (e === undefined) continue
+  const margins = results.map((r) => r.marginByBuilding[id]).filter((m) => m !== undefined)
+  if (margins.length === 0) continue
+  const site = results.map((r) => r.siteByBuilding[id]).find(Boolean)
+  sites.push({
+    id,
+    entropy: e,
+    margin: median(margins),
+    areaM2: site?.areaM2 ?? 0,
+    degree: site?.degree ?? 0,
+  })
+}
+
+const NARROW = 0.05 // within 5% of the runner-up: effectively a tie
+const narrow = sites.filter((s) => s.margin <= NARROW)
+const wide = sites.filter((s) => s.margin > 0.25)
+const entropyAtWide = wide.filter((s) => s.entropy > 0).length
+
+console.log('\n§22.2 entropy against decision margin')
+console.log(`  ${sites.length} buildings with both an entropy and a recorded margin`)
+console.log(
+  `  correlation entropy ~ margin      r = ${pearson(
+    sites.map((s) => s.entropy),
+    sites.map((s) => s.margin),
+  ).toFixed(3)}`,
+)
+console.log(
+  `  correlation entropy ~ parcel area r = ${pearson(
+    sites.map((s) => s.entropy),
+    sites.map((s) => s.areaM2),
+  ).toFixed(3)}      ` +
+    `entropy ~ adjacency degree r = ${pearson(
+      sites.map((s) => s.entropy),
+      sites.map((s) => s.degree),
+    ).toFixed(3)}`,
+)
+for (const [label, band] of [
+  ['margin <= 0.05 (a tie)', narrow],
+  ['margin 0.05 - 0.25', sites.filter((s) => s.margin > NARROW && s.margin <= 0.25)],
+  ['margin > 0.25 (clear-cut)', wide],
+] as Array<[string, Site[]]>) {
+  console.log(
+    `  ${label.padEnd(26)} ${String(band.length).padStart(4)} buildings, ` +
+      `${((band.filter((s) => s.entropy > 0).length / Math.max(1, band.length)) * 100)
+        .toFixed(0)
+        .padStart(3)}% carry entropy, ` +
+      `median ${median(band.map((s) => s.entropy)).toFixed(2)} bits`,
+  )
+}
+// The failure this is looking for: entropy that exists *only* where the choice
+// was a coin flip. If clear-cut decisions never vary across seeds, the seed is
+// permuting who acts and not what happens.
+assert(
+  wide.length > 0 && entropyAtWide / wide.length > 0.25,
+  'entropy survives where the decision was clear-cut',
+  `${((entropyAtWide / Math.max(1, wide.length)) * 100).toFixed(0)}% of ${wide.length} wide-margin buildings`,
+)
 
 console.log('\n§21.3 divergence-class entropy across seeds')
 console.log(`  touched in >= 1 run: ${entropies.length} baseline buildings`)

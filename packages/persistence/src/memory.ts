@@ -52,7 +52,7 @@ export class MemoryStore implements WorldStore {
   }
 
   putSnapshot(s: Snapshot): void {
-    this.snapshots.set(`${s.chunkId}:${s.ordinal}`, s)
+    this.snapshots.set(`${s.chunkId}:${s.season}:${s.ordinal}`, s)
   }
 
   /** Nearest snapshot at or before `ordinal` — the scrub lands between writes. */

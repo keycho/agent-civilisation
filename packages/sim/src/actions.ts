@@ -51,13 +51,101 @@ export type AgentAction =
   | { kind: 'assemble'; parcelIds: string[]; rationale: string }
   | { kind: 'build_road'; parcelId: string; rationale: string }
 
+/**
+ * §22.2: how far the chosen option's score sat above the runner-up, as a
+ * fraction of the chosen score. The engine samples the top three, so this is
+ * the difference between "the seed picked between two equivalent moves" and
+ * "the seed sent this site down a different path".
+ */
+export type ScoredAction = AgentAction & { margin?: number }
+
 export interface ActionOutcome {
   ok: boolean
   reason?: string
   spent?: number
 }
 
-export function applyAction(world: World, agent: Agent, action: AgentAction): ActionOutcome {
+export function applyAction(world: World, agent: Agent, action: ScoredAction): ActionOutcome {
+  const outcome = dispatch(world, agent, action)
+  if (outcome.ok) recordDecision(world, agent, action)
+  return outcome
+}
+
+/**
+ * §22: the measurements that separate a repainted city from a rebuilt one.
+ * Kept beside the dispatch rather than inside each action, so adding an action
+ * cannot silently escape being counted.
+ */
+function recordDecision(world: World, agent: Agent, action: ScoredAction): void {
+  // §22.2: attribute the margin to the ground it landed on
+  if (action.margin !== undefined) {
+    const targets =
+      'buildingId' in action
+        ? [action.buildingId]
+        : action.kind === 'develop'
+          ? [world.lastDevelopedId].filter((id): id is string => !!id)
+          : []
+    for (const id of targets) {
+      const arr = world.decisionMargins.get(id)
+      if (arr) arr.push(action.margin)
+      else world.decisionMargins.set(id, [action.margin])
+    }
+  }
+
+  // §22.2: churn per building
+  if (action.kind === 'acquire_building') {
+    world.acquisitionCount.set(
+      action.buildingId,
+      (world.acquisitionCount.get(action.buildingId) ?? 0) + 1,
+    )
+  }
+
+  // §22.1: the assemble chain, followed on the ground rather than in the log
+  if (action.kind === 'assemble') {
+    world.assemblies.push({
+      agentId: agent.id,
+      parcelIds: [...action.parcelIds],
+      tick: world.tick,
+      clearedAfter: false,
+      developedAfter: false,
+      baselineAreaM2: action.parcelIds.reduce((sum, id) => sum + baselineAreaOf(world, id), 0),
+      builtAreaM2: 0,
+    })
+  }
+  if (action.kind === 'demolish') {
+    const parcelId = world.buildings.get(action.buildingId)?.parcelId
+    if (parcelId) {
+      for (const a of world.assemblies) {
+        if (sameHolding(a.agentId, agent.id) && a.parcelIds.includes(parcelId)) a.clearedAfter = true
+      }
+    }
+  }
+  if (action.kind === 'develop') {
+    const built = world.lastDevelopedId ? world.buildings.get(world.lastDevelopedId) : undefined
+    for (const a of world.assemblies) {
+      if (!sameHolding(a.agentId, agent.id)) continue
+      if (!action.parcelIds.some((id) => a.parcelIds.includes(id))) continue
+      a.developedAfter = true
+      a.builtAreaM2 += built?.areaM2 ?? 0
+    }
+  }
+}
+
+/**
+ * An heir is the same holding (§12): property inherits, so a dynasty that
+ * assembles in one generation and redevelops in the next has completed the
+ * chain. Ids are `agent-4`, then `agent-4-g2-17`, then `agent-4-g2-17-g3-42`.
+ */
+function sameHolding(a: string, b: string): boolean {
+  return a === b || a.startsWith(`${b}-g`) || b.startsWith(`${a}-g`)
+}
+
+/** Baseline floor area that stood on a parcel at day 0, from the seed. */
+function baselineAreaOf(world: World, parcelId: string): number {
+  return world.baselineAreaByParcel.get(parcelId) ?? 0
+}
+
+function dispatch(world: World, agent: Agent, action: ScoredAction): ActionOutcome {
   switch (action.kind) {
     case 'acquire_building':
       return acquireBuilding(world, agent, action.buildingId, action.rationale)
@@ -431,6 +519,8 @@ function develop(
     // the inspector says so.
     constructionYear: undefined,
     createdTick: world.tick,
+    // §22.1: standing on more than one parcel is the grain having changed
+    builtOnParcels: parcels.map((p) => p.id),
     areaM2,
     yieldPerTick: 0,
   }
@@ -439,6 +529,7 @@ function develop(
   agent.holdings.add(id)
   for (const p of parcels) p.buildingId = id
   world.pendingGeometry.push(id)
+  world.lastDevelopedId = id
   agent.activity = 'building'
 
   emit(world, 'construction_started', {

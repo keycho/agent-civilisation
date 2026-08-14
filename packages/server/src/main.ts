@@ -15,7 +15,8 @@
  * spectator platform is many viewers on one continuing world, not many copies
  * of the same seed running privately in tabs.
  */
-import { type WorldSeed, THROUGHPUT } from '@civ/core'
+import { BASE_CINEMATIC_WEIGHT, type WorldSeed, THROUGHPUT } from '@civ/core'
+import { DurableStore } from '@civ/persistence'
 import {
   type ClientMessage,
   FRAME_INTERVAL_MS,
@@ -38,22 +39,80 @@ const PORT = Number(process.env.PORT ?? 8787)
 const CHUNK = process.env.CHUNK ?? 'schiedam-havens'
 const DATABASE_URL = process.env.DATABASE_URL ?? process.env.SUPABASE_DB_URL
 const THROUGHPUT_INDEX = Number(process.env.THROUGHPUT ?? 2)
+/** §22.4: retention, decided now rather than at 150 million rows. */
+const RETAIN_SEASONS = Number(process.env.RETAIN_SEASONS ?? 4)
 const SEED_PATH =
   process.env.SEED_PATH ??
   join(HERE, '..', '..', 'client', 'public', 'world', `${CHUNK}.json`)
 
+const STARTED = Date.now()
 const seed = JSON.parse(await readFile(SEED_PATH, 'utf8')) as WorldSeed
-const world = new WorldService({
-  seed,
-  databaseUrl: DATABASE_URL,
-  throughput: THROUGHPUT_INDEX,
-  rngSeed: process.env.RNG_SEED ?? 'world-1',
+
+/**
+ * §22.3: seasons. The world runs to a horizon rather than to a budget — when
+ * the reachable stock saturates the season ends, the log stays queryable as
+ * history, and a new one begins with a fresh rng seed on the same baseline.
+ * The alternative is a continuous world whose last decades are agents trading a
+ * finished city, and the reset is a product event rather than a failure.
+ *
+ * One store spans every season: the log is append-only across all of them and
+ * each row carries the season it belongs to.
+ */
+const store = new DurableStore({
+  url: DATABASE_URL,
+  flushMs: Number(process.env.FLUSH_MS ?? 1000),
+  maxConnections: Number(process.env.PG_MAX ?? 3),
 })
+const RNG_SEED = process.env.RNG_SEED ?? 'world'
+
+let world = newSeason(1)
+
+function newSeason(season: number): WorldService {
+  return new WorldService({
+    seed,
+    store,
+    throughput: THROUGHPUT_INDEX,
+    season,
+    rngSeed: `${RNG_SEED}-${season}`,
+    onSaturated: (ended) => {
+      console.log(`\nseason ${ended} saturated; turning over`)
+      turnSeason(ended + 1)
+    },
+  })
+}
+
+/**
+ * The turn itself. Everyone watching is told, then handed the new world — a
+ * `hello` is exactly the message for "here is the world as it is now", which is
+ * what a spectator needs at a season boundary as much as at a join.
+ */
+function turnSeason(next: number): void {
+  world = newSeason(next)
+  store.appendEvent({
+    chunkId: world.chunkId,
+    tick: 0,
+    type: 'season_began',
+    cinematicWeight: BASE_CINEMATIC_WEIGHT.season_began,
+    rationale: `season ${next} begins on the same ground`,
+    payload: { season: next },
+  })
+  for (const ws of sockets) send(ws, world.hello(sockets.size))
+  void store
+    .pruneSeasons(world.chunkId, RETAIN_SEASONS)
+    .then((n) => {
+      if (n.events || n.snapshots) {
+        console.log(`  pruned ${n.events} events and ${n.snapshots} snapshots past ${RETAIN_SEASONS} seasons`)
+      }
+    })
+    .catch((e) => console.error('[retention]', e))
+}
 
 console.log(`# ${seed.chunk.name}: ${seed.buildings.length} baseline buildings`)
-console.log(`  store:      ${world.store.durability}${DATABASE_URL ? '' : ' (set DATABASE_URL for durability)'}`)
+console.log(`  store:      ${store.durability}${DATABASE_URL ? '' : ' (set DATABASE_URL for durability)'}`)
 console.log(`  throughput: ${THROUGHPUT[THROUGHPUT_INDEX].label}`)
 console.log(`  frames:     every ${FRAME_INTERVAL_MS} ms`)
+console.log(`  flush:      every ${store.flushMs} ms (write-behind; see README)`)
+console.log(`  retention:  ${RETAIN_SEASONS} seasons of events`)
 
 // ---------------------------------------------------------------------------
 // transport
@@ -69,12 +128,28 @@ const http = createServer((req, res) => {
         ok: true,
         protocol: PROTOCOL_VERSION,
         chunk: world.chunkId,
-        durability: world.store.durability,
+        durability: store.durability,
         viewers: sockets.size,
+        season: world.season,
         divergenceIndex: r.divergenceIndex,
         generation: r.generation,
         decisions: r.decisions,
         events: r.eventCount,
+        // §22.4: the width of what a crash loses, and how far behind it is now
+        flushMs: store.flushMs,
+        lag: store.lag,
+        retainSeasons: RETAIN_SEASONS,
+        /**
+         * §22.4: "the tick loop is a long-running process and must not be
+         * treated as a request handler." Nothing here can prove the host is
+         * not suspending it between requests, but this makes it visible: if
+         * `decisionsPerSecond` sits below `pace`, the loop is not running when
+         * nobody is asking, and the deployment is wrong.
+         */
+        uptimeSeconds: Math.round((Date.now() - STARTED) / 1000),
+        decisionsPerSecond: +(
+          r.decisions / Math.max(1, (Date.now() - STARTED) / 1000)
+        ).toFixed(1),
       }),
     )
     return
@@ -147,9 +222,37 @@ function send(ws: WebSocket, m: ServerMessage): void {
 // the loop
 // ---------------------------------------------------------------------------
 
-/** About a second of frames at normal throughput. */
+/**
+ * §22.4's first exposure. Falling back to a full `hello` under send
+ * backpressure sends the largest message this server has to the client that is
+ * already failing to keep up, and the naive form retries it every frame — an
+ * underpowered viewer resyncs forever, and each attempt makes its buffer worse.
+ *
+ * So: at most one resync in flight, a widening gap between attempts, a cap, and
+ * then a close with a reason. A viewer that cannot keep up is told so rather
+ * than being held in a loop it cannot win.
+ */
 const BACKPRESSURE_BYTES = 256 * 1024
-const resyncing = new WeakSet<WebSocket>()
+const RESYNC_LIMIT = 3
+const RESYNC_BACKOFF_MS = [2_000, 8_000, 20_000]
+/** 1013 is "try again later" — the right thing for a viewer, not a fault. */
+const TOO_SLOW = 1013
+
+interface Health {
+  resyncs: number
+  nextResyncAt: number
+  inFlight: boolean
+}
+const health = new WeakMap<WebSocket, Health>()
+
+function healthOf(ws: WebSocket): Health {
+  let h = health.get(ws)
+  if (!h) {
+    h = { resyncs: 0, nextResyncAt: 0, inFlight: false }
+    health.set(ws, h)
+  }
+  return h
+}
 
 let last = Date.now()
 
@@ -179,12 +282,24 @@ setInterval(() => {
      * lands the viewer on the current state exactly.
      */
     if (ws.bufferedAmount > BACKPRESSURE_BYTES) {
-      if (!resyncing.has(ws)) {
-        resyncing.add(ws)
-        ws.send(encode(world.hello(sockets.size)), () => resyncing.delete(ws))
+      const h = healthOf(ws)
+      if (h.inFlight || now < h.nextResyncAt) continue
+      if (h.resyncs >= RESYNC_LIMIT) {
+        ws.close(TOO_SLOW, 'connection cannot keep up with the world')
+        sockets.delete(ws)
+        world.viewers = sockets.size
+        continue
       }
+      h.inFlight = true
+      h.nextResyncAt = now + RESYNC_BACKOFF_MS[Math.min(h.resyncs, RESYNC_BACKOFF_MS.length - 1)]
+      h.resyncs++
+      ws.send(encode(world.hello(sockets.size)), () => {
+        h.inFlight = false
+      })
       continue
     }
+    // caught up: a viewer that recovers should not carry its strikes forever
+    if (ws.bufferedAmount === 0) healthOf(ws).resyncs = 0
     ws.send(frame)
   }
 }, FRAME_INTERVAL_MS)

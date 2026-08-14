@@ -25,7 +25,10 @@ PORT=8080 DATABASE_URL=postgres://… npm run server # durable
 | `DATABASE_URL` | — | Supabase's pooled connection string. Without one the world is memory-only and says so, in the logs and in the client. |
 | `CHUNK` | `schiedam-havens` | which world to run |
 | `THROUGHPUT` | 2 (`normal`) | index into `THROUGHPUT`; the pace the world thinks at |
-| `RNG_SEED` | `world-1` | one world, one seed — this is what makes it *shared* |
+| `RNG_SEED` | `world` | one world, one seed — this is what makes it *shared*. The season number is appended. |
+| `FLUSH_MS` | 1000 | write-behind window; the exact width of what a crash loses |
+| `RETAIN_SEASONS` | 4 | seasons of events kept before the older ones are pruned |
+| `PG_MAX` | 3 | pool ceiling. Small on purpose — see below. |
 
 `GET /health` returns the world's state as JSON, for Railway's health check and
 for anyone who wants to know what the world is doing without opening a browser.
@@ -55,6 +58,82 @@ on `update` and `delete`. Verified against a live Postgres:
 => update events set rationale = 'tampered' where id = 1;
 ERROR:  events are append-only
 ```
+
+## Seasons (§22.3)
+
+65,000 decisions is a measurement device for `tune.ts` — twenty seeds are only
+comparable if they all stop at the same point. **It does not govern the live
+world**, and `packages/server/test/boundaries.test.ts` asserts that it cannot:
+no source file outside the test harness may reference `DECISION_BUDGET`, and
+neither server nor client may call `runToDecisionBudget`.
+
+The world has a horizon instead. `SaturationWatch` applies the same rule
+`calibrate.ts` reads off a finished curve — index gaining under 1pp and both
+agent-built and cleared growing under 5% over 5,000 decisions — to the running
+world. When it trips:
+
+```
+season_ended     written to the log with the final state
+season_began     a new world on the same baseline, new rng seed
+hello            every viewer is handed the new world
+prune            events and snapshots older than RETAIN_SEASONS are dropped
+```
+
+One definition of the rule, two jobs. The budget is derived from the rule; the
+rule does not answer to the budget. The alternative — running continuously —
+means the last decades are agents trading a finished city, and the reset is a
+product event rather than a failure.
+
+## Three exposures, closed (§22.4)
+
+**The hello loop.** Falling back to a full `hello` under send backpressure sends
+the largest message this server has to the client already failing to keep up,
+and the naive form retried every frame — an underpowered viewer resyncs forever
+and each attempt makes its buffer worse. Now: one resync in flight at a time,
+backoff of 2s / 8s / 20s, three attempts, then `close(1013, 'connection cannot
+keep up with the world')`. A viewer that recovers has its strikes cleared.
+
+**Write-behind durability.** `FLUSH_MS` is the exact width of what a crash
+loses, it is printed at startup and it is on `/health` along with the current
+queue depth. At `normal` throughput 1,000 ms is about 14 decisions.
+
+A snapshot ahead of its flushed events would be worse than either — the scrub
+would land on a state the log cannot account for. Two things prevent it: the
+queues are captured in one pass with no `await` between them, so a snapshot is
+always batched with events that were already queued when it was taken; and
+events are inserted before snapshots within that batch. `highWaterOrdinal`
+makes the invariant checkable rather than merely intended, and raises loudly if
+it is ever violated.
+
+What write-behind does **not** give you is resume. The durable log is a record,
+not a restore point: a snapshot is the §16.2 data texture, not ownership,
+capital or parcels, so a restart begins a new season rather than continuing the
+old one. That is coherent with seasons and it is a deliberate limit, not an
+oversight — full resume needs a state snapshot that does not exist yet.
+
+**Deploy specifics.** One pool, opened once and held for the process's life;
+nothing in the tick loop touches the database, it hands work to the write-behind
+queue. `PG_MAX` defaults to 3 because Supabase's transaction pooler is a shared
+resource and a generous `max` is how one service starves a whole project;
+`prepare: false` is required by that pooler, and `application_name` makes this
+process identifiable in `pg_stat_activity`.
+
+The tick loop is a long-running `setInterval`, not a request handler. Nothing
+here can prove the host is not suspending it between requests, so `/health`
+reports `uptimeSeconds` and the actual `decisionsPerSecond`: if that sits below
+the configured pace, the loop is not running when nobody is asking and the
+deployment is wrong.
+
+Retention is by season, decided now rather than at 150 million rows. At
+`normal` throughput this world writes roughly one event per decision and 14
+decisions a second — about 1.2 million rows a day, so 150 million is four
+months of uptime. `RETAIN_SEASONS` keeps the last N seasons whole and drops the
+ones before them, snapshots with their events.
+
+That collides with append-only, and the resolution is to say what append-only
+actually means: the simulation must never rewrite what happened. The trigger now
+refuses every `update` unconditionally and allows a `delete` only inside a
+transaction that has set `civ.retention`, which nothing in the write path does.
 
 ## Two things that shaped the design
 

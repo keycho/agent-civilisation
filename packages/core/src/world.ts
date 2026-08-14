@@ -69,6 +69,11 @@ export interface Building {
   replaces?: string
   constructionYear?: number
   createdTick: number
+  /**
+   * §22.1: the parcels an agent developed this on. A structure standing on more
+   * than one is the grain of the city having changed, not just its surface.
+   */
+  builtOnParcels?: string[]
   demolishedTick?: number
   name?: string
   /** cached, recomputed on geometry change */

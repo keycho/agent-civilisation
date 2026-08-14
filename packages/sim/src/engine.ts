@@ -1,6 +1,6 @@
 import type { Building, Parcel, Purpose } from '@civ/core'
 import { RATE_WINDOW_TICKS, clamp01 } from '@civ/core'
-import type { AgentAction } from './actions.ts'
+import type { AgentAction, ScoredAction } from './actions.ts'
 import { developableFootprint } from './actions.ts'
 import {
   ECONOMY,
@@ -92,7 +92,7 @@ export interface Observation {
 
 export interface DecisionEngine {
   readonly name: string
-  decide(obs: Observation, world: World, agent: Agent): Promise<AgentAction | null>
+  decide(obs: Observation, world: World, agent: Agent): Promise<ScoredAction | null>
 }
 
 // ---------------------------------------------------------------------------
@@ -267,7 +267,7 @@ interface Scored {
 export class RuleBasedDecisionEngine implements DecisionEngine {
   readonly name = 'rule-based'
 
-  async decide(obs: Observation, world: World, agent: Agent): Promise<AgentAction | null> {
+  async decide(obs: Observation, world: World, agent: Agent): Promise<ScoredAction | null> {
     const options: Scored[] = []
     const s = STRATEGY[agent.strategy]
     // §21.1: what an agent can commit is cash plus undrawn credit, and credit
@@ -564,7 +564,19 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
     // a little noise so identical agents do not converge on identical moves
     const top = options.slice(0, 3)
     const pick = top[Math.floor(world.rng() * top.length)]
-    return pick.score > s.threshold ? pick.action : null
+    if (pick.score <= s.threshold) return null
+    /**
+     * §22.2: how much better the best option was than the runner-up, as a
+     * fraction of the best. This is the number that says whether the sampling
+     * above is choosing between equivalent moves or between materially
+     * different ones — which is the difference between a sort order with noise
+     * on it and agents that take different paths.
+     */
+    const margin =
+      options.length > 1
+        ? (options[0].score - options[1].score) / Math.max(1e-9, Math.abs(options[0].score))
+        : 1
+    return { ...pick.action, margin }
   }
 }
 
@@ -576,7 +588,7 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
 export class LLMDecisionEngine implements DecisionEngine {
   readonly name = 'llm'
 
-  async decide(_obs: Observation, _world: World, _agent: Agent): Promise<AgentAction | null> {
+  async decide(_obs: Observation, _world: World, _agent: Agent): Promise<ScoredAction | null> {
     throw new Error(
       'LLMDecisionEngine is a stub. The Observation shape is the contract: serialise it, ' +
         'prompt for one action from the §4 set plus a rationale, and validate against AgentAction.',

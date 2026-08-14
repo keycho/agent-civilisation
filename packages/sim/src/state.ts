@@ -77,6 +77,26 @@ export interface ParcelAdjacency {
   neighbours: Map<string, string[]>
 }
 
+/**
+ * §22.1. One consolidation of adjacent lots, and what became of it.
+ *
+ * `clearedAfter` and `developedAfter` are set when the same agent — or its
+ * heir, since a dynasty is one holding — demolishes on this ground and then
+ * builds on it. An assembly with neither is a purchase; an assembly with both
+ * is the grain of the city actually changing.
+ */
+export interface Assembly {
+  agentId: string
+  parcelIds: string[]
+  tick: number
+  clearedAfter: boolean
+  developedAfter: boolean
+  /** baseline floor area that stood on this ground at day 0 */
+  baselineAreaM2: number
+  /** footprint of what the agent put there, 0 until it develops */
+  builtAreaM2: number
+}
+
 export class World {
   /**
    * §20.2: an internal monotonic sequence number. Construction spans it, decay
@@ -136,6 +156,41 @@ export class World {
    */
   readonly siteResidualCache = new Map<string, number>()
 
+  /**
+   * §22.2: how clear-cut each applied decision was, per building it landed on.
+   *
+   * The engine sorts scored options and samples the top three, so the same
+   * building can end a run in different divergence classes across seeds. That
+   * variation means two entirely different things depending on the gap between
+   * the options being sampled: a near-zero gap is a coin flip between
+   * equivalent moves — a sort order with noise on top — and a wide gap is the
+   * seed genuinely sending a site down a different path. Recording the margin
+   * at the moment of the decision is the only way to tell them apart after the
+   * fact.
+   */
+  readonly decisionMargins = new Map<string, number[]>()
+
+  /**
+   * §22.1: assembly as a chain rather than an action. §4 calls `assemble` the
+   * mechanism that produces districts, so what matters is not how often it
+   * fires but how often it is carried through to a building on the assembled
+   * ground.
+   */
+  readonly assemblies: Assembly[] = []
+
+  /** §22.1: buildings that have ever changed hands, and how often. */
+  readonly acquisitionCount = new Map<string, number>()
+
+  /** The building a `develop` just created, for attributing the decision to it. */
+  lastDevelopedId?: string
+
+  /**
+   * §22.1: baseline floor area per parcel, read from the seed rather than from
+   * live state. By the time an agent develops on assembled ground, whatever
+   * stood there has usually been cleared — the question is what *was* there.
+   */
+  readonly baselineAreaByParcel = new Map<string, number>()
+
   private nextBuildingSerial = 0
   private nextNodeSerial = 0
   private nextEdgeSerial = 0
@@ -186,6 +241,13 @@ export class World {
       const b = p.buildingId ? this.buildings.get(p.buildingId) : undefined
       if (b) b.parcelId = p.id
     }
+    // §22.1: what stood on each parcel at day 0, kept from the seed because
+    // live state forgets it the moment an agent clears the ground
+    for (const p of seed.parcels) {
+      const b = p.buildingId ? this.buildings.get(p.buildingId) : undefined
+      if (b) this.baselineAreaByParcel.set(p.id, b.areaM2)
+    }
+
     for (const b of seed.blocks) this.blocks.set(b.id, { ...b })
     for (const n of seed.roads.nodes) this.nodes.set(n.id, { ...n })
     for (const e of seed.roads.edges) this.edges.set(e.id, { ...e })

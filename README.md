@@ -29,6 +29,12 @@ vercel     the client, no simulation code
 transport  websocket, frames at ~10 Hz, client interpolates
 ```
 
+**The world runs in seasons (§22.3).** It has a horizon, not a budget: when the
+reachable stock saturates the season ends, the log stays queryable as history,
+and a new one begins on the same baseline with a new rng seed. `tune.ts`'s
+65,000-decision budget is a measurement device and does not govern the live
+world — `packages/server/test/boundaries.test.ts` asserts it cannot.
+
 Verified with two browsers on one server: identical tick, identical decision
 count, frames ~60 ms apart. Full account in `packages/server/README.md`.
 
@@ -120,7 +126,92 @@ Structural canaries run over the seed itself before any simulation. Four of them
 caught real faults on first run — see the commit history; each produced output
 that looked entirely plausible.
 
-### The KNOWN entry is gone
+### What §22 measured, and what it found
+
+§21.1 asked for the action mix to be judged. §22.1 answered that the mix is
+weighted toward what a spectator cannot see, and asked for two measurements
+using the precedent already set for demolish and develop: **decision share is
+not physical consequence**.
+
+**Grain (§22.1).** Medians across 20 seeds:
+
+```
+assemblies                                    45, median 2 parcels each
+  followed by develop on the same holding     14  (31%)
+  followed by demolish                         0
+  full chain assemble -> demolish -> develop   0
+  never acted on                              28
+agent-built standing on multi-parcel sites   7 of 248  (3%)
+footprint vs baseline on the same ground     1.55x all, 1.84x consolidated
+```
+
+The chain is 0 and it is **structurally impossible, not rare**: `assemble`
+filters its candidates on `!p.hasBuilding`, so it can only ever gather vacant
+land, and there is nothing standing on assembled ground to demolish. §4 defines
+assemble as "consolidate adjacent lots and redevelop at higher intensity", and
+consolidating *occupied* lots is the half the model cannot express.
+
+So the grain is largely frozen. 3% of agent-built structures stand on
+consolidated ground; the rest replace one building on one lot. The 1.55x
+footprint ratio is real grain change at the building scale — new structures
+cover half again as much of their lot — but the 1909 lot pattern survives.
+
+**Churn (§22.1).** Also medians across 20 seeds:
+
+```
+6,662 acquisitions across 936 buildings; worst-traded changed hands 15x
+per building ever altered (divergence >= 2)      6.77
+per building whose silhouette changed (>= 4)    11.50
+acquisitions landing on stock nobody ever alters    0%
+```
+
+By §22.1's own number — "if a building changes hands four times and is altered
+once, that is a property market" — this is a property market. Nearly seven
+trades per alteration, and a trade is invisible from the city camera.
+
+Both are `KNOWN` in `tune.ts` rather than silently passing or quietly retuned.
+Neither threshold was moved: both were written before the run.
+
+### Is the engine deciding, or sorting? (§22.2)
+
+The caveat raised in build 3 was that a scoring function with a random
+tie-break produces the same 80/20 local-substitution signature as genuine
+strategic variation, and that entropy alone cannot tell them apart. §22.2's
+discriminator is to correlate per-building entropy against the score margin at
+the moment of the decision — the gap between the top-scored action and the
+runner-up — and to run it **before** the §9 swap.
+
+```
+781 buildings with both an entropy and a recorded margin
+correlation  entropy ~ margin          r = +0.111
+             entropy ~ parcel area     r = +0.106
+             entropy ~ adjacency degree r = +0.035
+
+margin <= 0.05 (a tie)        1 building   100% carry entropy
+margin 0.05 - 0.25          130 buildings   82% carry entropy, median 0.61 bits
+margin > 0.25 (clear-cut)   650 buildings   75% carry entropy, median 0.61 bits
+```
+
+**It is not tie-break noise.** Entropy does not track margin downward; if
+anything it rises slightly with it. The near-tie band is almost empty — one
+building in 781 — so the failure mode §22.2 named is not what is happening.
+Three quarters of clear-cut decisions still vary across seeds.
+
+There is a second reading that matters more than the first, and it is not the
+one anyone was looking for. The engine samples uniformly from its top three
+options, so at a margin above 0.25 it is discarding a materially better move two
+times in three. The variation is real — different things happen — but it is
+produced by agents being deliberately suboptimal rather than by agents reasoning
+differently.
+
+That inverts the risk. An LLM engine choosing deliberately among the same
+options would produce **less** spread, not more, because it would keep picking
+the reasoned option. So the swap is unlikely to scramble the calibration; it is
+more likely to tighten it. The open question is no longer "will the engine
+survive the swap" but "how much of the current variety is an artifact of the
+tie-break, and is uniform-over-top-3 the right sampler at all".
+
+### The build-3 KNOWN entry is gone
 
 Build 2 carried one check that printed KNOWN rather than passing: every utility,
 industrial and civic building was untouched in all 20 runs. That was structural
@@ -156,38 +247,20 @@ the wrong thing: decision share is not physical consequence, and redevelopment
 is the expensive rare action — 1.5% of decisions is 190 buildings cleared. What
 is asserted is what "vestigial" actually means, the share of the stock reshaped.
 
-### Is the engine deciding, or sorting? (§21.3)
+### Where the §21.3 prediction landed
 
-Build 2's stdev/median of 0.028 was suspiciously tight, and the reading that
-explains it is that the reachable stock was structurally fixed and the budget
-large enough to saturate it. The prediction was that unlocking ~40% more stock
-would loosen the spread.
-
-**It did not.** stdev/median went 0.028 → 0.030. Two diagnostics were added to
-tell the two cases apart:
+Build 3 predicted that unlocking ~40% more reachable stock would loosen the
+spread. It did not: stdev/median went 0.028 -> 0.030, and the prediction was
+withdrawn. The entropy diagnostic added alongside it survives and is still run
+every pass; §22.2 above is what settled the caveat it left open.
 
 ```
 spread along the run     25% of budget  0.023      75%  0.023
                          50% of budget  0.021     100%  0.030
-
-divergence-class entropy per building, across the 20 seeds
-                         781 buildings touched in >= 1 run
-                         24% treated identically every seed
-                         median 0.61 bits, max 2.04 of a possible 4.32
 ```
 
-So the aggregate is tight the whole way through rather than converging at the
-end — this is not a saturation artifact of stopping at the plateau. But three
-quarters of the touched stock does *not* get the same treatment every seed, and
-the typical touched building splits roughly 80/20 between two divergence
-classes. By §21.3's own criterion that is the healthy case: many paths, one
-equilibrium.
-
-The honest caveat is that a rule engine sorting a scoring function with a
-three-way random tie-break produces exactly this signature, and local
-substitution — this building renovated here, its neighbour there — is not the
-same as different strategic reasoning. The diagnostic rules out the degenerate
-case. It does not establish the good one. The §9 swap remains the real test.
+The spread is flat through the run and widens slightly at the end, so the
+tightness is not an artifact of stopping at the plateau.
 
 ## Data
 
@@ -382,8 +455,14 @@ a quiet one does not.
 ## Not built
 
 - **not deployed.** The server runs, has been verified against a live Postgres
-  and against two browsers on one world, and carries Railway and Vercel configs.
-  It has not been put on the internet
+  and against two browsers on one world, carries Railway and Vercel configs, and
+  §22.4's three exposures are closed. It has not been put on the internet
+- **no resume.** The durable log is a record, not a restore point: a snapshot is
+  the §16.2 data texture, not ownership, capital or parcels. A restart begins a
+  new season rather than continuing the old one, which is coherent with seasons
+  and is a deliberate limit rather than an oversight
+- **the grain is largely frozen and the market churns**, both measured, both
+  `KNOWN` in `tune.ts`, both waiting on a model decision — see §22 above
 - one chunk. §10's composition is architecture, not a tested claim, and §18.5's
   cross-area validation is unexercised — and it is the first thing to do, because
   every constant in the economy has only ever seen this fabric

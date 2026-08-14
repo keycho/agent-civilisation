@@ -82,11 +82,22 @@ export interface Summary {
     everBorrowedShare: number
     medianPeakDebt: number
   }
+  /** §22.1: grain, not divergence — is the lot pattern actually changing? */
+  grain: GrainReport
+  /** §22.1: is this a construction narrative or a property market? */
+  churn: ChurnReport
   /** §18.2 */
   untouchedIds: string[]
   untouchedShare: number
   /** §21.3: divergence class per baseline building, for cross-seed entropy */
   divergenceByBuilding: Record<string, number>
+  /**
+   * §22.2: median decision margin per baseline building, for the correlation
+   * that separates tie-break noise from real path variation.
+   */
+  marginByBuilding: Record<string, number>
+  /** parcel area and adjacency degree per building, for the same correlation */
+  siteByBuilding: Record<string, { areaM2: number; degree: number }>
   /**
    * Purpose mix of the residue. A whole class appearing here at 100% is the
    * signature of structural exclusion rather than economic disinterest, which
@@ -97,6 +108,55 @@ export interface Summary {
   /** structural canaries over the emitted artifact (§21.4) */
   structural: SeedReport
   curve: Array<{ decisions: number; index: number; agentOrigin: number; cleared: number; generation: number }>
+}
+
+/**
+ * §22.1. "Replacement at 1:1 on inherited footprints leaves the 1909 urban
+ * grain intact. The street reads as the same street with newer buildings on
+ * it." So the question is not how much was replaced but whether the lot pattern
+ * underneath it changed — which is what `assemble` exists to do, and what makes
+ * a district read as a different place rather than a refreshed one.
+ */
+export interface GrainReport {
+  assemblies: number
+  medianParcelsPerAssembly: number
+  /** assemblies ever followed by demolish *and* develop on the same holding */
+  chainCompleted: number
+  /** followed by a demolition on the assembled ground */
+  chainCleared: number
+  /** followed by a building on it — the half that is reachable at all */
+  chainDeveloped: number
+  /** neither: a consolidation that changed nothing */
+  chainDormant: number
+  agentBuilt: number
+  /** agent-built structures standing on more than one parcel */
+  agentBuiltMultiParcel: number
+  /** their footprint against what stood on that ground at baseline */
+  medianFootprintRatio: number
+  /** the same ratio over every agent-built structure with a baseline under it */
+  medianFootprintRatioAll: number
+}
+
+/**
+ * §22.1. "If a building changes hands four times and is altered once, that is a
+ * property market rather than a construction narrative." Acquisition is 45.7%
+ * of decisions and nothing a spectator can see, so the ratio of trades to
+ * alterations is the honest measure of how much agent activity reaches the
+ * screen.
+ */
+export interface ChurnReport {
+  acquisitions: number
+  buildingsEverAcquired: number
+  /** divergence >= 2: anything beyond a change of deed */
+  buildingsAltered: number
+  /** expanded, cleared, replaced or agent-origin — a changed silhouette */
+  buildingsResilhouetted: number
+  acquisitionsPerAltered: number
+  acquisitionsPerResilhouetted: number
+  /** how many times the most-traded building changed hands */
+  worstChurn: number
+  /** share of acquisitions that land on a building never altered by anyone */
+  intoNothingShare: number
 }
 
 export async function loadSeed(chunk = 'schiedam-havens'): Promise<WorldSeed> {
@@ -171,6 +231,8 @@ export async function runSeed(
   const untouchedIds: string[] = []
   const byPurpose: Record<string, { untouched: number; total: number }> = {}
   const divergenceByBuilding: Record<string, number> = {}
+  const marginByBuilding: Record<string, number> = {}
+  const siteByBuilding: Record<string, { areaM2: number; degree: number }> = {}
   const flags: number[] = []
   const access: number[] = []
   const value: number[] = []
@@ -189,10 +251,15 @@ export async function runSeed(
     // §21.3: the class each baseline building ended in, for the cross-seed
     // entropy that separates "many paths to one equilibrium" from "one path".
     divergenceByBuilding[b.id] = b.divergence
+    // §22.3: and how clear-cut the decisions that put it there were
+    const margins = w.decisionMargins.get(b.id)
+    if (margins?.length) marginByBuilding[b.id] = median(margins)
+    const deg = (w.adjacency.get(parcel.id) ?? []).length
+    siteByBuilding[b.id] = { areaM2: Math.round(parcel.areaM2), degree: deg }
     flags.push(untouched)
     access.push(parcel.accessScore)
     value.push(parcel.landValue)
-    degree.push((w.adjacency.get(parcel.id) ?? []).length)
+    degree.push(deg)
   }
 
   return {
@@ -216,8 +283,12 @@ export async function runSeed(
       Math.max(...ALL_ACTION_KINDS.map((k) => actionCounts[k])) /
       Math.max(1, ALL_ACTION_KINDS.reduce((sum, k) => sum + actionCounts[k], 0)),
     leverage: leverageOf(w),
+    grain: grainOf(w),
+    churn: churnOf(w, actionCounts.acquire_building),
     untouchedIds,
     divergenceByBuilding,
+    marginByBuilding,
+    siteByBuilding,
     untouchedByPurpose: byPurpose,
     untouchedShare: flags.length ? flags.reduce((a, b) => a + b, 0) / flags.length : 0,
     correlations: {
@@ -249,6 +320,88 @@ function leverageOf(w: {
     // constraint bit while the buying was happening.
     everBorrowedShare: all.filter((a) => a.peakDebt > 0).length / Math.max(1, all.length),
     medianPeakDebt: median(all.map((a) => a.peakDebt)),
+  }
+}
+
+
+/**
+ * §22.1: the assemble chain, followed on the ground. `assemble` firing is not
+ * the event of interest — an assembly that is never built on has changed
+ * nothing, and the chain assemble -> demolish -> develop is what actually moves
+ * the lot pattern.
+ */
+function grainOf(w: {
+  assemblies: Array<{
+    parcelIds: string[]
+    clearedAfter: boolean
+    developedAfter: boolean
+  }>
+  buildings: Map<string, { source: string; state: string; areaM2: number; builtOnParcels?: string[] }>
+  baselineAreaByParcel: Map<string, number>
+}): GrainReport {
+  const a = w.assemblies
+  const agentBuilt: Array<{ areaM2: number; parcels: string[] }> = []
+  for (const b of w.buildings.values()) {
+    if (b.source !== 'agent_built' || b.state === 'demolished') continue
+    agentBuilt.push({ areaM2: b.areaM2, parcels: b.builtOnParcels ?? [] })
+  }
+
+  const ratios: number[] = []
+  const multiRatios: number[] = []
+  let multi = 0
+  for (const b of agentBuilt) {
+    const baseline = b.parcels.reduce((sum, id) => sum + (w.baselineAreaByParcel.get(id) ?? 0), 0)
+    if (b.parcels.length > 1) multi++
+    if (baseline <= 0) continue
+    const ratio = b.areaM2 / baseline
+    ratios.push(ratio)
+    if (b.parcels.length > 1) multiRatios.push(ratio)
+  }
+
+  return {
+    assemblies: a.length,
+    medianParcelsPerAssembly: median(a.map((x) => x.parcelIds.length)),
+    chainCompleted: a.filter((x) => x.clearedAfter && x.developedAfter).length,
+    chainCleared: a.filter((x) => x.clearedAfter).length,
+    chainDeveloped: a.filter((x) => x.developedAfter).length,
+    chainDormant: a.filter((x) => !x.clearedAfter && !x.developedAfter).length,
+    agentBuilt: agentBuilt.length,
+    agentBuiltMultiParcel: multi,
+    medianFootprintRatio: median(multiRatios),
+    medianFootprintRatioAll: median(ratios),
+  }
+}
+
+/** §22.1: trades against alterations. */
+function churnOf(
+  w: {
+    buildings: Map<string, { source: string; divergence: number }>
+    acquisitionCount: Map<string, number>
+  },
+  acquisitions: number,
+): ChurnReport {
+  let altered = 0
+  let resilhouetted = 0
+  for (const b of w.buildings.values()) {
+    // 2+ is anything past a change of deed; 4+ changed shape or is gone
+    if (b.divergence >= 2) altered++
+    if (b.divergence >= 4) resilhouetted++
+  }
+  const counts = [...w.acquisitionCount.values()]
+  let intoNothing = 0
+  for (const [id, n] of w.acquisitionCount) {
+    const b = w.buildings.get(id)
+    if (b && b.divergence < 2) intoNothing += n
+  }
+  return {
+    acquisitions,
+    buildingsEverAcquired: w.acquisitionCount.size,
+    buildingsAltered: altered,
+    buildingsResilhouetted: resilhouetted,
+    acquisitionsPerAltered: acquisitions / Math.max(1, altered),
+    acquisitionsPerResilhouetted: acquisitions / Math.max(1, resilhouetted),
+    worstChurn: counts.length ? Math.max(...counts) : 0,
+    intoNothingShare: acquisitions > 0 ? intoNothing / acquisitions : 0,
   }
 }
 
