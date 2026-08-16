@@ -674,7 +674,19 @@ export function buildAdjacency(world: World): void {
     const found: string[] = []
     for (const q of index.near(p.centroid, radius)) {
       if (q.id === p.id) continue
-      if (q.blockId !== p.blockId) continue
+      /**
+       * §33.1: the same-block requirement was written when blocks partitioned
+       * space, and it silently made synthesised parcels invisible to the
+       * relational machinery — an orphan could never neighbour block stock, so
+       * assemble, adjacent-to-holdings and site scoring were blind across the
+       * seam. In Deptford the seam is 60% of the market, and the §18.2 run
+       * read the consequence: orphan stock untouched at 86% against 49%, with
+       * the correlates-with-nothing signature (access r = 0). A synthesised
+       * parcel is a real parcel; touching decides adjacency for it.
+       */
+      const sameBlock = q.blockId === p.blockId
+      const orphanSide = p.blockId === 'blk-orphan' || q.blockId === 'blk-orphan'
+      if (!sameBlock && !orphanSide) continue
       if (touches(p.polygon, q.polygon)) found.push(q.id)
     }
     neighbours.set(p.id, found)

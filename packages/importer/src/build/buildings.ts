@@ -28,6 +28,8 @@ import { purposeFromTags } from './purpose.ts'
  */
 
 export interface BuildingsResult {
+  /** §33.2: OSM rows split at estimated party walls (OSM-only adapter; 0 for NL) */
+  rowsSplit?: number
   buildings: BaselineBuilding[]
   matched: number
   unmatched: number

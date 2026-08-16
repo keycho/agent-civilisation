@@ -54,8 +54,14 @@ export const MAX_ACTIVE_ABANDONED_FLIPS = 2
 /** §30.2's flow bar, shared with the single-chunk suite. */
 export const CHAIN_FLOW_BAR_PER_10K = 4
 
-/** §32.1: the region world's rules, pre-registered. */
-export const REGION_RULES = { boundaryGate: true } as const
+/**
+ * §32.1/§33.1: the region world's rules, pre-registered. minOwnableShare
+ * mirrors the importer's floor — a chunk whose ownable/imported ratio sits
+ * below it is not ready to join the region world regardless of how good it
+ * looks, because its offered surface would be computed over a subset market
+ * (§18.2's fault wearing real data).
+ */
+export const REGION_RULES = { boundaryGate: true, minOwnableShare: 0.97 } as const
 
 // ---------------------------------------------------------------------------
 // the shape the region harness must produce
@@ -99,7 +105,7 @@ export interface RegionRunSummary {
   /** §31.5: importHealth as read from each chunk manifest */
   importHealth: Record<
     string,
-    { heightsReal: number; yearsPresent: number; boundaryParcels: number }
+    { heightsReal: number; yearsPresent: number; boundaryParcels: number; ownableShare?: number }
   >
   /** §30.2 */
   chainCompletionFlow: number
@@ -282,6 +288,15 @@ export function assertContract(runs: RegionRunSummary[]): ContractResult[] {
       ),
     ),
     'every chunk manifest carries import health',
+    '',
+  )
+  assert(
+    runs.every((r) =>
+      Object.values(r.importHealth).every(
+        (h) => (h.ownableShare ?? 1) >= REGION_RULES.minOwnableShare,
+      ),
+    ),
+    `every joined chunk meets ownable/imported >= ${REGION_RULES.minOwnableShare} (§33.1)`,
     '',
   )
 

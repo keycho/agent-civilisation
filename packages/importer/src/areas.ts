@@ -49,6 +49,17 @@ export interface AreaDef {
  *                     one 550 m square — the archetype system gets real work
  *   height coverage   3DBAG, so 100%
  */
+/**
+ * §33.3: the cut heuristic gets a threshold. "Cut along the fabric" was a
+ * single-axis assumption — NL-shaped, another entry in the assumptions doc.
+ * Rotation is only applied when the bearing histogram's peak bin carries at
+ * least this share of road length (uniform is 1.1%; schiedam's true axis
+ * carried 8.7%). Below it the fabric has no single axis, the chunk is cut
+ * north-aligned, and the §24.1 width-framing absorbs the shape — a forced
+ * rotation to a weak axis is noise presented as intention.
+ */
+export const CUT_PEAK_SHARE_MIN = 0.06
+
 export const AREAS: Record<string, AreaDef> = {
   'schiedam-havens': {
     id: 'schiedam-havens',
@@ -136,14 +147,11 @@ export const AREAS: Record<string, AreaDef> = {
     lon: -0.031,
     radiusM: 400,
     /**
-     * §24.2 measured, with a caveat schiedam did not have: the histogram is
-     * multi-axial. Peak 86.6 deg carries 3.5% of road length against a uniform
-     * 1.1% (schiedam's 45.4 peak carried 8.7%) — riverside curve plus three
-     * street grids at 87/56/31 deg. The rotation aligns the dominant grid and
-     * the near-90 cut costs almost nothing in fetch (cos+sin = 1.06), but the
-     * fabric genuinely has no single axis and the framing win is smaller here.
+     * §33.3 applied: measured 86.6 deg at 3.5% peak share, below the 6%
+     * threshold — multi-axial fabric (riverside curve plus grids at 87/56/31),
+     * so the cut is north-aligned and the measurement stays here as the
+     * record. Schiedam's 45.4 at 8.7% is what a real axis looks like.
      */
-    bearingDeg: 86.6,
     adminCode: 'E09000023',
     country: 'GB',
     note: 'Thames-side post-industrial: Convoys Wharf, Deptford terraces, creek-mouth sheds.',

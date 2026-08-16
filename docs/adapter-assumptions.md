@@ -24,16 +24,63 @@ tripwire at 15%.
 **Expect**: Brooklyn (loading docks through warehouses) and Tokyo (private
 alleys) sit in the same class.
 
-## 2. One OSM way is not one building
+## 2. One OSM way is not one building — DECIDED: split (§33.2)
 
-UK convention maps whole terrace rows as single ways (some tagged
-`building=terrace`, most not). 473 "buildings" in 0.64 km² of inner London is
-partly real vacancy (Convoys Wharf) and partly rows counted as one. Economics
-run per row: a terrace of eight trades, renovates and demolishes as one asset.
+UK convention maps whole terrace rows as single ways. Inherited, that
+pre-assembles the street: an agent buys 30 dwellings as one asset, one
+conversion recolours 100 m, and §22.1's grain metrics measure the dataset's
+habit instead of the world.
 
-Accepted for this block, recorded here rather than papered over with a
-splitter. **Expect**: Paris maps whole perimeter blocks as single relations in
-places; Tokyo splits fine. A party-wall splitter is future craft work.
+Decision (build 10): rows are split at estimated party-wall intervals — 5.2 m
+typology frontage along the OBB long axis, exact clip against the real
+footprint, whole-row fallback if any piece degenerates, area conservation
+asserted ±4%. London went 473 -> 791 buildings; the pieces flow through every
+geometry canary. "Assembly of a terrace should be work, not a data gift."
+
+**Expect**: Brooklyn brownstone rows get the same treatment. Paris perimeter
+blocks mapped as single relations are a harder version of the same problem —
+the splitter's slab approach does not generalise to courtyard rings and Paris
+may need its own cut.
+
+## 2b. Orphan synthesis is the answer to the orphan question (§33.1)
+
+What does the sim do with a building whose parcel derivation failed? It
+synthesises a fallback parcel around the building's own footprint (1.2 m
+outset, footprint-exact where the outset would cross a carriageway). Nothing
+is excluded: London's ownable/imported is 791/791 = 100%.
+
+Canaried at the artifact (§21.4): synthesised parcels stay building-sized
+(worst 3.31x against a 3.5x bound) and must contain their building — probed by
+vertex containment with 0.5 m boundary tolerance, after the first probe
+(centroid) fired on a concave wharf shed whose centroid lies outside its own
+footprint. The manifest carries `ownableShare` with a 97% floor asserted at
+import, mirrored in REGION_RULES.minOwnableShare: a chunk below it does not
+join the region world.
+
+## 2c. The dark mass: measured, adjacency ruled out, cause open (§33.1)
+
+The §18.2 instrument on London, six seeds at the frozen budget: 44% of the
+chunk is untouched in EVERY seed (Schiedam: 3%), pairwise Jaccard 0.75
+against Schiedam's 0.58-0.67, and the always-dark set is 79% orphan-parcel
+against a 60% base rate — with access correlation r = 0. Under §18.2's own
+rubric that is a reachability gap, not periphery: London's offered surface is
+computed over roughly half a market that LOOKS whole (ownable/imported =
+100%).
+
+The first hypothesis — the adjacency builder's same-block gate making
+synthesised parcels invisible to relational scoring — was repaired and
+A/B-measured: untouched orphan share moved 86.0% -> 85.8%. Falsified. The
+repair stays (a synthesised parcel should neighbour what it touches, and the
+control is unaffected), but the cause is still open. Remaining suspects, in
+order: candidate enumeration (how for-sale stock surfaces in observations),
+and small-asset economics (median split piece is 54 m² — it may never win a
+rank against any alternative under Schiedam-tuned constants).
+
+Consequence for the region world: the ownableShare floor is necessary but not
+sufficient. London does not join the region world until the always-dark core
+is diagnosed to a mechanism — a destination whose offered surface is half
+real would feed §30.1's firewall exactly the polluted number it exists to
+keep out.
 
 ## 3. Block derivation starves in superblock fabric
 
@@ -86,12 +133,25 @@ fallback). Brooklyn, Paris and Tokyo need pools before import — one list each,
 minutes of work, but it has to be on the checklist or Margriet buys the
 Marais.
 
+## 8. "Cut along the fabric" was a single-axis assumption (§33.3)
+
+Schiedam's 45.4° axis carries 8.7% of road length; Deptford's best (86.6°)
+carries 3.5% against a uniform 1.1% — riverside curve plus three grids. A
+forced rotation to a weak axis is noise presented as intention, so the rule
+now has a threshold: rotate only when the peak bin carries >= 6%
+(CUT_PEAK_SHARE_MIN); below it, cut north-aligned and let §24.1's width
+framing absorb the shape. London is north-cut with the measurement kept as
+the record.
+
+**Expect**: Brooklyn has a real grid (likely above threshold); Tokyo
+shitamachi is likely multi-axial like Deptford.
+
 ## Carried, not fixed
 
-- Terrace-row splitting (entry 2) — party-wall geometry, real craft work.
-- UK tier-1 valuations (Land Registry price paid) — would raise London from
-  `gdp-proxy` to `national-valuation` in the coarse layer, which §32.2 makes
-  the emergence-grade bar.
+- ~~UK tier-1 valuations~~ — done (build 10, §33.4): HM Land Registry UK HPI
+  average prices, OGL v3, joined by exact local-authority name. London 1.508
+  on reals against Burnley 0.323; 128 GB candidates at tier-1. France's DVF is
+  the same move for Paris.
 - DEFRA lidar for a real London DTM — the probed WCS endpoint 404s; Thames-side
   is near-flat so the flat datum is tolerable, and the seam takes a DTM without
   code changes when one is reachable.

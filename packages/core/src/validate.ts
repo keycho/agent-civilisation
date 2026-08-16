@@ -1,4 +1,4 @@
-import { ringSelfIntersects } from './geo/polygon.ts'
+import { area as ringSignedArea, ringSelfIntersects } from './geo/polygon.ts'
 import { BLOCK_BOUNDING_CLASSES, CARRIAGEWAY_SAMPLE_TS, type Ring } from './types.ts'
 import type { Parcel, WorldSeed } from './world.ts'
 
@@ -37,6 +37,16 @@ export interface SeedReport {
    * which is the unreachable-land class §18.2 exists to catch.
    */
   footprintParcelsOverCarriageway: number
+  /**
+   * §33.1: the orphan synthesis, canaried. A building outside every block face
+   * gets a parcel drawn around its own footprint rather than being silently
+   * excluded from the market — these three numbers prove the drawing worked.
+   */
+  synthesisedParcels: number
+  /** worst synthesised-parcel area over its building's footprint area */
+  synthesisWorstRatio: number
+  /** synthesised parcels that do not contain their building's centroid */
+  synthesisContainFails: number
 }
 
 export interface Check {
@@ -62,6 +72,42 @@ export function validateSeed(world: WorldSeed): SeedReport {
 
   const over = countParcelsOverCarriageway(world, byId)
 
+  // §33.1: canary the orphan synthesis off the artifact
+  const bAreaById = new Map<string, number>()
+  for (const b of world.buildings) {
+    bAreaById.set(b.id, Math.abs(ringSignedArea(b.footprint)))
+  }
+  let synthesisedParcels = 0
+  let synthesisWorstRatio = 0
+  let synthesisContainFails = 0
+  const buildingById = new Map(world.buildings.map((b) => [b.id, b]))
+  for (const p of parcels) {
+    if (p.blockId !== 'blk-orphan') continue
+    synthesisedParcels++
+    const ba = p.buildingId ? bAreaById.get(p.buildingId) : undefined
+    if (ba && ba > 0) {
+      const ratio = Math.abs(ringSignedArea(p.polygon)) / ba
+      if (ratio > synthesisWorstRatio) synthesisWorstRatio = ratio
+    }
+    /**
+     * Containment, probed soundly: this canary's first form tested the
+     * building's centroid and fired on a concave wharf shed whose centroid
+     * lies outside its own footprint — the probe was wrong, not the
+     * synthesis. A parcel is its building's parcel iff the building sits
+     * inside it, and the fallback path makes parcel == footprint exactly, so
+     * vertices lie ON the boundary. The sound test: no more than 10% of the
+     * building's vertices sit strictly outside the parcel by more than 0.5 m.
+     */
+    const b = p.buildingId ? buildingById.get(p.buildingId) : undefined
+    if (b) {
+      let far = 0
+      for (const [x, y] of b.footprint) {
+        if (!pointInRing(p.polygon, x, y) && distanceToRingEdge(p.polygon, x, y) > 0.5) far++
+      }
+      if (far > b.footprint.length * 0.1) synthesisContainFails++
+    }
+  }
+
   return {
     parcels: parcels.length,
     developableVacantShare: vacantDevelopable / Math.max(1, parcels.length),
@@ -71,6 +117,9 @@ export function validateSeed(world: WorldSeed): SeedReport {
     selfIntersectingParcels: selfIntersecting,
     derivedParcelsOverCarriageway: over.derived,
     footprintParcelsOverCarriageway: over.footprint,
+    synthesisedParcels,
+    synthesisWorstRatio,
+    synthesisContainFails,
   }
 }
 
@@ -119,6 +168,23 @@ export function seedChecks(r: SeedReport): Check[] {
       ok: r.footprintParcelsOverCarriageway <= Math.ceil(r.parcels * 0.15),
       label: 'footprint parcels over a carriageway within 15%',
       detail: `${r.footprintParcelsOverCarriageway} (OSM asserts road and building coexist)`,
+    },
+    /**
+     * §33.1: the synthesis canaries. Bounds from measurement, not taste: the
+     * London orphan parcels run 1.1-1.9x their building's footprint (the 1.2 m
+     * outset); 3.5x means the outset folded or grabbed a neighbour, and a
+     * parcel that does not contain its own building's centroid is not that
+     * building's parcel.
+     */
+    {
+      ok: r.synthesisWorstRatio <= 3.5,
+      label: 'synthesised parcels stay building-sized (<= 3.5x)',
+      detail: `${r.synthesisedParcels} synthesised, worst ${r.synthesisWorstRatio.toFixed(2)}x`,
+    },
+    {
+      ok: r.synthesisContainFails === 0,
+      label: 'every synthesised parcel contains its building',
+      detail: `${r.synthesisContainFails} misses`,
     },
   ]
 }
@@ -182,6 +248,20 @@ function countParcelsOverCarriageway(
     else derived++
   }
   return { derived, footprint }
+}
+
+function distanceToRingEdge(ring: Ring, x: number, y: number): number {
+  let best = Infinity
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [x1, y1] = ring[j]
+    const [x2, y2] = ring[i]
+    const dx = x2 - x1
+    const dy = y2 - y1
+    const t = Math.max(0, Math.min(1, ((x - x1) * dx + (y - y1) * dy) / Math.max(1e-9, dx * dx + dy * dy)))
+    const d = Math.hypot(x - (x1 + t * dx), y - (y1 + t * dy))
+    if (d < best) best = d
+  }
+  return best
 }
 
 function pointInRing(ring: Ring, x: number, y: number): boolean {

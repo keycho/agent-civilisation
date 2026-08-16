@@ -20,6 +20,9 @@ import {
   area as ringArea,
   centroid,
   cleanRing,
+  clipByConvex,
+  obb,
+  quantiseRing,
   ringSelfIntersects,
   selectArchetype,
   simplifyRing,
@@ -75,6 +78,62 @@ function parseYear(tags: OsmTags): number | undefined {
   return m ? Number(m[1]) : undefined
 }
 
+/**
+ * §33.2, decided rather than inherited: terrace rows split at estimated
+ * party-wall intervals.
+ *
+ * UK OSM maps whole rows as single ways, which pre-assembles the street: an
+ * agent would buy 30 dwellings as one asset, one conversion would recolour
+ * 100 m, and §22.1's grain metrics would measure the dataset's habit instead
+ * of the world. Splitting makes UK grain comparable to NL grain and makes
+ * assembling a terrace work again — "assembly of a terrace should be work,
+ * not a data gift." Brooklyn brownstone rows get the same treatment.
+ *
+ * The interval is typology, not survey: UK terrace plots run 4.5-6.5 m of
+ * frontage, so the row is cut into equal slabs nearest 5.2 m along its long
+ * axis. Pieces are clipped from the real footprint (slabs are convex, so the
+ * clip is exact even on rows with back extensions). If any piece degenerates
+ * the whole row stays unsplit — a wrong split is worse than a coarse asset.
+ *
+ * §21.4: the emitted pieces flow through every existing geometry canary, and
+ * the builder asserts area conservation per row (±4%) before emitting.
+ */
+const PLOT_FRONTAGE_M = 5.2
+
+function splitRow(ring: Ring, tags: OsmTags, purpose: Purpose): Ring[] {
+  const forced = tags.building === 'terrace'
+  const box = obb(ring)
+  const aspect = box.length / Math.max(1e-6, box.width)
+  if (!forced && !(purpose === 'residential' || purpose === 'retail')) return [ring]
+  if (!forced && (box.length < 18 || aspect < 2.5)) return [ring]
+  const n = Math.min(40, Math.max(2, Math.round(box.length / PLOT_FRONTAGE_M)))
+  if (n < 2) return [ring]
+
+  const { cx, cy, ux, uy, length, width } = box
+  const vx = -uy
+  const vy = ux
+  const halfW = width / 2 + 2
+  const step = length / n
+  const pieces: Ring[] = []
+  for (let k = 0; k < n; k++) {
+    const lo = -length / 2 + k * step
+    const hi = lo + step
+    const slab: Ring = [
+      [cx + ux * lo + vx * halfW, cy + uy * lo + vy * halfW],
+      [cx + ux * hi + vx * halfW, cy + uy * hi + vy * halfW],
+      [cx + ux * hi - vx * halfW, cy + uy * hi - vy * halfW],
+      [cx + ux * lo - vx * halfW, cy + uy * lo - vy * halfW],
+    ]
+    const piece = quantiseRing(cleanRing(clipByConvex(ring, slab)))
+    if (piece.length < 3 || ringSelfIntersects(piece) || ringArea(piece) < 8) return [ring]
+    pieces.push(piece)
+  }
+  const total = pieces.reduce((sum, r) => sum + ringArea(r), 0)
+  const original = ringArea(ring)
+  if (Math.abs(total - original) > original * 0.04) return [ring]
+  return pieces
+}
+
 export function buildFromOsm(
   osmBuildings: OsmElement[],
   frame: ChunkFrame,
@@ -84,6 +143,7 @@ export function buildFromOsm(
   const buildings: BaselineBuilding[] = []
   let matched = 0
   let unmatched = 0
+  let rowsSplit = 0
   const purposeCounts: Record<string, number> = {}
   const archetypeCounts: Record<string, number> = {}
 
@@ -119,39 +179,45 @@ export function buildFromOsm(
     const heightM = taggedHeight ?? Math.max(2.6, levels * 3.1 + 0.8)
     const constructionYear = parseYear(tags)
 
-    const choice = selectArchetype({
-      footprint: ring,
-      heightM,
-      levels,
-      purpose,
-      constructionYear,
-      source: 'real_world',
-      // no national roof dataset here: the archetype selector treats roof form
-      // as a hint, absent is a supported value (§31.2)
-      roofHint: 'unknown',
-    })
+    const rowPieces = splitRow(ring, tags, purpose)
+    if (rowPieces.length > 1) rowsSplit++
 
-    purposeCounts[purpose] = (purposeCounts[purpose] ?? 0) + 1
-    archetypeCounts[choice.archetype] = (archetypeCounts[choice.archetype] ?? 0) + 1
+    for (let k = 0; k < rowPieces.length; k++) {
+      const piece = rowPieces[k]
+      const choice = selectArchetype({
+        footprint: piece,
+        heightM,
+        levels,
+        purpose,
+        constructionYear,
+        source: 'real_world',
+        // no national roof dataset here: the archetype selector treats roof
+        // form as a hint, absent is a supported value (§31.2)
+        roofHint: 'unknown',
+      })
 
-    buildings.push({
-      id: `b-osm-${el.id}`,
-      chunkId,
-      osmId: `way/${el.id}`,
-      footprint: ring,
-      // flat-datum substrate for this adapter's first pass; the seam accepts a
-      // real DTM later without this field changing meaning
-      groundM: 0,
-      heightM,
-      levels,
-      constructionYear,
-      purpose,
-      archetype: choice.archetype,
-      roofHint: 'unknown' as RoofHint,
-      name: tags.name,
-      heightSource: measured ? 'measured' : 'estimated',
-    })
+      purposeCounts[purpose] = (purposeCounts[purpose] ?? 0) + 1
+      archetypeCounts[choice.archetype] = (archetypeCounts[choice.archetype] ?? 0) + 1
+
+      buildings.push({
+        id: rowPieces.length > 1 ? `b-osm-${el.id}-t${k}` : `b-osm-${el.id}`,
+        chunkId,
+        osmId: `way/${el.id}`,
+        footprint: piece,
+        // flat-datum substrate for this adapter's first pass; the seam accepts
+        // a real DTM later without this field changing meaning
+        groundM: 0,
+        heightM,
+        levels,
+        constructionYear,
+        purpose,
+        archetype: choice.archetype,
+        roofHint: 'unknown' as RoofHint,
+        name: k === 0 ? tags.name : undefined,
+        heightSource: measured ? 'measured' : 'estimated',
+      })
+    }
   }
 
-  return { buildings, matched, unmatched, purposeCounts, archetypeCounts }
+  return { buildings, matched, unmatched, purposeCounts, archetypeCounts, rowsSplit }
 }

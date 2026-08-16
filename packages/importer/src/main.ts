@@ -67,7 +67,8 @@ const built =
     ? buildBaselineBuildings(bag, osmBuildings.elements, frame, area.id, clip)
     : buildFromOsm(osmBuildings.elements, frame, area.id, clip)
 log(
-  `      ${built.buildings.length} baseline buildings  (tag match ${built.matched}, fallback ${built.unmatched})`,
+  `      ${built.buildings.length} baseline buildings  (tag match ${built.matched}, fallback ${built.unmatched})` +
+    (built.rowsSplit ? `  rows split at party walls: ${built.rowsSplit} (§33.2)` : ''),
 )
 log(`      purpose   ${fmtCounts(built.purposeCounts)}`)
 log(`      archetype ${fmtCounts(built.archetypeCounts)}`)
@@ -293,6 +294,27 @@ const seed: WorldSeed = {
         Math.max(1, built.buildings.length)
       ).toFixed(3),
       boundaryParcels: boundaryFlagged,
+      /**
+       * §33.1: ownable stock over imported stock, the line that decides
+       * whether a chunk may join the region world. Orphan synthesis is what
+       * keeps this at 1.0 — a building outside every block face gets a parcel
+       * drawn around its own footprint rather than being silently excluded
+       * from the market. The synthesis stats sit beside it so the fallback is
+       * a measured thing, not an assumption.
+       */
+      ownableShare: +(
+        (() => {
+          const claimed = new Set(
+            parcels.parcels.filter((p) => p.buildingId).map((p) => p.buildingId as string),
+          )
+          return (
+            built.buildings.filter((b) => claimed.has(b.id)).length /
+            Math.max(1, built.buildings.length)
+          )
+        })()
+      ).toFixed(3),
+      synthesisedParcels: parcels.parcels.filter((p) => p.blockId === 'blk-orphan').length,
+      rowsSplit: built.rowsSplit ?? 0,
     },
   },
 }
@@ -314,6 +336,24 @@ log('\n[7/7] validating the emitted artifacts')
 const checks = seedChecks(validateSeed(written))
 for (const c of checks) log(`      ${c.ok ? 'ok  ' : 'FAIL'} ${c.label.padEnd(46)} ${c.detail}`)
 
+/**
+ * §33.1's floor: ownable stock over imported stock, asserted at import. The
+ * denominator is what entered derivation — a building dropped between there
+ * and the artifact is exactly the silent market shrinkage §18.2 exists to
+ * catch, and the emitted-artifact canaries cannot see it because the dropped
+ * building is not in the artifact. A chunk below the floor does not join the
+ * region world (REGION_RULES in the contract mirrors this number).
+ */
+const OWNABLE_FLOOR = 0.97
+const claimedIds = new Set(written.parcels.filter((p) => p.buildingId).map((p) => p.buildingId))
+const ownable = built.buildings.filter((b) => claimedIds.has(b.id)).length
+const ownableShare = ownable / Math.max(1, built.buildings.length)
+const ownableOk = ownableShare >= OWNABLE_FLOOR
+log(
+  `      ${ownableOk ? 'ok  ' : 'FAIL'} ${'ownable / imported >= 97% (§33.1)'.padEnd(46)} ` +
+    `${ownable}/${built.buildings.length} = ${(ownableShare * 100).toFixed(1)}%`,
+)
+
 const sql = await checkSql(sqlPath, written, frame)
 const sqlOk = sql.missing === 0 && sql.worstErrorM < 0.05
 log(
@@ -322,7 +362,7 @@ log(
     (sql.missing ? `, ${sql.missing} MISSING` : ''),
 )
 
-const failed = checks.filter((c) => !c.ok).length + (sqlOk ? 0 : 1)
+const failed = checks.filter((c) => !c.ok).length + (sqlOk ? 0 : 1) + (ownableOk ? 0 : 1)
 if (failed > 0) {
   throw new Error(
     `${failed} structural check(s) failed against the emitted artifact. ` +

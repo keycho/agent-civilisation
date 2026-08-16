@@ -201,7 +201,15 @@ export interface WorldSeed {
   provenance: Provenance[]
   stats: Record<string, number | string | Record<string, number>> & {
     /** §31.5: per-chunk import health, recorded in the artifact */
-    importHealth?: { heightsReal: number; yearsPresent: number; boundaryParcels: number }
+    importHealth?: {
+      heightsReal: number
+      yearsPresent: number
+      boundaryParcels: number
+      /** §33.1: ownable/imported — the region-join precondition */
+      ownableShare?: number
+      synthesisedParcels?: number
+      rowsSplit?: number
+    }
   }
 }
 

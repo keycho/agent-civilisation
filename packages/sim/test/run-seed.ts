@@ -23,6 +23,7 @@ BOUNDARY.gate = process.env.CIV_BOUNDARY_GATE !== '0'
 
 const seed = process.argv[2] ?? 'seed-0'
 const budget = Number(process.argv[3] ?? DECISION_BUDGET)
-const world = await loadSeed()
+// §33.1: the §18.2 instrument must run on any chunk, not only the control.
+const world = await loadSeed(process.env.CIV_CHUNK ?? undefined)
 const summary = await runSeed(world, seed, budget, process.argv.includes('--curve'))
 process.stdout.write(JSON.stringify(summary))

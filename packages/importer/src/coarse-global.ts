@@ -135,6 +135,41 @@ for (const r of wbRows) {
 }
 console.log(`  world bank: GDP per capita for ${gdpPc.size} countries, latest ${gdpYear}`)
 
+// -- the GB tier-1 join: HM Land Registry UK House Price Index ---------------
+/**
+ * §33.4: London becomes emergence-grade with real valuations. The UK HPI is
+ * derived from Land Registry Price Paid Data (every transaction), published
+ * monthly per local authority and region under OGL v3. Average dwelling price
+ * is the same KIND of quantity as WOZ — a valuation level, not a transaction
+ * sample — so the two tiers stay comparable.
+ *
+ * Join is by exact Region_Name match against geonames city names. Local
+ * authorities that are towns (Burnley, Luton) match; towns inside larger
+ * authorities stay on the proxy tier, which the per-candidate tier records.
+ * The London candidate matches HPI's 'London' region row.
+ */
+const hpiRaw = await fetchCached(
+  'http://publicdata.landregistry.gov.uk/market-trend-data/house-price-index-data/Average-prices-2025-05.csv',
+  'uk-hpi-averages.csv',
+)
+const hpi = new Map<string, number>()
+{
+  let latest = ''
+  const rows: Array<[string, string, number]> = []
+  for (const line of hpiRaw.toString('utf8').split('\n')) {
+    const f = line.split(',')
+    if (f.length < 4 || f[0] === 'Date') continue
+    const price = Number(f[3])
+    if (!Number.isFinite(price) || price <= 0) continue
+    rows.push([f[0], f[1], price])
+    if (f[0] > latest) latest = f[0]
+  }
+  for (const [date, name, price] of rows) if (date === latest) hpi.set(name, price)
+  console.log(`  land registry HPI: ${hpi.size} areas at ${latest}`)
+}
+/** GBP -> k-EUR at a stated rate, so the index shares the WOZ unit. */
+const GBP_EUR = 1.17
+
 // -- the NL tier-1 join -------------------------------------------------------
 const nl = JSON.parse(await readFile(NL_LAYER, 'utf8')) as {
   settlements: Array<{
@@ -208,6 +243,22 @@ const candidates: GlobalCandidate[] = cities.map((c) => {
       }
     }
   }
+  if (c.country === 'GB') {
+    const price = hpi.get(c.name)
+    if (price !== undefined) {
+      return {
+        id: c.id,
+        name: c.name,
+        country: c.country,
+        lat: c.lat,
+        lon: c.lon,
+        population: c.population,
+        valueIndex: +(((price / 1000) * GBP_EUR) / wozMedian).toFixed(3),
+        valueTier: 'national-valuation' as const,
+        stockTier: 'absent' as const,
+      }
+    }
+  }
   const p = proxyValue(c.country, c.population)
   return {
     id: c.id,
@@ -226,8 +277,11 @@ const layer: GlobalCoarseLayer = {
   builtAt: new Date().toISOString().slice(0, 10),
   source:
     'geonames cities15000 (settlements, population); World Bank NY.GDP.PCAP.CD (proxy tier); ' +
-    'CBS 85036NED via the NL municipal layer (tier-1 valuations)',
-  licence: 'CC BY 4.0 throughout — geonames.org, worldbank.org, CBS',
+    'CBS 85036NED via the NL municipal layer (NL tier-1); HM Land Registry UK HPI average ' +
+    'prices, GBP converted at 1.17 EUR/GBP (GB tier-1)',
+  licence:
+    'CC BY 4.0 (geonames, World Bank, CBS); OGL v3 — contains HM Land Registry data ' +
+    '(c) Crown copyright and database right 2025',
   gdpYear,
   candidates,
 }
@@ -312,6 +366,20 @@ check(
   'value: Amsterdam > Heerlen (real WOZ, not proxy)',
   `${v('Amsterdam', 'NL')} vs ${v('Heerlen', 'NL')}`,
 )
+// §33.4: the seed city that migration will weigh is on real data
+check(
+  find('London', 'GB')?.valueTier === 'national-valuation',
+  'London carries land-registry valuation, not proxy',
+  find('London', 'GB')?.valueTier ?? 'MISSING',
+)
+check(
+  find('Burnley', 'GB')?.valueTier === 'national-valuation' &&
+    v('London', 'GB') > v('Burnley', 'GB'),
+  'value: London > Burnley (both land-registry reals)',
+  `${v('London', 'GB')} vs ${v('Burnley', 'GB')}`,
+)
+const gbTier1 = s.filter((x) => x.country === 'GB' && x.valueTier === 'national-valuation').length
+console.log(`  GB candidates on land-registry valuations: ${gbTier1}`)
 
 if (failures) throw new Error(`${failures} canary/canaries failed against the emitted global layer.`)
 console.log('\nall global-layer canaries passed')
