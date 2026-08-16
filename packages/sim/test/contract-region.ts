@@ -12,7 +12,23 @@
  * international, and the schiedam control's regression suite is the guard for
  * the whole block.
  */
-import { moransI, type MoranPoint } from '@civ/core'
+import { moransI, type MoranPoint, type ValueTier } from '@civ/core'
+
+/**
+ * RE-REGISTRATION (build 8, §32, before any region run): three amendments
+ * directed by the operator after the coarse layer landed, none loosening.
+ *
+ *   §32.1  the region world runs with the boundary gate ON, and the control
+ *          baseline is measured gate-on by the same harness — an ungated
+ *          ruler was measured diluting Moran's I by ~2x with perimeter
+ *          artifact.
+ *   §32.2  standing rule: no migration is emergence if the destination's
+ *          advantage exists only in proxied fields. Migration events carry
+ *          the destination's value tier; the gap report line shows it.
+ *   §32.3  the population-leader assertion is evaluated within-country —
+ *          geonames whole-municipality entries over-weight some countries'
+ *          leaders, and a cross-country comparison could satisfy it for free.
+ */
 
 // ---------------------------------------------------------------------------
 // pre-registered constants
@@ -38,6 +54,9 @@ export const MAX_ACTIVE_ABANDONED_FLIPS = 2
 /** §30.2's flow bar, shared with the single-chunk suite. */
 export const CHAIN_FLOW_BAR_PER_10K = 4
 
+/** §32.1: the region world's rules, pre-registered. */
+export const REGION_RULES = { boundaryGate: true } as const
+
 // ---------------------------------------------------------------------------
 // the shape the region harness must produce
 // ---------------------------------------------------------------------------
@@ -50,6 +69,8 @@ export interface MigrationEvent {
   arrivedTick?: number
   /** §30.4: offered-yield gap origin -> destination estimate at departure */
   offeredGap: number
+  /** §32.2: where the destination's coarse value came from, carried per event */
+  destinationValueTier: ValueTier
   reversed: boolean
 }
 
@@ -64,6 +85,8 @@ export interface RegionRunSummary {
   activityBySettlement: Record<string, number>
   /** day-0 population per settlement, from the coarse layer */
   populationBySettlement: Record<string, number>
+  /** country per settlement, for §32.3's within-country evaluation */
+  countryBySettlement: Record<string, string>
   migrations: MigrationEvent[]
   /** per chunk: count of active->abandoned transitions */
   abandonmentFlips: Record<string, number>
@@ -120,28 +143,97 @@ export function assertContract(runs: RegionRunSummary[]): ContractResult[] {
   }
   assert(!allIdentical, 'the set of materialised settlements varies across seeds', '')
 
-  const winnerNotBiggest = runs.filter((r) => {
-    const winner = Object.entries(r.activityBySettlement).sort((a, b) => b[1] - a[1])[0]?.[0]
-    const biggest = Object.entries(r.populationBySettlement).sort((a, b) => b[1] - a[1])[0]?.[0]
-    return winner !== undefined && winner !== biggest
+  /**
+   * §32.3: evaluated within-country. Cross-country population comparisons ride
+   * on geonames' mixed city-proper/whole-municipality semantics, so a Chinese
+   * whole-municipality entry could hold "the largest" forever and satisfy the
+   * cross-country form for free. Within one country the semantics are
+   * consistent and the comparison means what it says.
+   *
+   * A run is evaluable only where some country has at least two materialised
+   * settlements — with one chunk per country the seed CHOICE would otherwise
+   * decide the answer, not the sim. Runs without an evaluable country are
+   * reported loudly rather than counted as passes.
+   */
+  const evaluable = runs.filter((r) => {
+    const byCountry = new Map<string, number>()
+    for (const m of r.materialised) {
+      const c = r.countryBySettlement[m]
+      if (c) byCountry.set(c, (byCountry.get(c) ?? 0) + 1)
+    }
+    return [...byCountry.values()].some((n) => n >= 2)
   })
-  assert(
-    winnerNotBiggest.length >= runs.length / 4,
-    'most active settlement is not the largest in >= 1/4 of seeds',
-    `${winnerNotBiggest.length}/${runs.length}`,
-  )
+  if (evaluable.length === 0) {
+    report(
+      'within-country population-leader test NOT EVALUABLE',
+      'no country has 2+ materialised settlements yet — not counted as a pass',
+    )
+  } else {
+    const hit = evaluable.filter((r) => {
+      const byCountry = new Map<string, string[]>()
+      for (const m of r.materialised) {
+        const c = r.countryBySettlement[m]
+        if (!c) continue
+        const arr = byCountry.get(c)
+        if (arr) arr.push(m)
+        else byCountry.set(c, [m])
+      }
+      for (const [country, ids] of byCountry) {
+        if (ids.length < 2) continue
+        const winner = ids.sort(
+          (x, y) => (r.activityBySettlement[y] ?? 0) - (r.activityBySettlement[x] ?? 0),
+        )[0]
+        const leader = Object.entries(r.populationBySettlement)
+          .filter(([id]) => r.countryBySettlement[id] === country)
+          .sort((x, y) => y[1] - x[1])[0]?.[0]
+        if (winner !== undefined && leader !== undefined && winner !== leader) return true
+      }
+      return false
+    })
+    assert(
+      hit.length >= evaluable.length / 4,
+      'within-country: most active is not the population leader (>= 1/4 of evaluable seeds)',
+      `${hit.length}/${evaluable.length} evaluable of ${runs.length}`,
+    )
+  }
 
   const reversed = runs.map((r) => r.migrations.filter((m) => m.reversed).length)
   report(
     'reversed migrations per seed (>0 expected; 0 means the estimate is too accurate, §28.1)',
     reversed.join(', '),
   )
-  const gaps = runs.flatMap((r) => r.migrations.map((m) => m.offeredGap))
+  /**
+   * §32.2, standing rule: a migration to a destination whose entire coarse
+   * appeal is proxied fields is the formula talking, not emergence. The gap
+   * report carries the destination tier per event class so the rule is
+   * checkable per event; emergence-grade counts only non-proxy destinations.
+   */
+  const byTier = new Map<string, number[]>()
+  for (const m of runs.flatMap((r) => r.migrations)) {
+    const arr = byTier.get(m.destinationValueTier)
+    if (arr) arr.push(m.offeredGap)
+    else byTier.set(m.destinationValueTier, [m.offeredGap])
+  }
   report(
-    'offered-yield gap at migration events',
-    gaps.length
-      ? `median ${gaps.sort((a, b) => a - b)[gaps.length >> 1].toFixed(4)} over ${gaps.length}`
+    'offered-yield gap at migration, by destination value tier',
+    byTier.size
+      ? [...byTier.entries()]
+          .map(
+            ([t, g]) =>
+              `${t}: median ${[...g].sort((a, b) => a - b)[g.length >> 1].toFixed(4)} x${g.length}`,
+          )
+          .join('  ')
       : 'no migrations',
+  )
+  const emergenceGrade = runs.map(
+    (r) =>
+      r.migrations.filter(
+        (m) => !m.reversed && m.destinationValueTier === 'national-valuation',
+      ).length,
+  )
+  report(
+    'emergence-grade migrations per seed (destination value not proxy-only, §32.2)',
+    emergenceGrade.join(', '),
   )
   // §31.6's stated prediction, recorded to be falsified: the first migration
   // in the multi-chunk world originates in schiedam, the only chunk with a

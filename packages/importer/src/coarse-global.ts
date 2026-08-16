@@ -32,7 +32,7 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const OUT = join(HERE, '../../client/public/world/coarse/global.json')
 const NL_LAYER = join(HERE, '../../client/public/world/coarse/nl.json')
 
-export type ValueTier = 'national-valuation' | 'gdp-proxy' | 'absent'
+import type { ValueTier } from '@civ/core'
 
 export interface GlobalCandidate {
   /** 'gn-<geonameid>' */

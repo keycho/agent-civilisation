@@ -306,6 +306,21 @@ voxcity run below is plumbing rather than a visual result.
 
 ---
 
+## Deploying it
+
+Manual, from the consoles — no CLI or token is needed. The full walkthrough
+with health checks is [docs/deploy.md](docs/deploy.md); the short form:
+
+1. **Supabase**: create a project, take the *transaction pooler* string (6543).
+2. **Railway**: deploy this repo. Set `DATABASE_URL` (the pooler string),
+   `CHUNK=schiedam-havens`, `THROUGHPUT=2`, `RETAIN_SEASONS=4`. Railway sets
+   `PORT`. Confirm `curl https://<app>.railway.app/health` reads
+   `"durability":"postgres"`.
+3. **Vercel**: deploy the same repo (`vercel.json` carries the build). Set
+   `VITE_SERVER_URL=wss://<app>.railway.app` — `wss://`, not `ws://`, or the
+   browser refuses the mixed connection. `?server=wss://…` overrides at
+   runtime.
+
 ## Architecture
 
 ```

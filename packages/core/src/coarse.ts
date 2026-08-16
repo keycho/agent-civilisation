@@ -16,6 +16,16 @@
  * the rule for the rest of the record too.
  */
 
+/**
+ * §31.2 / §32.2: where a coarse value came from. 98.6% of the world is
+ * currently 'gdp-proxy', which makes the proxy the world model rather than a
+ * fallback — and the §32.2 standing rule binds: no migration finding may be
+ * reported as emergence if the destination's advantage exists only in proxied
+ * fields. The tier travels with every value so that rule is checkable per
+ * event rather than argued later.
+ */
+export type ValueTier = 'national-valuation' | 'gdp-proxy' | 'absent'
+
 export interface CoarseSettlement {
   /** CBS region code, e.g. GM0606 */
   id: string

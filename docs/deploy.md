@@ -17,8 +17,10 @@ health check at `/health`.
 
 ```
 DATABASE_URL     the Supabase pooler string
+CHUNK            schiedam-havens (which world this server runs; one server, one chunk)
 THROUGHPUT       2 (normal). 0 pauses, 4 is surge.
 RETAIN_SEASONS   4
+RNG_SEED         any string; changing it changes the world's evolution
 ```
 
 `PORT` is set by Railway. Everything else has a default; `packages/server/README.md`
