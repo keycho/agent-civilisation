@@ -27,15 +27,15 @@ for (const chunk of CHUNKS) {
   await page.goto(`http://127.0.0.1:5173/?chunk=${chunk}`, { waitUntil: 'domcontentloaded' })
   await page.waitForFunction(() => window.civ != null, null, { timeout: 120000 })
   await page.waitForTimeout(3000)
-  await page.evaluate(() => document.getElementById('watchBtn')?.click())
   await page.evaluate(() => {
+    document.getElementById('watchBtn')?.click()
+    // chrome off by class alone — the 'a' toggle re-arms the director, which
+    // would cut to a shot under the capture
+    document.body.classList.add('ambient')
     window.civ.director.enabled = false
     window.civ.ui.home()
   })
-  await page.waitForTimeout(2400)
-  // ambient hides every pane and both bars — the status line is covered
-  await page.keyboard.press('a')
-  await page.waitForTimeout(900)
+  await page.waitForTimeout(2800)
   await page.screenshot({ path: `${OUT}/${chunk}.png` })
   console.log(`${chunk} -> ${OUT}/${chunk}.png`)
   await page.close()

@@ -177,6 +177,30 @@ ownable denominator — the §33.1 silent-shrinkage caveat applies, so the
 count stays in the import log and here. The 32 perimeter blocks that did
 split radially conserved area within the asserted ±4%.
 
+## 2g. Tokyo: both predictions land, and the ceiling inverts with the grain
+
+The strangest-parcels prediction confirmed measurably at both sizes: 70% of
+parcels vacant, 288 self-intersecting candidates dropped, one block per
+building at the first radius — the alley grain defeats face derivation, and
+the orphan-synthesis fallback carries the fabric. The §2 ratio check failed
+at 300 m (253 buildings) and its instruction was followed before anything
+was tuned: 400 m gives 446, in band. The axis prediction confirmed too:
+peak share 4.5% against the 6% bar, the top four directions within half a
+point of each other — genuinely axis-less fabric, north cut final. Both
+§31.6 axis predictions therefore landed as registered (brooklyn cleared at
+21.4%, tokyo failed at 4.5%).
+
+jp osm carries essentially no height signal here (tag match 1 of 409);
+heightSource is estimated chunk-wide and the manifest says so. Income-only
+viability 35.4% — the deepest conversion dependence of the five.
+
+Admission under §41.2: ADMITTED, stable dark 2.9% (11 buildings). The
+capital-ceiling reading completes a five-chunk arc: fine-grain fabric has
+almost no ceiling class (4 buildings — but median 2,501 m2, enumerated at
+323% of touched, the most extreme enumerated-never-chosen anywhere), while
+the perimeter-block fabric (paris) has the deepest. The ceiling is a
+property of the fabric's atomic capital unit, exactly as §41.3 framed it.
+
 ## 2e. US data carries no construction years (§18.4 note, recorded at import)
 
 What the year signal feeds: startingCondition (flattens to 0.7 without it),
