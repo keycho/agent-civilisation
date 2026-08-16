@@ -48,6 +48,39 @@ export interface BaselineBuilding {
    * §31.5 import-health manifest reports the split per chunk.
    */
   heightSource?: 'measured' | 'estimated'
+  /**
+   * §42.2: what makes this building a landmark, when something does. Flagged
+   * at import from OSM tags; the generator spends bespoke silhouette craft on
+   * exactly these classes, the economics prices them expensive and
+   * conversion-limited (never blanket-protected — a church converting to a
+   * workshop is a legitimate high-weight feed event), and events on them ride
+   * cinematic weight. `untouchable` marks the small per-chunk list that never
+   * enters the market at all.
+   */
+  landmark?: { class: LandmarkClass; untouchable?: boolean }
+}
+
+/** §42.2: the landmark classes the importer recognises from OSM tags. */
+export const LANDMARK_CLASSES = [
+  'historic',
+  'gasholder',
+  'water_tower',
+  'crane',
+  'church',
+  'station',
+] as const
+export type LandmarkClass = (typeof LANDMARK_CLASSES)[number]
+
+/**
+ * §42.2: linear landmarks — the petite ceinture cutting, a canal basin edge —
+ * carried as their own seed layer so the ground treatment is theirs rather
+ * than generic road or water.
+ */
+export interface LandmarkLine {
+  class: 'rail' | 'canal'
+  /** chunk-local metres */
+  path: Array<[number, number]>
+  name?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -87,6 +120,8 @@ export interface Building {
   areaM2: number
   /** rent-equivalent produced per tick at condition 1 */
   yieldPerTick: number
+  /** §42.2: carried from the baseline; agent-built stock never has one */
+  landmark?: { class: LandmarkClass; untouchable?: boolean }
 }
 
 export interface Parcel {
@@ -198,6 +233,8 @@ export interface WorldSeed {
   parcels: Parcel[]
   substrate: Substrate
   districts: DistrictSeed[]
+  /** §42.2: linear landmarks with their own ground treatment */
+  landmarkLines?: LandmarkLine[]
   provenance: Provenance[]
   stats: Record<string, number | string | Record<string, number>> & {
     /** §31.5: per-chunk import health, recorded in the artifact */

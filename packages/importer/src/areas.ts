@@ -28,6 +28,13 @@ export interface AreaDef {
    * each by its length so arterials outvote alleys, and take the peak.
    */
   bearingDeg?: number
+  /**
+   * §42.2: the small per-chunk untouchable list — osm ids (way/N, relation/N)
+   * of landmarks that never enter the market at all. Everything else flagged
+   * as a landmark stays acquirable, expensive and conversion-limited. Lists
+   * are hand-authored from the import log's flagged set, never inferred.
+   */
+  untouchable?: string[]
   note: string
 }
 

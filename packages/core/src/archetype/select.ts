@@ -1,4 +1,5 @@
 import type { ArchetypeId, BuildingSource, Purpose, Ring } from '../types.ts'
+import type { LandmarkClass } from '../world.ts'
 import { type FootprintMetrics, footprintMetrics } from '../geo/polygon.ts'
 
 /** What 3DBAG's `b3_dak_type` tells us about the real roof. */
@@ -21,6 +22,8 @@ export interface ArchetypeInput {
    * pre-§31.6-4 caller was getting.
    */
   country?: string
+  /** §42.2: landmark class routes to the bespoke silhouettes before any rule */
+  landmarkClass?: LandmarkClass
   /** precomputed to avoid recomputing the OBB twice */
   metrics?: FootprintMetrics
 }
@@ -60,6 +63,26 @@ export function selectArchetype(input: ArchetypeInput): ArchetypeChoice {
     if (area >= 800 && h < 14) return pick('agent_hall', `agent build, ${area.toFixed(0)}m2 floorplate`)
     if (aspect >= 2.4 && h >= 9) return pick('agent_slab', `agent build, aspect ${aspect.toFixed(1)}`)
     return pick('agent_block', 'agent build')
+  }
+
+  /**
+   * §42.2: landmarks get their silhouette regardless of any other rule — a
+   * gasholder must read as a gasholder. `historic` carries no form of its
+   * own; it keeps the fabric rules and rides economics and weight instead.
+   */
+  switch (input.landmarkClass) {
+    case 'gasholder':
+      return pick('gasholder', 'landmark: gasholder')
+    case 'water_tower':
+      return pick('water_tower', 'landmark: water tower')
+    case 'crane':
+      return pick('crane', 'landmark: crane')
+    case 'station':
+      return pick('station_shed', 'landmark: station')
+    case 'church':
+      return pick('civic', 'landmark: church')
+    default:
+      break
   }
 
   // -- inherited fabric
@@ -237,6 +260,13 @@ export function selectRoof(
     // still wins where osm says so.
     case 'machiya_row':
       return flatEvidence ? 'parapet' : 'shallow'
+    // §42.2: landmark forms own their tops in the generator
+    case 'gasholder':
+    case 'water_tower':
+    case 'crane':
+      return 'flat'
+    case 'station_shed':
+      return 'gable'
     default:
       return 'gable'
   }

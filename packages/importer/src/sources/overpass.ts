@@ -132,6 +132,19 @@ out geom tags;`
 }
 
 /** Landcover the substrate swap (§10) will eventually own, kept as a patchable layer. */
+/**
+ * §42.2: linear landmarks. Working, disused and dismantled rail all count —
+ * the petite ceinture is exactly the disused case, and a razed alignment
+ * that still shapes the fabric is worth its ground treatment.
+ */
+export function queryRail(b: Bbox): string {
+  return `[out:json][timeout:180];
+(
+  way["railway"~"^(rail|disused|abandoned|razed|narrow_gauge|light_rail)$"](${bboxStr(b)});
+);
+out geom tags;`
+}
+
 export function queryLandcover(b: Bbox): string {
   return `[out:json][timeout:180];
 (

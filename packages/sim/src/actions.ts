@@ -290,6 +290,9 @@ function emit(world: World, type: EventType, opts: EmitOptions): void {
     if (b.constructionYear && b.constructionYear < 1940) weight += 12
     if (b.name) weight += 10
     weight += Math.min(20, Math.round(floorArea(b) / 220))
+    // §42.2: anything happening to a landmark is worth watching — the class
+    // rides cinematic weight so the director and changelog favour it
+    if (b.landmark) weight += 24
   }
   world.store.appendEvent({
     chunkId: world.chunkId,

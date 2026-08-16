@@ -98,6 +98,18 @@ export function generateArchetype(
     case 'machiya_row':
       machiyaRow(ctx)
       break
+    case 'gasholder':
+      gasholder(ctx)
+      break
+    case 'water_tower':
+      waterTower(ctx)
+      break
+    case 'crane':
+      craneForm(ctx)
+      break
+    case 'station_shed':
+      stationShed(ctx)
+      break
     case 'agent_block':
       agentBlock(ctx)
       break
@@ -506,6 +518,121 @@ function mansardBlock(ctx: FormCtx): void {
   } else {
     parapet(b, ring, h, 0.7, 0.35)
   }
+}
+
+// ---------------------------------------------------------------------------
+// §42.2: landmark silhouettes — bespoke craft on exactly these classes
+// ---------------------------------------------------------------------------
+
+/** A regular n-gon ring around a centre — the landmark forms are round things. */
+function ngon(c: [number, number], r: number, n = 12): Ring {
+  const out: Ring = []
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2
+    out.push([c[0] + Math.cos(a) * r, c[1] + Math.sin(a) * r])
+  }
+  return out
+}
+
+/**
+ * The gasholder: a drum inside an open guide frame. The frame reads as
+ * standards (thin corner columns) with two ring girders; the drum sits at
+ * partial height, the way a real holder rarely sits full.
+ */
+function gasholder(ctx: FormCtx): void {
+  const { b, h, metrics, rng } = ctx
+  const c: [number, number] = [metrics.obb.cx, metrics.obb.cy]
+  const r = Math.min(metrics.obb.width, metrics.obb.length) * 0.46
+  const drumH = h * (0.45 + rng() * 0.25)
+  const drum = ngon(c, r * 0.9, 14)
+  b.wallBand(drum, 0, drumH, ROLE_WALL)
+  b.cap(drum, drumH, ROLE_ROOF)
+  // guide standards: eight thin columns on the frame circle
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2
+    const px = c[0] + Math.cos(a) * r
+    const py = c[1] + Math.sin(a) * r
+    const s = 0.55
+    const col: Ring = [
+      [px - s, py - s],
+      [px + s, py - s],
+      [px + s, py + s],
+      [px - s, py + s],
+    ]
+    b.wallBand(col, 0, h, ROLE_TRIM)
+    b.cap(col, h, ROLE_TRIM)
+  }
+  // two ring girders
+  for (const gh of [h * 0.55, h]) {
+    const ring = ngon(c, r + 0.35, 16)
+    b.wallBand(ring, gh - 0.35, gh, ROLE_TRIM)
+  }
+}
+
+/** The water tower: a slim shaft under a wider tank, capped shallow. */
+function waterTower(ctx: FormCtx): void {
+  const { b, h, metrics } = ctx
+  const c: [number, number] = [metrics.obb.cx, metrics.obb.cy]
+  const rTank = Math.min(metrics.obb.width, metrics.obb.length) * 0.45
+  const rShaft = rTank * 0.55
+  const tankTop = Math.max(h, 12)
+  const tankH = Math.max(3.5, tankTop * 0.3)
+  b.wallBand(ngon(c, rShaft, 10), 0, tankTop - tankH, ROLE_WALL)
+  const tank = ngon(c, rTank, 12)
+  b.wallBand(tank, tankTop - tankH, tankTop, ROLE_GROUND_FLOOR)
+  b.cap(tank, tankTop, ROLE_ROOF)
+  cornice(b, tank, tankTop - tankH + 0.2, 0.25, 0.2)
+}
+
+/**
+ * The crane: a mast with a long jib and a short counter-jib, read at chunk
+ * scale as the working waterfront's signature. The footprint anchors the
+ * mast; the jib runs down the OBB's long axis.
+ */
+function craneForm(ctx: FormCtx): void {
+  const { b, h, metrics } = ctx
+  const c: [number, number] = [metrics.obb.cx, metrics.obb.cy]
+  const mastH = Math.max(h, 16)
+  const s = 1.1
+  const mast: Ring = [
+    [c[0] - s, c[1] - s],
+    [c[0] + s, c[1] - s],
+    [c[0] + s, c[1] + s],
+    [c[0] - s, c[1] + s],
+  ]
+  b.wallBand(mast, 0, mastH, ROLE_TRIM)
+  b.cap(mast, mastH, ROLE_TRIM)
+  // jib: a long thin box just under the mast top, down the long axis
+  const jibLen = Math.max(metrics.obb.length * 0.85, 12)
+  const jib: Ring = [
+    obbPoint(metrics.obb, -jibLen * 0.25, -0.6),
+    obbPoint(metrics.obb, jibLen * 0.75, -0.6),
+    obbPoint(metrics.obb, jibLen * 0.75, 0.6),
+    obbPoint(metrics.obb, -jibLen * 0.25, 0.6),
+  ]
+  b.prism(jib, mastH - 1.4, mastH - 0.4, ROLE_TRIM, ROLE_TRIM)
+  // cab under the jib at the mast
+  const cab = ngon(c, 1.9, 8)
+  b.wallBand(cab, mastH - 3.2, mastH - 1.4, ROLE_GROUND_FLOOR)
+}
+
+/** The station shed: one long glazed-ridge gable over open ends. */
+function stationShed(ctx: FormCtx): void {
+  const { b, ring, h, metrics } = ctx
+  const eaves = Math.max(4.5, h * 0.6)
+  walls(b, ring, eaves, 4.5)
+  gableRoof(b, metrics.obb, eaves, Math.max(2.5, h - eaves), 0.5)
+  // the ridge lantern: a raised glazed strip, expressed as a trim band
+  const hw = metrics.obb.width * 0.12
+  const hl = metrics.obb.length * 0.42
+  const lantern: Ring = [
+    obbPoint(metrics.obb, -hl, -hw),
+    obbPoint(metrics.obb, hl, -hw),
+    obbPoint(metrics.obb, hl, hw),
+    obbPoint(metrics.obb, -hl, hw),
+  ]
+  b.wallBand(lantern, h - 0.4, h + 1.1, ROLE_TRIM)
+  b.cap(lantern, h + 1.1, ROLE_ROOF)
 }
 
 // ---------------------------------------------------------------------------

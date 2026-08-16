@@ -437,12 +437,22 @@ export function buildingValue(world: World, b: Building): number {
   return land + structure
 }
 
+/**
+ * §42.2: a landmark trades at a premium and converts at a multiple — real
+ * heritage economics without blanket protection. The numbers are stated here
+ * once: acquiring costs 2.2x, converting costs 3x the ordinary rate. A church
+ * that still becomes a workshop earned its high-weight feed event.
+ */
+export const LANDMARK_PRICE_MULT = 2.2
+export const LANDMARK_CONVERT_MULT = 3
+
 export function acquisitionPrice(world: World, b: Building): number {
   const c = centroidFast(b)
   return (
     buildingValue(world, b) *
     (1 + ECONOMY.acquisitionPremium) *
-    competitionPremium(world, c[0], c[1])
+    competitionPremium(world, c[0], c[1]) *
+    (b.landmark ? LANDMARK_PRICE_MULT : 1)
   )
 }
 
@@ -616,7 +626,7 @@ export function renovationCost(b: Building): number {
 }
 
 export function conversionCost(b: Building): number {
-  return floorArea(b) * ECONOMY.convertCostPerM2
+  return floorArea(b) * ECONOMY.convertCostPerM2 * (b.landmark ? LANDMARK_CONVERT_MULT : 1)
 }
 
 export function demolitionCost(b: Building): number {

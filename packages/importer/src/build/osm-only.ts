@@ -34,6 +34,7 @@ import {
 import type { OsmElement } from '../sources/overpass.ts'
 import { purposeFromTags } from './purpose.ts'
 import type { BuildingsResult } from './buildings.ts'
+import { landmarkClassOf } from './landmarks.ts'
 import { readsAsPerimeter, splitPerimeter } from './perimeter.ts'
 
 const SIMPLIFY_TOLERANCE_M = 0.28
@@ -193,7 +194,7 @@ export function buildFromOsm(
   frame: ChunkFrame,
   chunkId: string,
   clip: { minX: number; minY: number; maxX: number; maxY: number },
-  opts: { split?: boolean; country?: string } = {},
+  opts: { split?: boolean; country?: string; untouchable?: string[] } = {},
 ): BuildingsResult {
   const doSplit = opts.split !== false
   const frontageM = opts.country === 'US' ? PLOT_FRONTAGE_US_M : PLOT_FRONTAGE_M
@@ -239,6 +240,12 @@ export function buildFromOsm(
     // Purpose needs a height for its tower heuristics; give it the tagged one
     // or a provisional floor before the estimate exists.
     const purpose: Purpose = purposeFromTags(tags, a, taggedHeight ?? 6)
+    // §42.2: landmark class from the same tags, before any split — every
+    // piece of a split landmark row keeps the flag
+    const landmarkClass = landmarkClassOf(tags)
+    const untouchable =
+      landmarkClass !== undefined &&
+      (opts.untouchable ?? []).includes(`${el.type}/${el.id}`)
     const measured = taggedHeight !== undefined || taggedLevels !== undefined
     if (measured) matched++
     else unmatched++
@@ -273,6 +280,7 @@ export function buildFromOsm(
         constructionYear,
         source: 'real_world',
         country: opts.country,
+        landmarkClass,
         // no national roof dataset here: the archetype selector treats roof
         // form as a hint, absent is a supported value (§31.2)
         roofHint: 'unknown',
@@ -300,6 +308,9 @@ export function buildFromOsm(
         roofHint: 'unknown' as RoofHint,
         name: k === 0 ? tags.name : undefined,
         heightSource: measured ? 'measured' : 'estimated',
+        landmark: landmarkClass
+          ? { class: landmarkClass, ...(untouchable ? { untouchable: true } : {}) }
+          : undefined,
       })
     }
   }

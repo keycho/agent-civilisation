@@ -242,6 +242,7 @@ export function buildingDetail(sim: Simulation, id: string, history: WorldEvent[
       const plan = owner ? w.activePlan(owner) : undefined
       return plan ? describeIntent(plan) : undefined
     })(),
+    landmark: b.landmark,
     baseline: baselineSeed
       ? { purpose: baselineSeed.purpose, levels: baselineSeed.levels, bagId: baselineSeed.bagId }
       : undefined,

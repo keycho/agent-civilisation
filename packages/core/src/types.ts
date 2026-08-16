@@ -81,6 +81,11 @@ export const ARCHETYPES = [
   'mansard_block',
   // §31.6-4c: the jp family — shitamachi fine grain, wood under grey tile
   'machiya_row',
+  // §42.2: landmark silhouettes — bespoke craft on exactly these classes
+  'gasholder',
+  'water_tower',
+  'crane',
+  'station_shed',
   // agent vocabulary — flat roofs, cleaner geometry, larger floorplates
   'agent_block',
   'agent_slab',

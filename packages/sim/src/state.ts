@@ -447,10 +447,23 @@ export class World {
         name: b.name,
         areaM2,
         yieldPerTick: 0,
+        landmark: b.landmark,
       })
     }
 
     for (const p of seed.parcels) this.parcels.set(p.id, { ...p })
+    /**
+     * §42.2: the untouchable list, applied like the boundary gate — the parcel
+     * under an untouchable landmark leaves the developable set at load, so it
+     * never enters the market at all. The list is small and per-chunk; every
+     * other landmark stays acquirable, expensive and conversion-limited.
+     */
+    for (const b of this.buildings.values()) {
+      if (b.landmark?.untouchable && b.parcelId) {
+        const p = this.parcels.get(b.parcelId)
+        if (p) p.developable = false
+      }
+    }
     /**
      * §30.3: the boundary gate, applied once at load rather than checked at
      * nine read sites. The importer flags parcels within the boundary margin of

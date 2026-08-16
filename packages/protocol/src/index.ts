@@ -193,6 +193,8 @@ export interface BuildingDetail {
   ownerTraits?: { risk: number; horizon: number; intensity: number }
   /** §23.3: what the owner is currently trying to do with it */
   ownerIntent?: string
+  /** §42.2: the landmark class, when the building carries one */
+  landmark?: { class: string; untouchable?: boolean }
   baseline?: { purpose: string; levels: number; bagId?: string }
   lineage: Array<{ label: string; text: string }>
   history: Array<{ label: string; text: string }>

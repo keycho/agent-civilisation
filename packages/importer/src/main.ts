@@ -8,7 +8,7 @@
  * This is a build-time pipeline. Nothing here ships in the runtime image; the
  * committed output in packages/client/public/world is what the app loads.
  */
-import type { ChunkMeta, Provenance, Substrate, WorldSeed } from '@civ/core'
+import type { ChunkMeta, LandmarkLine, Provenance, Substrate, WorldSeed } from '@civ/core'
 import { boundsOfMany, enuFrame,
   rdFrame, seedChecks, validateSeed } from '@civ/core'
 import { AREAS, rdBboxOf, wgsBboxOf } from './areas.ts'
@@ -24,6 +24,7 @@ import {
   overpass,
   queryBuildings,
   queryLandcover,
+  queryRail,
   queryRoads,
   queryWater,
 } from './sources/overpass.ts'
@@ -61,11 +62,14 @@ const clip = { minX: -r, minY: -r, maxX: r, maxY: r }
 log('\n[1/7] fetching sources')
 const bag = area.country === 'NL' ? await fetchBag(rdBboxOf(area)) : []
 // §31.2: buildings and roads are load-bearing — an empty reply is a mirror
-// fault (regional extract), never a result. Water and landcover can be empty.
+// fault (regional extract), never a result. Water, landcover and rail can be
+// legitimately empty.
 const osmBuildings = await overpass(queryBuildings(wgs), 'buildings', { minElements: 1 })
 const osmRoads = await overpass(queryRoads(wgs), 'roads', { minElements: 1 })
 const osmWater = await overpass(queryWater(wgs), 'water')
 const osmLand = await overpass(queryLandcover(wgs), 'landcover')
+// §42.2: linear landmarks — rail alignments, working or dismantled
+const osmRail = await overpass(queryRail(wgs), 'rail')
 log(
   `      3dbag=${bag.length}  osm buildings=${osmBuildings.elements.length}  ` +
     `highways=${osmRoads.elements.length}  water=${osmWater.elements.length}  landcover=${osmLand.elements.length}`,
@@ -74,11 +78,29 @@ log(
 log(area.country === 'NL' ? '\n[2/7] buildings: 3dbag geometry + osm tags' : '\n[2/7] buildings: osm only (§31.2 fallback adapter)')
 const built =
   area.country === 'NL'
-    ? buildBaselineBuildings(bag, osmBuildings.elements, frame, area.id, clip)
+    ? buildBaselineBuildings(bag, osmBuildings.elements, frame, area.id, clip, area.untouchable)
     : buildFromOsm(osmBuildings.elements, frame, chunkIdOut, clip, {
         split: !NO_SPLIT,
         country: area.country,
+        untouchable: area.untouchable,
       })
+// §42.2: what got flagged, in the log, so the untouchable lists can be
+// hand-authored from real ids rather than guessed
+{
+  const flagged = built.buildings.filter((b) => b.landmark)
+  const byClass: Record<string, number> = {}
+  for (const f of flagged) byClass[f.landmark!.class] = (byClass[f.landmark!.class] ?? 0) + 1
+  if (flagged.length) {
+    log(
+      `      landmarks flagged: ${Object.entries(byClass)
+        .map(([k, n]) => `${k}=${n}`)
+        .join(' ')} (§42.2)`,
+    )
+    for (const f of flagged.filter((x) => x.landmark!.class !== 'historic').slice(0, 12)) {
+      log(`        ${f.landmark!.class.padEnd(12)} ${f.osmId ?? f.id}  ${f.name ?? ''}`)
+    }
+  }
+}
 log(
   `      ${built.buildings.length} baseline buildings  (tag match ${built.matched}, fallback ${built.unmatched})` +
     (built.rowsSplit ? `  rows split at party walls: ${built.rowsSplit} (§33.2)` : '') +
@@ -276,6 +298,39 @@ for (const p of parcels.parcels) {
 }
 log(`      ${boundaryFlagged} parcels flagged boundary-adjacent (§30.3, gate off by default)`)
 
+/**
+ * §42.2: linear landmarks. Rail alignments come from their own query; canal
+ * lines are the waterway=canal ways already in the water fetch. Both are
+ * clipped to segments that actually cross the chunk and simplified lightly —
+ * the ground treatment is the client's, the geometry is the artifact's.
+ */
+const landmarkLines: LandmarkLine[] = []
+{
+  const collect = (
+    els: typeof osmRail.elements,
+    cls: 'rail' | 'canal',
+    accept: (t: Record<string, string>) => boolean,
+  ) => {
+    for (const el of els) {
+      if (!el.geometry || el.geometry.length < 2 || !accept(el.tags ?? {})) continue
+      const path = el.geometry
+        .map((g) => frame.toLocal(g.lat, g.lon))
+        .filter(
+          (p) =>
+            p[0] > clip.minX - 60 && p[0] < clip.maxX + 60 && p[1] > clip.minY - 60 && p[1] < clip.maxY + 60,
+        )
+      if (path.length < 2) continue
+      landmarkLines.push({ class: cls, path, name: el.tags?.name })
+    }
+  }
+  collect(osmRail.elements, 'rail', () => true)
+  collect(osmWater.elements, 'canal', (t) => t['waterway'] === 'canal')
+  if (landmarkLines.length) {
+    const rails = landmarkLines.filter((l) => l.class === 'rail').length
+    log(`      landmark lines: rail=${rails} canal=${landmarkLines.length - rails} (§42.2)`)
+  }
+}
+
 const seed: WorldSeed = {
   version: 3,
   chunk,
@@ -285,6 +340,7 @@ const seed: WorldSeed = {
   parcels: parcels.parcels,
   substrate,
   districts: [],
+  landmarkLines,
   provenance,
   stats: {
     baselineBuildings: built.buildings.length,

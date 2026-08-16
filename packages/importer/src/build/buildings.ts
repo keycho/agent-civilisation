@@ -16,6 +16,7 @@ import {
 import type { OsmElement, OsmTags } from '../sources/overpass.ts'
 import type { BagBuilding } from '../sources/threedbag.ts'
 import { GridIndex, ringBounds } from '../util/grid.ts'
+import { landmarkClassOf } from './landmarks.ts'
 import { purposeFromTags } from './purpose.ts'
 
 /**
@@ -49,6 +50,7 @@ export function buildBaselineBuildings(
   frame: ChunkFrame,
   chunkId: string,
   clip: { minX: number; minY: number; maxX: number; maxY: number },
+  untouchableIds?: string[],
 ): BuildingsResult {
   // index the OSM footprints so the tag join is not 973 x 3030
   const index = new GridIndex<{ ring: Ring; tags: OsmTags; id: number }>(40)
@@ -102,6 +104,10 @@ export function buildBaselineBuildings(
     const purpose: Purpose = purposeFromTags(tags, a, heightM)
     const levels = b.levels && b.levels > 0 ? b.levels : Math.max(1, Math.round(heightM / 3.2))
     const roofHint = normaliseRoofHint(b.roofType)
+    // §42.2: landmark class from the joined osm tags — the NL path flags too
+    const landmarkClass = tags ? landmarkClassOf(tags) : undefined
+    const untouchable =
+      landmarkClass !== undefined && osmId !== undefined && (untouchableIds ?? []).includes(osmId)
 
     const choice = selectArchetype({
       footprint: ring,
@@ -111,6 +117,7 @@ export function buildBaselineBuildings(
       constructionYear: b.constructionYear ?? undefined,
       source: 'real_world',
       roofHint,
+      landmarkClass,
     })
 
     purposeCounts[purpose] = (purposeCounts[purpose] ?? 0) + 1
@@ -130,6 +137,9 @@ export function buildBaselineBuildings(
       archetype: choice.archetype,
       roofHint,
       name: tags?.name,
+      landmark: landmarkClass
+        ? { class: landmarkClass, ...(untouchable ? { untouchable: true } : {}) }
+        : undefined,
     })
   }
 

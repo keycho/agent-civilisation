@@ -41,6 +41,7 @@ import { TiltShiftPass } from './postfx/tiltShift.ts'
 import { AgentMarkers, OCCUPATION_COLOR, type AgentPresence } from './render/agents.ts'
 import { BuildingRenderer } from './render/buildingRenderer.ts'
 import { configureRenderer, createEnvironment } from './render/environment.ts'
+import { createLandmarkLines } from './render/landmarkLines.ts'
 import { createRoadMeshes } from './render/roadMesh.ts'
 import { ConstructionOverlay } from './render/scaffold.ts'
 import { createSubstrateView } from './render/substrateMesh.ts'
@@ -85,6 +86,11 @@ scene.add(buildings.group)
 const roads = createRoadMeshes(seed.roads.nodes, seed.roads.edges, substrate.heightAt, HALF_EXTENT)
 scene.add(roads.baseline)
 scene.add(roads.agent)
+
+// §42.2: linear landmarks — the petite ceinture reads as a cutting, not a road
+if (seed.landmarkLines?.length) {
+  scene.add(createLandmarkLines(seed.landmarkLines, substrate.heightAt))
+}
 
 const construction = new ConstructionOverlay()
 scene.add(construction.scaffold)
@@ -552,6 +558,15 @@ function showInspector(b: BuildingDetail): void {
     ['height:', `${(b.heightM ?? 0).toFixed(1)} m`],
     ['levels:', String(b.levels ?? 0)],
     ['archetype:', b.archetype ?? '·'],
+    // §42.2: a landmark says so, and says whether the market can reach it
+    ...(b.landmark
+      ? ([
+          [
+            'landmark:',
+            `${b.landmark.class.replace(/_/g, ' ')}${b.landmark.untouchable ? ' · untouchable' : ''}`,
+          ],
+        ] as Array<[string, string]>)
+      : []),
     ['condition:', `${((b.condition ?? 0) * 100).toFixed(0)}%`],
     ['owner:', b.ownerName ? `${b.ownerName} (gen ${b.ownerGeneration})` : 'unowned'],
     // §23.3: a real objective rather than a shrug
