@@ -216,6 +216,28 @@ waterfront superblocks. heightsReal 0.989 — the nyc doitt osm import carries
 measured heights, so the planned microsoft heights source is redundant for
 this area and stays unbuilt until a us area without that import shows up.
 
+## 2h. §42.2 landmarks: what the five extents actually carry, and the cost
+
+The classifier found churches and historic stock only: no gasholder, crane
+or station is mapped inside any of the five extents, and kyojima's pocket
+shrines carry no osm tags at all — the bespoke silhouettes (gasholder drum
+in its guide frame, tank on shaft, mast and jib, glazed-ridge shed) are
+wired and harness-proven but wait for fabric that carries them. Linear
+landmarks landed where promised: 38 rail lines on deptford, the petite
+ceinture (16) and the ourcq basin (2) on paris, 8 canal lines on schiedam.
+
+Untouchable lists: one principal anchor per chunk, hand-picked from the
+flag logs and verified in the artifacts — Sint-Jan-de-Doperkerk, St Luke's,
+Red Hook's tall church mass, Saint-Jacques Saint-Christophe. Tokyo's list
+is empty because nothing is flagged.
+
+The control suite passes after the economics change, with the cost stated:
+completed chains per run moved 8 -> 7, landing exactly on the §41.1 floor
+(five schiedam churches now price at 2.2x and one parcel left the market),
+and agent-built-on-consolidated-ground slipped to 7% against its 10% KNOWN
+bar. Neither is retuned here; the bar sitting at its floor is worth the
+operator's eye before anything else leans on the chain economy.
+
 ## 3. Block derivation starves in superblock fabric
 
 Schiedam: 9% of buildings fell outside every block face. London: 48% (227 of
