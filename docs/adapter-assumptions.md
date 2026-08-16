@@ -144,6 +144,31 @@ constant structural class with a fabric-dependent stochastic band; whether
 predicted dark should be re-specified against stable dark only is an
 operator re-registration decision. London holds at the gate until that call.
 
+Brooklyn is the third data point and the sharpest: admission FINDING at
+23.9 pts, and dark-rank names it the same way, stronger — stable dark 12.7%
+sits ABOVE touched stock in day-0 cap rank (median percentile 0.60 vs 0.47,
+only 12% in the bottom quartile), zero split pieces ever stably dark against
+36.2% of stock, median 136 m2 vs touched 48, and access correlates negative
+(-0.145): high-rate big waterfront assets a rate-ranked score loves and no
+agent can capitalise. Across three fabrics the structural dark class is
+never the rank tail — the §37.3 gap metric is measuring the capital ceiling
+plus the budget floor, and both chunks hold at the gate on one decision.
+
+## 2e. US data carries no construction years (§18.4 note, recorded at import)
+
+What the year signal feeds: startingCondition (flattens to 0.7 without it),
+fabricQuality (flattens to 0.78), and the pre-war demolition cinematic bonus
+(+12, never fires). Brooklyn's measured behaviour without it: the action mix
+holds against the control — renovate 25.4% vs 24.1%, convert 21.4% vs 23.8%,
+expand 25.2% vs 25.3% — because decay dynamics regenerate the condition
+gradient in-run; the §18.4-rework pricing carries the asymmetry without the
+year. What is actually lost: day-0 condition uniformity (no worst-stock-first
+targeting in the first generation) and the old-fabric demolition drama class.
+Assemble runs 8.9% vs 3.5%, fabric-explained the london way: vacant
+waterfront superblocks. heightsReal 0.989 — the nyc doitt osm import carries
+measured heights, so the planned microsoft heights source is redundant for
+this area and stays unbuilt until a us area without that import shows up.
+
 ## 3. Block derivation starves in superblock fabric
 
 Schiedam: 9% of buildings fell outside every block face. London: 48% (227 of
