@@ -272,6 +272,13 @@ export interface ChunkMeta {
   /** local-frame bounds in metres */
   localBounds: Bounds2
   sourceNote: string
+  /**
+   * §31: the national administrative code this chunk sits in, where one exists
+   * (CBS GM0606 for a Dutch chunk, an ONS code for a British one). Provenance
+   * only — the join from a fine chunk to its coarse settlement is geometric,
+   * because no administrative scheme is global and the coarse layer is.
+   */
+  adminCode?: string
 }
 
 // ---------------------------------------------------------------------------

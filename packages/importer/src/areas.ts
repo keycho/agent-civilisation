@@ -10,6 +10,8 @@ export interface AreaDef {
   lon: number
   /** half-extent in metres; the chunk is a 2r x 2r square in the local frame */
   radiusM: number
+  /** national admin code where one exists (NL: CBS GMxxxx). Provenance, not a join key. */
+  adminCode: string
   /**
    * §24.2: the axis of the fabric, in degrees clockwise from grid north. The
    * chunk is cut along this rather than along north, so the same building count
@@ -47,8 +49,9 @@ export const AREAS: Record<string, AreaDef> = {
     lat: 51.9159,
     lon: 4.3959,
     radiusM: 280,
+    adminCode: 'GM0606',
     /**
-     * §24.2, MEASURED AND NOT YET APPLIED. The fabric axis here is 45.4 degrees,
+     * §24.2, measured and applied. The fabric axis here is 45.4 degrees,
      * binned off the emitted seed's road graph and weighted by edge length —
      * which is the worst case available, since a square cut against a 45-degree
      * fabric projects to a diamond of sqrt(2) its width. That is where the dead
@@ -66,12 +69,55 @@ export const AREAS: Record<string, AreaDef> = {
     bearingDeg: 45.4,
     note: 'Historic harbour district: Lange Haven and Nieuwe Haven, distillery warehouses, post-industrial edge.',
   },
+  /**
+   * §27.9: "three to five fine chunks at start, deliberately mixed: the
+   * historic district already built, a postwar suburb, a village, a port edge."
+   *
+   * Each sits in its own municipality, because migration is between
+   * settlements and a settlement needs its own coarse record, WOZ level and
+   * population — three chunks inside GM0606 would make "the settlement became
+   * active" unmeasurable. All four are within 10 km of each other on the
+   * Nieuwe Waterweg, so 3DBAG, AHN and the OSM tagging culture are constant
+   * and the §25.3 variable is the fabric alone.
+   *
+   * bearingDeg on the new three starts unset: imported north-cut first, the
+   * fabric axis measured off the emitted road graph, then set and re-imported
+   * — same §24.2 procedure schiedam went through, not a guess.
+   */
+  'vlaardingen-westwijk': {
+    id: 'vlaardingen-westwijk',
+    name: 'Vlaardingen — Westwijk',
+    lat: 51.9048,
+    lon: 4.3268,
+    radiusM: 300,
+    adminCode: 'GM0622',
+    note: 'Postwar expansion district: 1950s-60s slab blocks, rowhouses, green courts.',
+  },
+  'maasland-dorp': {
+    id: 'maasland-dorp',
+    name: 'Maasland — Dorp',
+    lat: 51.9366,
+    lon: 4.2758,
+    radiusM: 300,
+    adminCode: 'GM1842',
+    note: 'Polder village core: church, dike streets, farmyards on the edge.',
+  },
+  'maassluis-haven': {
+    id: 'maassluis-haven',
+    name: 'Maassluis — Haven',
+    lat: 51.9224,
+    lon: 4.2492,
+    radiusM: 280,
+    adminCode: 'GM0556',
+    note: 'Small port town: historic haven, locks, working waterfront edge.',
+  },
   'schiedam-wide': {
     id: 'schiedam-wide',
     name: 'Schiedam — Havens (wide)',
     lat: 51.9159,
     lon: 4.3959,
     radiusM: 420,
+    adminCode: 'GM0606',
     note: 'Wider frame for measuring; above the ratio band.',
   },
   'dordrecht-old': {
@@ -80,6 +126,7 @@ export const AREAS: Record<string, AreaDef> = {
     lat: 51.8162,
     lon: 4.665,
     radiusM: 260,
+    adminCode: 'GM0505',
     note: 'Fallback: older and denser, less vacant land.',
   },
 }

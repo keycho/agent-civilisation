@@ -78,7 +78,10 @@ export interface ActionOutcome {
 
 export function applyAction(world: World, agent: Agent, action: ScoredAction): ActionOutcome {
   const outcome = dispatch(world, agent, action)
-  if (outcome.ok) recordDecision(world, agent, action)
+  if (outcome.ok) {
+    world.appliedActions++
+    recordDecision(world, agent, action)
+  }
   return outcome
 }
 

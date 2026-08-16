@@ -193,6 +193,12 @@ export interface Assembly {
   occupiedCount: number
 }
 
+/**
+ * §30.3. `gate: true` removes boundary-adjacent parcels from the developable
+ * set at world load. The default is off; see the note at the load site.
+ */
+export const BOUNDARY = { gate: false }
+
 export class World {
   /**
    * §20.2: an internal monotonic sequence number. Construction spans it, decay
@@ -202,6 +208,8 @@ export class World {
   tick = 0
   /** cumulative decisions issued — the x axis divergence is plotted against (§20.7) */
   decisionsIssued = 0
+  /** §27.3: applied (not merely issued) actions, for the activity-rate summary */
+  appliedActions = 0
   /**
    * §18.3: how many times each action kind was actually applied. A dead branch
    * is a missing kind, and every bug in the first build produced plausible
@@ -427,6 +435,20 @@ export class World {
     }
 
     for (const p of seed.parcels) this.parcels.set(p.id, { ...p })
+    /**
+     * §30.3: the boundary gate, applied once at load rather than checked at
+     * nine read sites. The importer flags parcels within the boundary margin of
+     * the chunk edge; while the gate is on they are simply not developable, so
+     * every downstream decision already respects it. Off by default — §29.5
+     * costed the naive gate at 22% of inventory — and turned on per chunk-pair
+     * as neighbours materialise, or wholesale by the harness to measure the
+     * delta before it matters (§30.3's one run of cost).
+     */
+    if (BOUNDARY.gate) {
+      for (const p of this.parcels.values()) {
+        if (p.boundaryAdjacent) p.developable = false
+      }
+    }
     // The seed points parcels at buildings; the link has to exist in both
     // directions or nothing that reasons about land — value, demolition,
     // assembly, roads — can find the ground a building stands on.

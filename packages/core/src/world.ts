@@ -41,6 +41,13 @@ export interface BaselineBuilding {
   archetype: ArchetypeId
   roofHint?: RoofHint
   name?: string
+  /**
+   * §31.2: where the height came from. Absent means measured (the NL path is
+   * all 3DBAG lidar). Adapters for countries without national height data set
+   * 'estimated' — levels inferred from footprint area and purpose — and the
+   * §31.5 import-health manifest reports the split per chunk.
+   */
+  heightSource?: 'measured' | 'estimated'
 }
 
 // ---------------------------------------------------------------------------
@@ -99,6 +106,16 @@ export interface Parcel {
   landValue: number
   /** false when water or protected landcover makes it undevelopable */
   developable: boolean
+  /**
+   * §30.3: within the boundary margin of the chunk edge, where the world this
+   * parcel's economics depend on is partly outside the fetched extent. Flagged
+   * at import so every number from here on is produced on a world that already
+   * knows its perimeter — the gate itself (excluding these from the developable
+   * set) stays off until the neighbouring chunk can materialise, and turns on
+   * per chunk-pair. §29.5 costed the naive always-on gate at 22% of inventory,
+   * which is why this is a flag and a switch rather than a rule.
+   */
+  boundaryAdjacent?: boolean
   centroid: [number, number]
 }
 
@@ -182,7 +199,10 @@ export interface WorldSeed {
   substrate: Substrate
   districts: DistrictSeed[]
   provenance: Provenance[]
-  stats: Record<string, number | string>
+  stats: Record<string, number | string | Record<string, number>> & {
+    /** §31.5: per-chunk import health, recorded in the artifact */
+    importHealth?: { heightsReal: number; yearsPresent: number; boundaryParcels: number }
+  }
 }
 
 export function roadClassOf(highway: string): RoadClass | null {

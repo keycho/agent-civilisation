@@ -202,7 +202,32 @@ const chunk: ChunkMeta = {
   bbox: [wgs[0], wgs[1], wgs[2], wgs[3]],
   localBounds,
   sourceNote: area.note,
+  adminCode: area.adminCode,
 }
+
+/**
+ * §30.3: flag the perimeter at import. A parcel with a vertex inside the margin
+ * sits on ground whose blocks, roads and neighbours are partly outside the
+ * fetched extent — its economics are computed against a world that is cut off
+ * mid-street. The flag records that; the gate that acts on it lives in the sim
+ * and is off by default.
+ */
+const BOUNDARY_MARGIN_M = 25
+let boundaryFlagged = 0
+for (const p of parcels.parcels) {
+  const near = p.polygon.some(
+    ([x, y]) =>
+      x - clip.minX < BOUNDARY_MARGIN_M ||
+      clip.maxX - x < BOUNDARY_MARGIN_M ||
+      y - clip.minY < BOUNDARY_MARGIN_M ||
+      clip.maxY - y < BOUNDARY_MARGIN_M,
+  )
+  if (near) {
+    p.boundaryAdjacent = true
+    boundaryFlagged++
+  }
+}
+log(`      ${boundaryFlagged} parcels flagged boundary-adjacent (§30.3, gate off by default)`)
 
 const seed: WorldSeed = {
   version: 3,
@@ -222,6 +247,22 @@ const seed: WorldSeed = {
     roadEdges: graph.edges.length,
     blocks: blocks.length,
     areaKm2: +(((area.radiusM * 2) / 1000) ** 2).toFixed(3),
+    /**
+     * §31.5: per-chunk import health, in the manifest rather than in a log
+     * line, so "the pipeline half-worked on this country's data" is a recorded
+     * property of the artifact and not something to rediscover.
+     */
+    importHealth: {
+      heightsReal: +(
+        built.buildings.filter((b) => b.heightSource !== 'estimated').length /
+        Math.max(1, built.buildings.length)
+      ).toFixed(3),
+      yearsPresent: +(
+        built.buildings.filter((b) => b.constructionYear != null).length /
+        Math.max(1, built.buildings.length)
+      ).toFixed(3),
+      boundaryParcels: boundaryFlagged,
+    },
   },
 }
 

@@ -4,11 +4,13 @@
  * distribution).
  */
 import {
+  DIVERGENCE_WEIGHT,
   RATE_WINDOW_TICKS,
   type SeedReport,
   type WorldSeed,
   centroid,
   distanceToSegment,
+  moransI,
   validateSeed,
 } from '@civ/core'
 import { MemoryStore } from '@civ/persistence'
@@ -139,6 +141,14 @@ export interface Summary {
    * now a load-bearing quantity rather than a label on a feed line.
    */
   districts: { count: number; largest: number; medianSize: number; maxExtentM: number }
+  /**
+   * §30.4: the spectacle statistic on this run's divergence surface, computed
+   * by the same pre-registered instrument the multi-chunk contract will use.
+   * This single-chunk value IS the baseline that contract compares against.
+   */
+  moransI: number
+  /** §30.2: completed chains per 10,000 decisions — the flow, not the window rate */
+  chainCompletionFlow: number
   /**
    * §27.5: competitive pricing, measured in the single chunk before anything
    * multi-region exists — while agents still have nowhere to go, so a failure
@@ -405,6 +415,18 @@ export async function runSeed(
     },
     structural: validateSeed(world),
     districts: districtsOf(sim.world),
+    moransI: moransI(
+      [...sim.world.buildings.values()]
+        .filter((b) => b.source !== 'agent_built')
+        .map((b) => {
+          const c = centroid(b.footprint)
+          return { x: c[0], y: c[1], v: DIVERGENCE_WEIGHT[b.divergence] ?? 0 }
+        }),
+    ),
+    chainCompletionFlow:
+      (sim.world.assemblies.filter((x) => x.clearedAfter && x.developedAfter).length /
+        Math.max(1, sim.decisionsIssued)) *
+      10_000,
     pricing: { ...pricingOf(sim.world, curve), offeredMidRatio, transactedMidRatio },
     curve,
   }
