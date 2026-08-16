@@ -1,27 +1,31 @@
 /**
- * §37.3: the standing chunk admission suite. Every chunk queues through this
- * before its region seat — london like any other (§37.4).
+ * §37.3, re-registered under §41.2: the standing chunk admission suite. Every
+ * chunk queues through this before its region seat.
  *
- * Three instruments, all §34-shaped, run against the emitted artifact:
+ * The first registration compared a feasibility prediction against per-seed
+ * dark and conflated two things a feasibility test cannot see by
+ * construction: a CAPITAL CEILING (rate-viable stock no agent can ever
+ * afford — brooklyn's waterfront assets out-rank touched stock) and a BUDGET
+ * BAND (stochastic rotation of which mid-size stock goes dark per seed). A
+ * gap threshold on the raw number guarantees findings that are noise.
  *
- *   §18.2 correlation      does touch correlate with access, land value,
- *                          adjacency — with the §34 vacuity guard: r against a
- *                          near-constant surface is NOT EVALUABLE, not zero
- *   enumerated-vs-chosen   dark stock that is enumerated as often as touched
- *                          stock and chosen never is an economics finding;
- *                          dark stock that is never enumerated is an
- *                          enumeration fault (§34 step 3)
- *   predicted-vs-measured  the manifest's viability numbers against the run:
- *                          a chunk is admitted with a predicted dark share and
- *                          a measured one, and a large gap is a FINDING
+ * Re-registration (§41.2), applied to seated chunks and all future ones:
  *
- * The gate (§32) is the ruler: runs are gated, and dark is measured over
- * in-market stock — boundary-gated parcels are a known structural exclusion,
- * not a finding. The manifest predicts over all stock, so the predicted dark
- * is recomputed here over the in-market set with the same §34 formulas.
+ *   admission compares   predicted-unviable            vs  stable dark
+ *                        (income + conversion + site       (dark in EVERY
+ *                         all infeasible at day 0)          seed)
+ *   reports separately   budget-band width   (per-seed dark above the stable
+ *                                             core, min..max)
+ *                        capital-ceiling set (stable dark at or above median
+ *                                             day-0 cap rank: rate-viable,
+ *                                             never affordable, enumerated)
  *
- * PRE-REGISTERED before london's first admission run:
- *   FINDING if |predicted dark - measured dark| > 0.15 over in-market stock
+ * The gate (§32) is the ruler: runs gated, dark measured over in-market
+ * stock. §18.2 correlations with the §34 vacuity guard and the
+ * enumerated-vs-chosen split stay as registered.
+ *
+ * PRE-REGISTERED thresholds:
+ *   FINDING if |predicted-unviable - stable dark| > 0.15 over in-market stock
  *   FINDING if dark stock's median enumeration < 25% of touched stock's
  *            (the enumeration-fault signature; §34 found the opposite)
  *   NOT EVALUABLE (note, not a finding) if access cv < 0.05 (§34 step 1)
@@ -54,19 +58,23 @@ function median(xs: number[]): number {
 }
 
 /**
- * Day-0 probe under the gate: which buildings are in the market at all, and
- * the §34 viability of each, with the manifest's own formulas.
+ * Day-0 probe under the gate: in-market stock, the three-leg §41.2 viability
+ * (income, conversion, site), and the best cap for the rank read.
  */
 function probeDayZero(): {
   inMarket: Set<string>
-  viable: Set<string>
+  unviable: Set<string>
+  cap: Map<string, number>
+  area: Map<string, number>
   accessCv: number
 } {
   const probe = new Simulation(seed, new MemoryStore(), { agentCount: 0, seed: 'admission' })
   const w = probe.world
   const RATE = 365
   const inMarket = new Set<string>()
-  const viable = new Set<string>()
+  const unviable = new Set<string>()
+  const cap = new Map<string, number>()
+  const area = new Map<string, number>()
   const access: number[] = []
   for (const b of w.buildings.values()) {
     if (b.state !== 'standing') continue
@@ -76,50 +84,65 @@ function probeDayZero(): {
     if (!parcel.developable) continue
     inMarket.add(b.id)
     const price = acquisitionPrice(w, b)
-    let cap = (b.yieldPerTick * RATE) / Math.max(1, price)
+    const capIncome = (b.yieldPerTick * RATE) / Math.max(1, price)
+    let capConvert = Number.NEGATIVE_INFINITY
     for (const t of ['residential', 'retail', 'commercial', 'office'] as const) {
       if (t === b.purpose) continue
       const y = yieldPerTick(w, { ...b, purpose: t, condition: Math.max(b.condition, 0.85) })
-      cap = Math.max(cap, (y * RATE) / Math.max(1, price + conversionCost(b)))
+      capConvert = Math.max(capConvert, (y * RATE) / Math.max(1, price + conversionCost(b)))
     }
-    if (cap > 0) viable.add(b.id)
+    // §41.2 site leg: the land under it can itself justify the acquisition
+    const siteFeasible = parcel.landValue > 0
+    if (capIncome <= 0 && capConvert <= 0 && !siteFeasible) unviable.add(b.id)
+    cap.set(b.id, Math.max(capIncome, capConvert))
+    area.set(b.id, b.areaM2)
   }
   const mean = access.reduce((a, b) => a + b, 0) / Math.max(1, access.length)
   const sd = Math.sqrt(
     access.reduce((a, b) => a + (b - mean) ** 2, 0) / Math.max(1, access.length),
   )
-  return { inMarket, viable, accessCv: mean ? sd / mean : 0 }
+  return { inMarket, unviable, cap, area, accessCv: mean ? sd / mean : 0 }
 }
 
 const day0 = probeDayZero()
-const predictedDark =
-  day0.inMarket.size > 0 ? 1 - day0.viable.size / day0.inMarket.size : 1
+const predictedUnviable =
+  day0.inMarket.size > 0 ? day0.unviable.size / day0.inMarket.size : 1
+const ranked = [...day0.cap.entries()].sort((a, b) => a[1] - b[1])
+const pctile = new Map(ranked.map(([id], i) => [id, i / Math.max(1, ranked.length - 1)]))
 
-console.log(`# §37.3 admission — ${CHUNK}, ${SEEDS} seeds, budget ${DECISION_BUDGET}, gate ${BOUNDARY.gate ? 'on' : 'OFF'}`)
+console.log(
+  `# §37.3/§41.2 admission — ${CHUNK}, ${SEEDS} seeds, budget ${DECISION_BUDGET}, gate ${BOUNDARY.gate ? 'on' : 'OFF'}`,
+)
 console.log(
   `#   manifest: viableShare ${health?.viableShare ?? 'ABSENT'}  viableIncomeOnly ${health?.viableIncomeOnly ?? 'ABSENT'}  ownableShare ${health?.ownableShare ?? 'ABSENT'}`,
 )
+console.log(`#   in-market stock at day 0: ${day0.inMarket.size} buildings (gate holds out the rest)`)
 console.log(
-  `#   in-market stock at day 0: ${day0.inMarket.size} buildings (gate holds out the rest)`,
-)
-console.log(
-  `#   predicted dark over in-market stock: ${(predictedDark * 100).toFixed(1)}%  ` +
+  `#   predicted-unviable (three legs, §41.2): ${(predictedUnviable * 100).toFixed(1)}%  ` +
     `(access cv ${day0.accessCv.toFixed(3)}${day0.accessCv < 0.05 ? ' — r_access NOT EVALUABLE, §34 step 1' : ''})`,
 )
 
-const darks: number[] = []
+const darkCount = new Map<string, number>()
+const perSeedDark: number[] = []
 const rAccess: number[] = []
 const rValue: number[] = []
 const rAdjacency: number[] = []
 const enumDark: number[] = []
 const enumTouched: number[] = []
+const enumById = new Map<string, number>()
 
 for (let i = 0; i < SEEDS; i++) {
   const s = await runSeed(seed, `admit-${i}`)
   const untouched = new Set(s.untouchedIds)
-  // dark over in-market stock: the gate is structure, not finding
-  const darkInMarket = [...day0.inMarket].filter((id) => untouched.has(id)).length
-  darks.push(day0.inMarket.size ? darkInMarket / day0.inMarket.size : 0)
+  let darkInMarket = 0
+  for (const id of day0.inMarket) {
+    if (untouched.has(id)) {
+      darkInMarket++
+      darkCount.set(id, (darkCount.get(id) ?? 0) + 1)
+    }
+    enumById.set(id, Math.max(enumById.get(id) ?? 0, s.enumeratedByBuilding[id] ?? 0))
+  }
+  perSeedDark.push(day0.inMarket.size ? darkInMarket / day0.inMarket.size : 0)
   rAccess.push(s.correlations.access)
   rValue.push(s.correlations.landValue)
   rAdjacency.push(s.correlations.adjacency)
@@ -133,18 +156,33 @@ for (let i = 0; i < SEEDS; i++) {
   enumDark.push(median(eD))
   enumTouched.push(median(eT))
   console.log(
-    `#   seed ${i}: dark ${(darks[i] * 100).toFixed(1)}%  r_access ${s.correlations.access.toFixed(3)}  ` +
-      `enum dark ${median(eD)} vs touched ${median(eT)}`,
+    `#   seed ${i}: dark ${(perSeedDark[i] * 100).toFixed(1)}%  r_access ${s.correlations.access.toFixed(3)}`,
   )
 }
 
-const measuredDark = median(darks)
-const gap = Math.abs(predictedDark - measuredDark)
+// §41.2: stable dark is dark in EVERY seed
+const stableDark = [...day0.inMarket].filter((id) => (darkCount.get(id) ?? 0) === SEEDS)
+const stableShare = day0.inMarket.size ? stableDark.length / day0.inMarket.size : 0
+const gap = Math.abs(predictedUnviable - stableShare)
 const enumRatio = median(enumTouched) > 0 ? median(enumDark) / median(enumTouched) : 1
 
-console.log('# admission record')
-console.log(`#   measured dark (in-market)   median ${(measuredDark * 100).toFixed(1)}%`)
-console.log(`#   predicted dark              ${(predictedDark * 100).toFixed(1)}%   gap ${(gap * 100).toFixed(1)} pts`)
+// the two separately-reported quantities
+const bandWidths = perSeedDark.map((d) => d - stableShare)
+const ceiling = stableDark.filter((id) => (pctile.get(id) ?? 0) >= 0.5)
+const ceilingAreas = ceiling.map((id) => day0.area.get(id) ?? 0)
+const ceilingEnum = ceiling.map((id) => enumById.get(id) ?? 0)
+
+console.log('# admission record (§41.2)')
+console.log(`#   stable dark (dark in ${SEEDS}/${SEEDS} seeds)   ${(stableShare * 100).toFixed(1)}%  (${stableDark.length} buildings)`)
+console.log(`#   predicted-unviable                 ${(predictedUnviable * 100).toFixed(1)}%   gap ${(gap * 100).toFixed(1)} pts`)
+console.log(
+  `#   budget band (per-seed dark above stable core)  median ${(median(bandWidths) * 100).toFixed(1)} pts  ` +
+    `range ${(Math.min(...bandWidths) * 100).toFixed(1)}..${(Math.max(...bandWidths) * 100).toFixed(1)}`,
+)
+console.log(
+  `#   capital-ceiling set (stable dark, cap rank >= 0.5)  ${ceiling.length} buildings  ` +
+    `median area ${median(ceilingAreas).toFixed(0)} m2  median enumerated ${median(ceilingEnum)}`,
+)
 console.log(
   `#   §18.2 correlations          access ${median(rAccess).toFixed(3)}${day0.accessCv < 0.05 ? ' (NOT EVALUABLE)' : ''}  ` +
     `landValue ${median(rValue).toFixed(3)}  adjacency ${median(rAdjacency).toFixed(3)}`,
@@ -155,7 +193,8 @@ console.log(
 
 const findings: string[] = []
 if (!health?.viableShare) findings.push('manifest lacks viability prediction; re-emit before admission')
-if (gap > 0.15) findings.push(`predicted/measured dark gap ${(gap * 100).toFixed(1)} pts exceeds 15`)
+if (gap > 0.15)
+  findings.push(`predicted-unviable/stable-dark gap ${(gap * 100).toFixed(1)} pts exceeds 15`)
 if (enumRatio < 0.25)
   findings.push(
     `dark stock enumerated at ${(enumRatio * 100).toFixed(0)}% of touched — enumeration-fault signature (§34 step 3)`,

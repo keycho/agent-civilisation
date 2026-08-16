@@ -132,6 +132,31 @@ function median(xs: number[]): number {
 }
 
 const ground = convertViableParcels()
+
+/**
+ * §41.1 standing rule: a pre-registered split gets a power check — assert the
+ * discriminating cell can be populated on the fabric it will run against,
+ * BEFORE the run. Here the cell is "completed chains on conversion-nonviable
+ * ground", and a completed chain needs standing stock on its parcels, so the
+ * cell is populatable only if standing stock exists outside the viable set.
+ * An empty cell discovered after is a wasted run; --force runs anyway for
+ * explicitly exploratory measurement.
+ */
+{
+  const probe = new Simulation(seed, new MemoryStore(), { agentCount: 0, seed: 'power' })
+  let standingNonviable = 0
+  for (const b of probe.world.buildings.values()) {
+    if (b.state === 'standing' && b.parcelId && !ground.viable.has(b.parcelId)) standingNonviable++
+  }
+  if (standingNonviable === 0 && !process.argv.includes('--force')) {
+    console.log(`# POWER CHECK FAILED (§41.1): no standing stock outside the conversion-viable`)
+    console.log(`#   set on ${CHUNK} — the nonviable cell cannot be populated and the split`)
+    console.log(`#   cannot discriminate. Not running. Pass --force for exploratory arms.`)
+    process.exit(1)
+  }
+  console.log(`# power check: ${standingNonviable} standing buildings on conversion-nonviable ground`)
+}
+
 console.log(`# §37.2 chain composition — ${CHUNK}, ${SEEDS} paired seeds, budget ${DECISION_BUDGET}`)
 console.log(
   `#   conversion-viable ground at day 0 (capConvert>0): ${ground.viable.size} of ${seed.parcels.length} parcels ` +

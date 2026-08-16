@@ -344,30 +344,33 @@ console.log(
 )
 
 /**
- * §30.2: "completion as a flow, per unit of decisions, now." The fixed-window
- * completion RATE retired with the window — it undercounted exactly the
- * long-horizon behaviour §29.2 built, which was the previous KNOWN here.
+ * §41.1: the chain-flow KNOWN retired with the composition citation. The
+ * §37.2 instrument (chain-composition.ts, gated, 8 paired seeds) showed the
+ * decline sits entirely on ground the §34 formula marks conversion-preferred,
+ * with conversions rising 790 -> 1103 per run — substitution along the price,
+ * the honest-price mechanism; crowding-out's signature (chains falling
+ * independent of conversion preference) does not appear. Called: honest price.
  *
- * Bar provenance, stated because it cannot be blind: build 7's run had already
- * been seen when this was written, at a median of 24 completions in ~34,000
- * decisions, about 7 per 10,000. The bar is 4 per 10,000 — the claim it
- * encodes is that consolidation stays a live route (within a factor of two of
- * its current rate) rather than decaying back toward the pre-§29.2 structural
- * zero. It is deliberately not set at the observed value.
+ * The bar restates on the new equilibrium in ABSOLUTE completions per run —
+ * the per-10k rate's denominator changed meaning when conversions entered it.
+ * Bar provenance, stated because it cannot be blind: the composition run had
+ * been seen when this was written, at a median of 10 completed chains per run
+ * at this budget (per-seed 6..24). The floor is 7 — the same proportional
+ * slack the old bar carried (4 vs observed 5.3), encoding that consolidation
+ * stays a live route at the new equilibrium rather than decaying toward the
+ * pre-§29.2 structural zero. Deliberately not set at the observed value.
+ * Pre-registered here before the first 20-seed suite run under it.
  */
+const chainsPerRun = med2((x) => x.chainCompleted)
 const flow = medOf((x) => x.chainCompletionFlow)
-console.log(`  chain completions per 10,000 decisions: ${flow.toFixed(1)} (rate context: ${(chainRate * 100).toFixed(0)}% of assemblies within the window)`)
-known(
-  flow >= 4,
-  'chain completion flow >= 4 per 10k decisions',
-  flow.toFixed(1),
-  'buy-to-convert (§34) reallocated the decision budget: conversion became a ' +
-    'priced use at acquisition time, conversions boomed, and assembly chains ' +
-    'fell from 5.3 to 2.4 completions per 10k inside the same budget. The bar ' +
-    'caught a real trade-off between the two mechanisms, which is what it is ' +
-    'for. Whether 2.4 is a regression to fix (conversion crowding out ' +
-    'consolidation) or the honest price of a fuller market is an operator ' +
-    'decision, flagged in the build report — not retuned here.',
+console.log(
+  `  chain completions per run: ${chainsPerRun} (flow context: ${flow.toFixed(1)} per 10k decisions, ` +
+    `${(chainRate * 100).toFixed(0)}% of assemblies within the window)`,
+)
+assert(
+  chainsPerRun >= 7,
+  'completed chains per run >= 7 (§41.1 equilibrium bar)',
+  String(chainsPerRun),
 )
 known(
   multiShare >= 0.1,

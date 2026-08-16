@@ -3,11 +3,14 @@
  *
  * The NL path joins 3DBAG lidar geometry to OSM tags. Everywhere without a
  * national height dataset, OSM is both the geometry and the only height
- * signal, and the height signal is thin: London carries `height` or
- * `building:levels` on a minority of footprints. Where both are absent the
- * levels are estimated from purpose and footprint area, and the building says
- * so — `heightSource: 'estimated'` — which rolls up into the §31.5 import
- * health manifest rather than passing as measurement.
+ * signal, and the height signal varies by import culture: London carries
+ * `height` or `building:levels` on a minority of footprints, while NYC's
+ * DoITT import makes heights real on nearly everything (brooklyn measured
+ * 98.9%, §41.4 — the planned Microsoft footprints source stays unbuilt until
+ * a US area without that import shows up). Where both are absent the levels
+ * are estimated from purpose and footprint area, and the building says so —
+ * `heightSource: 'estimated'` — which rolls up into the §31.5 import health
+ * manifest rather than passing as measurement.
  *
  * Construction years come from OSM `start_date` where parseable, which for
  * London is rare. That absence is what forces the §18.4 rework: the era gate
