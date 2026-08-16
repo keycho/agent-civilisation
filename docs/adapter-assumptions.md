@@ -117,6 +117,33 @@ operator. London's vacant-superblock fabric would not populate the empty
 cell either — the chain definition itself binds completions to standing
 ground. The KNOWN stays loud in tune.ts until the call is made.
 
+## 2d. London's admission FINDING named: capital-scale dark plus stochastic churn
+
+The §37.3 suite flagged london (measured dark 20.0% vs predicted 0%, gap
+20 pts; schiedam admitted at 13.1). dark-rank.ts read the offered surface on
+the stable-dark set with a pre-registered prediction — bottom rank quartile,
+split pieces overrepresented 1.5x — and falsified both: london's stable dark
+sits mid-rank (median cap percentile 0.46 vs touched 0.56, only 28% in the
+bottom quartile) and split pieces underrepresent at 0.16x. The signature is
+size: stable-dark median 328 m2 against touched 49 m2.
+
+The schiedam calibration run reframes the finding. Stable dark is 9.1% on
+BOTH chunks — the permanent dark class is the same size as the control's,
+skews large on both (168 vs 67 m2 there), and london's is genuinely mid-rank
+big stock: rate-viable, rank-competitive, enumerated at 127% of touched,
+never affordable — project capital beyond any agent's reach. The 7-point
+admission excess over the control is almost entirely stochastic: which
+mid-size stock rotates dark varies by seed (schiedam ~4 pts of per-seed dark
+above its stable core, london ~11).
+
+Answer to the question as posed: new dark stock the predictor cannot see —
+a capital-ceiling class plus a stochastic budget-allocation band, both
+invisible to a feasibility test by construction, not a uk-miscalibrated
+predictor. Consequence for §37.3: the predicted/measured gap conflates a
+constant structural class with a fabric-dependent stochastic band; whether
+predicted dark should be re-specified against stable dark only is an
+operator re-registration decision. London holds at the gate until that call.
+
 ## 3. Block derivation starves in superblock fabric
 
 Schiedam: 9% of buildings fell outside every block face. London: 48% (227 of

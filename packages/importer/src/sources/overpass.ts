@@ -10,10 +10,16 @@ import { cached, fetchWithRetry, sleep } from '../util/http.ts'
  * per layer so the question stays answerable before it is load bearing.
  */
 
+/**
+ * Full-planet mirrors only. overpass.osm.ch is a switzerland extract: it
+ * answers any bbox with valid json, empty outside its region, which the
+ * rotation accepted as success and the cache then kept — brooklyn's rotated
+ * re-import emitted a zero-building artifact from exactly that (the §33.1
+ * canary caught it downstream; this is the fetch-layer half of the fix).
+ */
 const MIRRORS = [
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass-api.de/api/interpreter',
-  'https://overpass.osm.ch/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
 ]
 
@@ -36,7 +42,20 @@ export interface OsmResponse {
   elements: OsmElement[]
 }
 
-export async function overpass(query: string, label: string): Promise<OsmResponse> {
+export async function overpass(
+  query: string,
+  label: string,
+  opts: {
+    /**
+     * The other half of the osm.ch lesson: a load-bearing query (buildings,
+     * roads) answered with fewer elements than this is a mirror fault, not a
+     * result — try the next mirror rather than caching an empty world. Layers
+     * that can legitimately be empty (water, landcover) leave it at 0.
+     */
+    minElements?: number
+  } = {},
+): Promise<OsmResponse> {
+  const minElements = opts.minElements ?? 0
   return cached(`overpass:${query}`, async () => {
     let lastErr: unknown
     for (let round = 0; round < 3; round++) {
@@ -56,7 +75,13 @@ export async function overpass(query: string, label: string): Promise<OsmRespons
           if (!text.trimStart().startsWith('{')) {
             throw new Error(`non-JSON reply: ${text.slice(0, 200)}`)
           }
-          return JSON.parse(text) as OsmResponse
+          const parsed = JSON.parse(text) as OsmResponse
+          if ((parsed.elements?.length ?? 0) < minElements) {
+            throw new Error(
+              `suspiciously empty reply (${parsed.elements?.length ?? 0} < ${minElements}); regional extract or partial mirror`,
+            )
+          }
+          return parsed
         } catch (err) {
           lastErr = err
           process.stderr.write(`  mirror ${new URL(mirror).host} failed: ${String(err)}\n`)

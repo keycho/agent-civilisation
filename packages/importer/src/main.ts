@@ -60,8 +60,10 @@ const clip = { minX: -r, minY: -r, maxX: r, maxY: r }
 
 log('\n[1/7] fetching sources')
 const bag = area.country === 'NL' ? await fetchBag(rdBboxOf(area)) : []
-const osmBuildings = await overpass(queryBuildings(wgs), 'buildings')
-const osmRoads = await overpass(queryRoads(wgs), 'roads')
+// §31.2: buildings and roads are load-bearing — an empty reply is a mirror
+// fault (regional extract), never a result. Water and landcover can be empty.
+const osmBuildings = await overpass(queryBuildings(wgs), 'buildings', { minElements: 1 })
+const osmRoads = await overpass(queryRoads(wgs), 'roads', { minElements: 1 })
 const osmWater = await overpass(queryWater(wgs), 'water')
 const osmLand = await overpass(queryLandcover(wgs), 'landcover')
 log(
