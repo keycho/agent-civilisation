@@ -9,6 +9,11 @@
       "id": "london-deptford",
       "name": "London — Deptford Riverside",
       "file": "london-deptford.json"
+    },
+    {
+      "id": "brooklyn-redhook",
+      "name": "Brooklyn — Red Hook",
+      "file": "brooklyn-redhook.json"
     }
   ]
 }

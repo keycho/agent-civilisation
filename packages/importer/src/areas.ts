@@ -172,6 +172,13 @@ export const AREAS: Record<string, AreaDef> = {
     radiusM: 360,
     adminCode: '36047',
     country: 'US',
+    /**
+     * §24.2 procedure, second pass: imported north-cut first, axis measured
+     * off the emitted road graph — 21.4% peak share at 130 deg against the 6%
+     * bar (the grid prediction confirmed; london sat at 3.5%). Cut along the
+     * fabric.
+     */
+    bearingDeg: 130,
     note: 'Low-rise industrial waterfront edge: brownstone rows, warehouses, working piers.',
   },
   'paris-ourcq': {

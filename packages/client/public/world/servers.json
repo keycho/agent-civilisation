@@ -1,5 +1,6 @@
 {
   "_": "§36.1: one server per chunk, so the switcher needs a ws url per chunk id. precedence: ?server= override, then this file, then VITE_SERVER_URL, then the default port. an https page cannot open ws:// so these local entries are ignored in production; deployment replaces them with wss:// urls.",
   "schiedam-havens": "ws://127.0.0.1:8790",
-  "london-deptford": "ws://127.0.0.1:8793"
+  "london-deptford": "ws://127.0.0.1:8793",
+  "brooklyn-redhook": "ws://127.0.0.1:8796"
 }
