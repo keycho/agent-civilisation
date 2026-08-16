@@ -84,10 +84,27 @@ export function validateSeed(world: WorldSeed): SeedReport {
   for (const p of parcels) {
     if (p.blockId !== 'blk-orphan') continue
     synthesisedParcels++
+    /**
+     * The bound is geometry-true, not a fixed ratio: the first form capped the
+     * area ratio at 3.5x and failed on Schiedam at 4.83x — which is exactly
+     * what a fixed 1.2 m outset does to a 2 m shed (4.4²/2² = 4.84). The
+     * outset adds ~perimeter x d + pi d² of area regardless of building size,
+     * so the excess is bounded in square metres against that, and a ratio is
+     * only meaningful as a secondary sanity ceiling on large stock.
+     */
     const ba = p.buildingId ? bAreaById.get(p.buildingId) : undefined
-    if (ba && ba > 0) {
-      const ratio = Math.abs(ringSignedArea(p.polygon)) / ba
-      if (ratio > synthesisWorstRatio) synthesisWorstRatio = ratio
+    const bRing = p.buildingId ? buildingById.get(p.buildingId)?.footprint : undefined
+    if (ba && ba > 0 && bRing) {
+      let perim = 0
+      for (let i = 0; i < bRing.length; i++) {
+        const [x1, y1] = bRing[i]
+        const [x2, y2] = bRing[(i + 1) % bRing.length]
+        perim += Math.hypot(x2 - x1, y2 - y1)
+      }
+      const excess = Math.abs(ringSignedArea(p.polygon)) - ba
+      const outsetAllowance = perim * 1.4 + Math.PI * 1.4 * 1.4 + 8
+      const over = excess / Math.max(1, outsetAllowance)
+      if (over > synthesisWorstRatio) synthesisWorstRatio = over
     }
     /**
      * Containment, probed soundly: this canary's first form tested the
@@ -177,9 +194,9 @@ export function seedChecks(r: SeedReport): Check[] {
      * building's parcel.
      */
     {
-      ok: r.synthesisWorstRatio <= 3.5,
-      label: 'synthesised parcels stay building-sized (<= 3.5x)',
-      detail: `${r.synthesisedParcels} synthesised, worst ${r.synthesisWorstRatio.toFixed(2)}x`,
+      ok: r.synthesisWorstRatio <= 1.05,
+      label: 'synthesised parcels stay within the outset geometry',
+      detail: `${r.synthesisedParcels} synthesised, worst ${(r.synthesisWorstRatio * 100).toFixed(0)}% of allowance`,
     },
     {
       ok: r.synthesisContainFails === 0,

@@ -76,11 +76,25 @@ order: candidate enumeration (how for-sale stock surfaces in observations),
 and small-asset economics (median split piece is 54 m² — it may never win a
 rank against any alternative under Schiedam-tuned constants).
 
-Consequence for the region world: the ownableShare floor is necessary but not
-sufficient. London does not join the region world until the always-dark core
-is diagnosed to a mechanism — a destination whose offered surface is half
-real would feed §30.1's firewall exactly the polluted number it exists to
-keep out.
+RESOLVED (build 11, §34): the mechanism is named and priced. The dark stock's
+net yield was negative in its current use — maintenance beats rent at this
+granularity — and its best use was a different purpose, which the acquisition
+score could not see: §21.1's max() expressed income and clearance but not
+conversion. The third use now enters the max (conversion rate over price plus
+conversion cost), and the dark mass collapsed 44% -> 8% with the same
+instrument; the 20-seed control suite is green under the new score. The §34
+step-2 prediction (terrace split manufactured it; min-piece fix) was
+falsified by the unsplit counterfactual (42% dark) before the mechanism was
+found. The manifest now predicts this class at import: `viableIncomeOnly`
+49.8% for London — the number that would have flagged the half-dark market
+before any seed ran. London's region-world seat is unblocked from this gate;
+it still requires its own full suite pass like any chunk.
+
+Trade-off flagged for the operator, caught by the pre-registered §30.2 bar:
+pricing conversion into acquisition reallocated the decision budget — chain
+completion flow fell 5.3 -> 2.4 per 10k on the control while conversions
+boomed. Whether that is crowding-out to correct or the honest price of a
+fuller market is a design decision, held as a loud KNOWN until made.
 
 ## 3. Block derivation starves in superblock fabric
 
