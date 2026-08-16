@@ -72,16 +72,24 @@ export const TRIM_LIGHTEN = 1.07
  * Divergence targets (§8 classes). Untouched has no target — in divergence
  * mode it desaturates toward the neutral below, which is the "grey reality"
  * half of the effect §15 asks for.
+ *
+ * §39: the fork's work is amber, one accent family across world and chrome —
+ * one constant in the lerp, not seven hues. Class identity survives through
+ * DIVERGENCE_WEIGHT, which ramps the lerp from faint (owned, 0.15) to full
+ * (replaced and agent origin, 1.0); what class a building is stays an
+ * inspector fact, and the diff view carries the thesis: grey is ours, amber
+ * is theirs.
  */
+const FORK_AMBER = '#e2a54f'
 export const DIVERGENCE_COLOR: string[] = [
   '#8f8d8a', // 0 untouched (neutral target)
-  '#d8b36a', // 1 owned
-  '#8fbe86', // 2 renovated
-  '#5fb2ae', // 3 converted
-  '#6f9ed6', // 4 expanded
-  '#c17b62', // 5 cleared
-  '#b57ad0', // 6 replaced
-  '#7fe3e0', // 7 agent origin
+  FORK_AMBER, // 1 owned
+  FORK_AMBER, // 2 renovated
+  FORK_AMBER, // 3 converted
+  FORK_AMBER, // 4 expanded
+  FORK_AMBER, // 5 cleared
+  FORK_AMBER, // 6 replaced
+  FORK_AMBER, // 7 agent origin
 ]
 
 export const DIVERGENCE_COLORS_RGB: RGB[] = DIVERGENCE_COLOR.map(hexToRgb)

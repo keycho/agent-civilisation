@@ -1112,8 +1112,16 @@ renderer.setAnimationLoop(() => {
    * the water and the far edge, which is where the diorama read comes from. A
    * first pass at 0.16 covered the plate and a long way past it, and turned the
    * effect off.
+   *
+   * §39: that 0.10 baked in the city-framing tilt. The visible depth extent
+   * scales with sin(polar) — cos of the elevation — so an oblique director
+   * shot has more depth in frame than the framed orientation and the fixed
+   * ratio melted the near corner. Same derivation, evaluated for the current
+   * view: identical at the calibrated case (polar 0.66), wider as the camera
+   * comes down, narrower toward top-down where there is no depth to keep.
    */
-  tiltShift.focusRange = Math.max(30, rig.distance * 0.1)
+  tiltShift.focusRange =
+    Math.max(30, rig.distance * 0.1 * (Math.sin(rig.polar) / Math.sin(0.66)))
   tiltShift.render(renderer, scene, rig.camera, rig.distance, 1 - rig.streetness * 0.85)
 })
 

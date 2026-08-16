@@ -171,11 +171,14 @@
 
       /*
        * §36.3: the entry card. Never modal: no backdrop, the world runs live
-       * behind it and any interaction dismisses it.
+       * behind it and any interaction dismisses it. §39: docked left rather
+       * than centered — never-blocking includes not sitting on the diorama's
+       * centre of mass.
        */
       #cards {
         position: fixed; z-index: 4; inset: 0; pointer-events: none;
-        display: flex; align-items: center; justify-content: center; gap: 12px;
+        display: flex; align-items: center; justify-content: flex-start;
+        gap: 12px; padding-left: 48px;
       }
       #cards .pane { position: static; pointer-events: auto; }
       #explainer { width: 400px; }
