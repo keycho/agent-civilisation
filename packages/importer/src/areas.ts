@@ -203,7 +203,12 @@ export const AREAS: Record<string, AreaDef> = {
     name: 'Tokyo — Kyojima',
     lat: 35.7095,
     lon: 139.8215,
-    radiusM: 300,
+    /**
+     * §2 ratio check failed at 300 m (253 buildings, under the 400 floor —
+     * kyojima's osm coverage is sparser than its ground truth). Resized per
+     * the check's own instruction before anything else was tuned.
+     */
+    radiusM: 400,
     adminCode: '13107',
     country: 'JP',
     note: 'Shitamachi fine-grain: wooden rowhouses on alleys, small workshops, pocket shrines.',

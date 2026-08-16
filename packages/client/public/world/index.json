@@ -19,6 +19,11 @@
       "id": "paris-ourcq",
       "name": "Paris — Ourcq / Petite Ceinture",
       "file": "paris-ourcq.json"
+    },
+    {
+      "id": "tokyo-kyojima",
+      "name": "Tokyo — Kyojima",
+      "file": "tokyo-kyojima.json"
     }
   ]
 }
