@@ -211,6 +211,14 @@ export class World {
   /** §27.3: applied (not merely issued) actions, for the activity-rate summary */
   appliedActions = 0
   /**
+   * §34 step 3: per-building count of appearances in any observation candidate
+   * set. Dark and never enumerated is an enumeration fault; dark, enumerated
+   * and never chosen is economics. The counter stays cheap (one map increment
+   * per candidate per observation) and permanent — it is the §18.2 instrument
+   * extended one level down the pipeline.
+   */
+  readonly enumerated = new Map<string, number>()
+  /**
    * §18.3: how many times each action kind was actually applied. A dead branch
    * is a missing kind, and every bug in the first build produced plausible
    * output — so what fired is asserted rather than assumed.

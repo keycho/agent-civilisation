@@ -42,6 +42,14 @@ log(`# importing ${area.name}`)
  * country. NL works in RD so 3DBAG needs no reprojection; everywhere else is a
  * local ENU frame and OSM is both geometry and tags.
  */
+/**
+ * §34 step 2: '--no-split' emits an unsplit diagnostic seed under a suffixed
+ * chunk id, so the committed artifact stays untouched while the §18.2
+ * instrument runs on the counterfactual. Diagnostic seeds are not committed.
+ */
+const NO_SPLIT = process.argv.includes('--no-split')
+const chunkIdOut = NO_SPLIT ? `${area.id}-unsplit` : area.id
+
 const frame =
   area.country === 'NL'
     ? rdFrame(area.lat, area.lon, area.bearingDeg ?? 0)
@@ -65,7 +73,7 @@ log(area.country === 'NL' ? '\n[2/7] buildings: 3dbag geometry + osm tags' : '\n
 const built =
   area.country === 'NL'
     ? buildBaselineBuildings(bag, osmBuildings.elements, frame, area.id, clip)
-    : buildFromOsm(osmBuildings.elements, frame, area.id, clip)
+    : buildFromOsm(osmBuildings.elements, frame, chunkIdOut, clip, { split: !NO_SPLIT })
 log(
   `      ${built.buildings.length} baseline buildings  (tag match ${built.matched}, fallback ${built.unmatched})` +
     (built.rowsSplit ? `  rows split at party walls: ${built.rowsSplit} (§33.2)` : ''),
@@ -155,7 +163,7 @@ const parcels = deriveParcels(
   graph.nodes,
   graph.edges,
   waterRings(substrate),
-  area.id,
+  chunkIdOut,
   clip,
 )
 log(
@@ -227,7 +235,7 @@ const provenance: Provenance[] = [
 ]
 
 const chunk: ChunkMeta = {
-  id: area.id,
+  id: chunkIdOut,
   name: area.name,
   origin: frame.origin,
   bbox: [wgs[0], wgs[1], wgs[2], wgs[3]],
@@ -332,6 +340,43 @@ log(`      ${sqlPath}`)
  * wrote millimetre-quantised coordinates; a validator that never reads the
  * artifact cannot catch anything the artifact introduces.
  */
+/**
+ * §34 step 4's instrument: build a day-0 world from the emitted artifact and
+ * read the best-use cap off the same functions the acquisition score uses.
+ * The importer depending on @civ/sim for VALIDATION is the §21.4 shape — the
+ * validator exercises the emitted artifact through its real consumer.
+ */
+async function measureViability(artifact: WorldSeed): Promise<{ best: number; income: number }> {
+  const { MemoryStore } = await import('@civ/persistence')
+  const simMod = await import('@civ/sim')
+  const eco = await import('@civ/sim/economy.ts')
+  const sim = new simMod.Simulation(artifact, new MemoryStore(), { agentCount: 0, seed: 'viability' })
+  const w = sim.world
+  const RATE = 365
+  let standing = 0
+  let viable = 0
+  let incomeViable = 0
+  for (const b of w.buildings.values()) {
+    if (b.state !== 'standing') continue
+    standing++
+    const price = eco.acquisitionPrice(w, b)
+    const capIncome = (b.yieldPerTick * RATE) / Math.max(1, price)
+    let capConvert = Number.NEGATIVE_INFINITY
+    for (const t of ['residential', 'retail', 'commercial', 'office'] as const) {
+      if (t === b.purpose) continue
+      const y = eco.yieldPerTick(w, { ...b, purpose: t, condition: Math.max(b.condition, 0.85) })
+      const c = (y * RATE) / Math.max(1, price + eco.conversionCost(b))
+      if (c > capConvert) capConvert = c
+    }
+    if (Math.max(capIncome, capConvert) > 0) viable++
+    if (capIncome > 0) incomeViable++
+  }
+  return {
+    best: standing ? viable / standing : 0,
+    income: standing ? incomeViable / standing : 0,
+  }
+}
+
 log('\n[7/7] validating the emitted artifacts')
 const checks = seedChecks(validateSeed(written))
 for (const c of checks) log(`      ${c.ok ? 'ok  ' : 'FAIL'} ${c.label.padEnd(46)} ${c.detail}`)
@@ -353,6 +398,37 @@ log(
   `      ${ownableOk ? 'ok  ' : 'FAIL'} ${'ownable / imported >= 97% (§33.1)'.padEnd(46)} ` +
     `${ownable}/${built.buildings.length} = ${(ownableShare * 100).toFixed(1)}%`,
 )
+
+/**
+ * §34 step 4: predict the dark mass instead of discovering it six seeds later.
+ * The London diagnosis named the mechanism — stock whose net yield is negative
+ * in its current use and whose best use is a different purpose — so the
+ * predictor IS that mechanism, run at day 0: the share of standing stock whose
+ * best-use cap (income or conversion, the same max the acquisition score now
+ * takes) is positive on the emitted artifact. First-order: no site term (it
+ * needs an agent's traits) and no competition (day 0 has none); validated
+ * against the measured §18.2 dark share on both existing chunks.
+ */
+/**
+ * Two numbers, because the first alone predicts nothing: with conversion in
+ * the score, best-use viability reads ~100% on healthy fabric — the §34
+ * mechanism is priced, so the mechanism-driven dark mass SHOULD be ~0. The
+ * spread between best-use and income-only is the informative part: it is how
+ * much of this chunk's market exists only through buy-to-convert. London:
+ * income-only ~half, best-use 100% — a chunk that a conversion-blind economy
+ * leaves half dark, which is precisely what happened.
+ */
+const viability = await measureViability(written)
+log(
+  `      viable/ownable at day 0 (§34): best-use ${(viability.best * 100).toFixed(1)}%, ` +
+    `income-only ${(viability.income * 100).toFixed(1)}% — the spread is the chunk's conversion dependence`,
+)
+if (seed.stats.importHealth) {
+  const h = seed.stats.importHealth as { viableShare?: number; viableIncomeOnly?: number }
+  h.viableShare = +viability.best.toFixed(3)
+  h.viableIncomeOnly = +viability.income.toFixed(3)
+  await emitSeed(seed)
+}
 
 const sql = await checkSql(sqlPath, written, frame)
 const sqlOk = sql.missing === 0 && sql.worstErrorM < 0.05

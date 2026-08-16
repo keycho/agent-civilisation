@@ -11,7 +11,9 @@
   },
   "dependencies": {
     "@civ/core": "*",
-    "d3-delaunay": "^6.0.4"
+    "d3-delaunay": "^6.0.4",
+    "@civ/sim": "*",
+    "@civ/persistence": "*"
   },
   "devDependencies": {
     "@types/d3-delaunay": "^6.0.4",

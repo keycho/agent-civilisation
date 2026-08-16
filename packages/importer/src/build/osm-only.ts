@@ -139,7 +139,9 @@ export function buildFromOsm(
   frame: ChunkFrame,
   chunkId: string,
   clip: { minX: number; minY: number; maxX: number; maxY: number },
+  opts: { split?: boolean } = {},
 ): BuildingsResult {
+  const doSplit = opts.split !== false
   const buildings: BaselineBuilding[] = []
   let matched = 0
   let unmatched = 0
@@ -179,7 +181,7 @@ export function buildFromOsm(
     const heightM = taggedHeight ?? Math.max(2.6, levels * 3.1 + 0.8)
     const constructionYear = parseYear(tags)
 
-    const rowPieces = splitRow(ring, tags, purpose)
+    const rowPieces = doSplit ? splitRow(ring, tags, purpose) : [ring]
     if (rowPieces.length > 1) rowsSplit++
 
     for (let k = 0; k < rowPieces.length; k++) {

@@ -117,6 +117,8 @@ export interface Summary {
   /** §18.2 */
   untouchedIds: string[]
   untouchedShare: number
+  /** §34 step 3: observation-candidate appearances per baseline building */
+  enumeratedByBuilding: Record<string, number>
   /** §21.3: divergence class per baseline building, for cross-seed entropy */
   divergenceByBuilding: Record<string, number>
   /**
@@ -404,6 +406,7 @@ export async function runSeed(
     churn: churnOf(w, actionCounts.acquire_building),
     untouchedIds,
     divergenceByBuilding,
+    enumeratedByBuilding: Object.fromEntries(sim.world.enumerated),
     marginByBuilding,
     siteByBuilding,
     untouchedByPurpose: byPurpose,

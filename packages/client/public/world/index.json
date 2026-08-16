@@ -1,9 +1,9 @@
 {
   "chunks": [
     {
-      "id": "london-deptford",
-      "name": "London — Deptford Riverside",
-      "file": "london-deptford.json"
+      "id": "schiedam-havens",
+      "name": "Schiedam — Havens",
+      "file": "schiedam-havens.json"
     }
   ]
 }

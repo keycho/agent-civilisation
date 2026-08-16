@@ -143,6 +143,7 @@ export function observe(world: World, agent: Agent): Observation {
     if (!c) continue
     if (Math.hypot(c[0] - focus[0], c[1] - focus[1]) > SEARCH_RADIUS_M) continue
     forSale.push(refOf(world, b))
+    world.enumerated.set(b.id, (world.enumerated.get(b.id) ?? 0) + 1)
   }
 
   for (const p of world.parcels.values()) {
@@ -160,7 +161,11 @@ export function observe(world: World, agent: Agent): Observation {
   const adjacentToHoldings: ParcelRef[] = []
   for (const id of adjacentIds) {
     const p = world.parcels.get(id)
-    if (p) adjacentToHoldings.push(parcelRef(world, p, agent))
+    if (p) {
+      adjacentToHoldings.push(parcelRef(world, p, agent))
+      const b = p.buildingId ? world.standing(p.buildingId) : undefined
+      if (b) world.enumerated.set(b.id, (world.enumerated.get(b.id) ?? 0) + 1)
+    }
   }
 
   const recent = world.store.events({ sinceTick: world.tick - 180, limit: 60 })
@@ -642,7 +647,27 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
       const incomeAnnual = b.yieldPerTick * RATE_WINDOW_TICKS
       const site = siteValue(world, agent, b, s)
       const annual = Math.max(incomeAnnual, site * ECONOMY.capRate)
-      const cap = annual / Math.max(1, price)
+      /**
+       * §34 step 3's verdict, and §21.1's lesson repeating one level up: the
+       * London dark mass (44% of the chunk untouched in every seed) was
+       * enumerated as often as the touched stock and never chosen, because its
+       * net yield is negative — maintenance beats rent at 54 m² pieces under
+       * these constants — and a buyer here priced only current income or
+       * clearance. The stock's best use was a different purpose, and the
+       * mechanism that expresses that (convert) was only reachable AFTER an
+       * acquisition that could never win a rank.
+       *
+       * So the third use enters the max: the conversion rate, over the
+       * project's capital rather than the price alone — buying to convert
+       * commits price plus conversion cost, and pricing it over price alone
+       * would flatter every marginal conversion.
+       */
+      const conv = bestConversion(world, b, agent)
+      const capConvert = conv
+        ? ((b.yieldPerTick + conv.uplift) * RATE_WINDOW_TICKS) /
+          Math.max(1, price + conversionCost(b))
+        : Number.NEGATIVE_INFINITY
+      const cap = Math.max(annual / Math.max(1, price), capConvert)
       const forSite = site * ECONOMY.capRate > incomeAnnual
       // §23.3: what this purchase is *for*. Scoring a buy independently of what
       // follows makes it a terminal action, and a scoring function with a

@@ -18,7 +18,7 @@ export interface AreaDef {
    * estimated heights until a national dataset is wired. Also selects the
    * frame: RD for NL, local ENU elsewhere.
    */
-  country: 'NL' | 'GB'
+  country: 'NL' | 'GB' | 'US' | 'FR' | 'JP'
   /**
    * §24.2: the axis of the fabric, in degrees clockwise from grid north. The
    * chunk is cut along this rather than along north, so the same building count
@@ -155,6 +155,44 @@ export const AREAS: Record<string, AreaDef> = {
     adminCode: 'E09000023',
     country: 'GB',
     note: 'Thames-side post-industrial: Convoys Wharf, Deptford terraces, creek-mouth sheds.',
+  },
+  /**
+   * §31.4, the remaining three. Defined ahead of import so the axis
+   * measurement and the archetype-family harness gate (§31.6-4: family
+   * through the §16.1 harness BEFORE import) have somewhere to point.
+   * Standing predictions to record on import, either way: tokyo's parcel
+   * derivation is the strangest of the four; brooklyn's grid clears the 6%
+   * axis bar.
+   */
+  'brooklyn-redhook': {
+    id: 'brooklyn-redhook',
+    name: 'Brooklyn — Red Hook',
+    lat: 40.6768,
+    lon: -74.011,
+    radiusM: 360,
+    adminCode: '36047',
+    country: 'US',
+    note: 'Low-rise industrial waterfront edge: brownstone rows, warehouses, working piers.',
+  },
+  'paris-ourcq': {
+    id: 'paris-ourcq',
+    name: 'Paris — Ourcq / Petite Ceinture',
+    lat: 48.8895,
+    lon: 2.3825,
+    radiusM: 320,
+    adminCode: '75119',
+    country: 'FR',
+    note: 'Periphery fringe, 19e: canal basin, rail belt remnants, workshops under mansard blocks.',
+  },
+  'tokyo-kyojima': {
+    id: 'tokyo-kyojima',
+    name: 'Tokyo — Kyojima',
+    lat: 35.7095,
+    lon: 139.8215,
+    radiusM: 300,
+    adminCode: '13107',
+    country: 'JP',
+    note: 'Shitamachi fine-grain: wooden rowhouses on alleys, small workshops, pocket shrines.',
   },
   'schiedam-wide': {
     id: 'schiedam-wide',

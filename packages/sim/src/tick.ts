@@ -87,6 +87,39 @@ const NAME_POOLS: Record<string, { first: string[]; house: string[] }> = {
       'Fletcher', 'Ainsworth', 'Rowe', 'Tanner', 'Gould',
     ],
   },
+  US: {
+    first: [
+      'Ruth', 'Sal', 'Gloria', 'Walt', 'Pearl', 'Moe', 'Hazel', 'Gus',
+      'Etta', 'Frank', 'Dot', 'Ray', 'June', 'Cy', 'Marge', 'Lou',
+      'Opal', 'Ike', 'Fay', 'Ben',
+    ],
+    house: [
+      'Kowalski', 'Marino', 'Delgado', 'Hansen', 'Okafor', 'Ruiz', 'Feldman',
+      'Byrne', 'Costa', 'Novak', 'Lindqvist', 'Amato',
+    ],
+  },
+  FR: {
+    first: [
+      'Odette', 'Marcel', 'Colette', 'Henri', 'Simone', 'Gaston', 'Lucienne',
+      'Raymond', 'Yvette', 'Émile', 'Denise', 'Fernand', 'Paulette', 'André',
+      'Ginette', 'Roger', 'Madeleine', 'Lucien', 'Renée', 'Georges',
+    ],
+    house: [
+      'Berthelot', 'Lemoine', 'Carpentier', 'Roussel', 'Delacroix', 'Marchand',
+      'Fontaine', 'Girard', 'Baudry', 'Perrin', 'Chevalier', 'Aubert',
+    ],
+  },
+  JP: {
+    first: [
+      'Haru', 'Kenji', 'Tomiko', 'Shigeru', 'Umeko', 'Isamu', 'Chiyo', 'Goro',
+      'Fumiko', 'Tadashi', 'Kiyo', 'Noboru', 'Sachiko', 'Masaru', 'Toshiko',
+      'Hideo', 'Yone', 'Takeshi', 'Kimiko', 'Susumu',
+    ],
+    house: [
+      'Ishikawa', 'Nakamura', 'Hoshino', 'Takahashi', 'Kobayashi', 'Endo',
+      'Miyamoto', 'Sakurai', 'Ueda', 'Fujimura', 'Okada', 'Shimizu',
+    ],
+  },
 }
 
 /**

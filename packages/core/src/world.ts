@@ -209,6 +209,10 @@ export interface WorldSeed {
       ownableShare?: number
       synthesisedParcels?: number
       rowsSplit?: number
+      /** §34: share of stock with a positive best-use cap at day 0 */
+      viableShare?: number
+      /** the same with conversion blinded — the spread is conversion dependence */
+      viableIncomeOnly?: number
     }
   }
 }
