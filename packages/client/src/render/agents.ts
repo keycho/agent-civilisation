@@ -24,7 +24,7 @@ import {
  * stop interpolating and become static presence markers with an activity pulse.
  */
 
-const OCCUPATION_COLOR: Record<string, string> = {
+export const OCCUPATION_COLOR: Record<string, string> = {
   consolidator: '#d8b36a',
   renovator: '#8fbe86',
   developer: '#7fe3e0',

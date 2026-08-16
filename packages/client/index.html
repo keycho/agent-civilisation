@@ -3,225 +3,336 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>agent civilisation</title>
+    <title>terrafork</title>
     <style>
+      /*
+       * §35: the chrome goes terminal, the world stays a diorama. Everything in
+       * this stylesheet is the ui layer only — no rule here may touch the
+       * canvas or tint the render (§35.1). amber/cream on near-black, one mono
+       * face, all lowercase. No scanlines, no glow: the terminal register is
+       * typographic, not atmospheric (§35.5).
+       */
       :root {
-        --ink: #1e2226;
-        --muted: #71787e;
-        --panel: rgba(250, 249, 246, 0.9);
-        --line: rgba(30, 34, 38, 0.13);
-        --accent: #2f6f6b;
+        --bg: #0d0c0a;
+        --pane: rgba(13, 12, 9, 0.78);
+        --edge: #2a2620;
+        --cream: #e6ddc6;
+        --dim: #8a8069;
+        --dimmer: #5c5546;
+        --amber: #e2a54f;
+        --wash: rgba(226, 165, 79, 0.07);
       }
       * { box-sizing: border-box; }
-      html, body { margin: 0; height: 100%; overflow: hidden; background: #c9d3d8; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); }
       body {
-        font: 13px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
-        color: var(--ink);
+        font: 12px/1.55 ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+        color: var(--cream);
+        text-transform: lowercase;
         -webkit-font-smoothing: antialiased;
+        font-variant-numeric: tabular-nums;
       }
       canvas { display: block; }
-
-      /*
-       * §24.1: transparent panels need something to sit on or the provenance
-       * text vanishes into the terrain. This is not the old card coming back —
-       * it is a corner vignette with no edge and no shape, so it reads as
-       * atmosphere rather than as an object framing the world. The panels lie
-       * on top of it.
-       */
-      #scrim {
-        position: fixed; inset: 0; pointer-events: none; z-index: 0;
-        /* edge gradients, not corner ones: the panels hug the left and right
-           edges over their full height, and corner blobs left the middle of the
-           feed sitting on bare terrain. */
-        background:
-          linear-gradient(to right,  rgba(233,237,239,0.94) 0%, rgba(233,237,239,0.55) 14%, rgba(233,237,239,0) 27%),
-          linear-gradient(to left,   rgba(233,237,239,0.94) 0%, rgba(233,237,239,0.55) 15%, rgba(233,237,239,0) 28%),
-          linear-gradient(to bottom, rgba(233,237,239,0.80) 0%, rgba(233,237,239,0) 9%),
-          linear-gradient(to top,    rgba(233,237,239,0.72) 0%, rgba(233,237,239,0) 7%);
-        transition: opacity 420ms ease;
-      }
-      body.ambient #scrim { opacity: 0; }
-
-      /*
-       * §15: the default experience is mostly world. UI is secondary.
-       *
-       * §24.1: "panels to transparent overlays at the extreme edges." They were
-       * opaque fills with a border and a drop shadow, one in each corner, which
-       * made them objects sitting on top of the world and bracketing it on
-       * every side — ui framing the world rather than the other way round. No
-       * fill, no border, no shadow: the text sits directly on the world and the
-       * only concession to legibility is a soft shadow on the glyphs.
-       */
-      .panel {
-        position: fixed;
-        z-index: 1;
-        background: none;
-        border: 0;
-        border-radius: 0;
-        backdrop-filter: none;
-        box-shadow: none;
-        text-shadow: 0 1px 3px rgba(232, 236, 238, 0.85), 0 0 12px rgba(232, 236, 238, 0.6);
-        transition: opacity 420ms ease;
-      }
-
-      /* gone entirely in ambient, per §24.1. The clock stays: it carries the
-         ambient toggle, and hiding the way out with the ui is a trap. */
-      body.ambient .panel:not(#clock) { opacity: 0; pointer-events: none; }
-      body.ambient #clock > :not(#ambient) { opacity: 0; transition: opacity 420ms ease; }
-      body.ambient #hint { opacity: 0; transition: opacity 420ms ease; }
-
-      #titlecard {
-        top: 10px; left: 12px; padding: 0; max-width: 300px;
-      }
-      #titlecard h1 { margin: 0; font-size: 13.5px; letter-spacing: 0.01em; font-weight: 600; }
-      #titlecard .place { margin: 1px 0 0; font-size: 12px; color: var(--muted); }
-      #titlecard .stats { margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--line);
-                          font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-      #titlecard .prov { margin-top: 7px; font-size: 10.5px; color: var(--muted); line-height: 1.45; }
-
-      #clock {
-        top: 10px; left: 50%; transform: translateX(-50%);
-        padding: 0; display: flex; align-items: center; gap: 14px;
-      }
-      #clock .label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.09em;
-                      color: var(--muted); font-weight: 600; }
-      #clock .speeds { display: flex; gap: 3px; }
-      #clock .pace { font-weight: 600; letter-spacing: 0.02em; }
-      #clock .season { font-weight: 600; letter-spacing: 0.02em; }
-      #clock .link,
-      #clock .viewers { opacity: 0.55; font-size: 11px; }
-      #clock .link.live { color: #6fbf7a; opacity: 0.9; }
-      #clock .link.lost { color: #d08b6a; opacity: 0.9; }
-      #clock button {
-        font: inherit; font-size: 11px; padding: 4px 8px; cursor: pointer;
-        border: 1px solid var(--line); background: transparent; border-radius: 6px; color: var(--ink);
-      }
-      #clock button[aria-pressed="true"] { background: var(--ink); color: #f8f7f4; border-color: var(--ink); }
-
-      #modes { bottom: 10px; left: 12px; padding: 0; width: 264px; }
-      #modes .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 11.5px; }
-      #modes .row label { flex: 0 0 74px; color: var(--muted); }
-      #modes input[type="range"] { flex: 1; }
-      #modes output { flex: 0 0 62px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
-      #divergenceIndex {
-        margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--line);
-        display: flex; justify-content: space-between; align-items: baseline;
-      }
-      #divergenceIndex .n { font-size: 21px; font-weight: 650; font-variant-numeric: tabular-nums; color: var(--accent); }
-      #divergenceIndex .l { font-size: 10.5px; color: var(--muted); text-align: right; line-height: 1.35; }
-      #generationLine { margin-top: 5px; font-size: 11.5px; color: var(--muted);
-                        font-variant-numeric: tabular-nums; }
-
-      #inspector {
-        top: 10px; right: 12px; width: 296px; padding: 0; display: none;
-        max-height: calc(100vh - 36px); overflow-y: auto;
-      }
-      #inspector.on { display: block; }
-      #inspector h2 { margin: 0 0 2px; font-size: 13.5px; font-weight: 600; }
-      #inspector .sub { margin: 0 0 10px; font-size: 11.5px; color: var(--muted); }
-      #inspector dl { margin: 0; display: grid; grid-template-columns: 96px 1fr; gap: 3px 10px; font-size: 11.5px; }
-      #inspector dt { color: var(--muted); }
-      #inspector dd { margin: 0; font-variant-numeric: tabular-nums; }
-      #inspector .section { margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--line); }
-      #inspector .section h3 { margin: 0 0 5px; font-size: 11px; text-transform: uppercase;
-                               letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
-      #inspector .lineage { font-size: 11.5px; line-height: 1.6; }
-      #inspector .lineage .step { display: flex; gap: 7px; }
-      #inspector .lineage .step .yr { color: var(--muted); font-variant-numeric: tabular-nums; flex: 0 0 34px; }
-      #close { position: absolute; top: 10px; right: 12px; border: 0; background: none;
-               font-size: 15px; color: var(--muted); cursor: pointer; line-height: 1; }
-
-      #feed { bottom: 10px; right: 12px; width: 300px; padding: 0; max-height: 40vh; overflow: hidden; }
-      #feed h3 { margin: 0 0 7px; font-size: 10.5px; text-transform: uppercase;
-                 letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
-      #feed .e { display: flex; gap: 8px; font-size: 11.5px; padding: 2.5px 0; }
-      #feed .e .yr { color: var(--muted); font-variant-numeric: tabular-nums; flex: 0 0 30px; }
-      #feed .e .t { flex: 1; }
-      #feed .e .dot { flex: 0 0 6px; height: 6px; width: 6px; border-radius: 50%; margin-top: 6px; }
-
-      #shot {
-        position: fixed; top: 76px; left: 50%; transform: translateX(-50%);
-        padding: 4px 11px; border-radius: 999px; font-size: 10.5px;
-        letter-spacing: 0.09em; text-transform: uppercase; font-weight: 600;
-        background: rgba(30, 34, 38, 0.82); color: #f5f3ee;
-        opacity: 0; transition: opacity 0.4s ease; pointer-events: none;
-      }
-      #shot.on { opacity: 1; }
-
-      #loading {
-        position: fixed; inset: 0; display: grid; place-items: center;
-        background: #c9d3d8; color: var(--muted); font-size: 12.5px; z-index: 10;
-      }
-      #hint { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
-              font-size: 10.5px; color: var(--muted); opacity: 0.8; }
       a { color: inherit; }
       .hidden { display: none !important; }
+      .amber { color: var(--amber); }
+      .dim { color: var(--dim); }
+      button {
+        font: inherit; text-transform: inherit; color: var(--cream);
+        background: none; border: 1px solid var(--edge); padding: 2px 8px; cursor: pointer;
+      }
+      button:hover { border-color: var(--dim); }
+      button[aria-pressed="true"] { color: var(--amber); border-color: var(--amber); }
+
+      /*
+       * §35.7: top and bottom are full-width strips with a single hairline
+       * separator. Bars, not panes: no titles, no border box.
+       */
+      .bar {
+        position: fixed; left: 0; right: 0; z-index: 3;
+        display: flex; align-items: center; gap: 14px;
+        padding: 7px 12px; background: var(--pane);
+        transition: opacity 420ms ease;
+      }
+      #barTop { top: 0; border-bottom: 1px solid var(--edge); }
+      #barBottom { bottom: 0; border-top: 1px solid var(--edge); }
+      .bar .sep { color: var(--dimmer); }
+      .bar .push { margin-left: auto; }
+      #wordmark { color: var(--amber); }
+      #chunkBtn { border: 0; padding: 0; color: var(--cream); }
+      #chunkBtn:hover { color: var(--amber); }
+      #diffStat b { color: var(--amber); font-weight: 400; }
+      #link.live { color: var(--dim); }
+      #link.connecting, #link.lost { color: var(--amber); }
+
+      #barBottom label { color: var(--dim); }
+      #barBottom .row { display: flex; align-items: center; gap: 8px; }
+      #barBottom output { min-width: 62px; color: var(--cream); }
+      #keys { color: var(--dimmer); }
+      #keys b { color: var(--dim); font-weight: 400; }
+
+      /* §35.6: thin amber tracks, square thumbs */
+      input[type="range"] {
+        -webkit-appearance: none; appearance: none;
+        width: 150px; height: 2px; background: var(--edge); outline: none;
+      }
+      input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none; appearance: none;
+        width: 8px; height: 8px; border-radius: 0; background: var(--amber); border: 0;
+      }
+      input[type="range"]::-moz-range-thumb {
+        width: 8px; height: 8px; border-radius: 0; background: var(--amber); border: 0;
+      }
+
+      /*
+       * §35.7: one pane component, used everywhere. 1px dim border, near-black
+       * translucent fill, title bar with the pane's dot-notation name in amber
+       * and a dim meta/close slot right. The world is never framed: panes float
+       * over it at the edges.
+       */
+      .pane {
+        position: fixed; z-index: 2;
+        background: var(--pane); border: 1px solid var(--edge); border-radius: 1px;
+        transition: opacity 420ms ease;
+      }
+      .pane .title {
+        display: flex; align-items: baseline; gap: 8px;
+        padding: 5px 9px; border-bottom: 1px solid var(--edge);
+      }
+      .pane .title .name { color: var(--amber); }
+      .pane .title .meta { margin-left: auto; color: var(--dimmer); }
+      .pane .title .x {
+        border: 0; padding: 0 0 0 8px; color: var(--dimmer); cursor: pointer; line-height: 1;
+      }
+      .pane .title .x:hover { color: var(--cream); }
+      .pane .body { padding: 7px 9px; }
+
+      /*
+       * §35.7 log gutter: right-aligned event ordinal in dim ink, 1px vertical
+       * rule, then the body. Never clock time (§20). Severity by colour, not
+       * boxes: routine dim, physical change cream, high weight amber with a
+       * faint row wash — the weight column drives it.
+       */
+      #log { right: 12px; bottom: 52px; width: 336px; }
+      #log .body { padding: 4px 0; max-height: 34vh; overflow: hidden; }
+      #log .e { display: flex; gap: 8px; padding: 1.5px 9px; color: var(--dim); }
+      #log .e .ord {
+        flex: 0 0 52px; text-align: right; color: var(--dimmer);
+        border-right: 1px solid var(--edge); padding-right: 7px;
+      }
+      #log .e .t { flex: 1; min-width: 0; }
+      #log .e .t b { font-weight: 400; }
+      #log .e.cream { color: var(--cream); }
+      #log .e.high { color: var(--amber); background: var(--wash); }
+      #log .e .n { color: var(--dimmer); }
+      #log .e.high .n { color: var(--amber); opacity: 0.7; }
+
+      #inspector { top: 42px; right: 12px; width: 300px; max-height: calc(100vh - 100px); display: none; }
+      #inspector.on { display: block; }
+      #inspector .body { overflow-y: auto; max-height: calc(100vh - 134px); }
+      #inspector h2 { margin: 0 0 1px; font-size: 12px; font-weight: 400; }
+      #inspector .sub { margin: 0 0 8px; color: var(--dim); }
+      #inspector dl { margin: 0; display: grid; grid-template-columns: 92px 1fr; gap: 2px 10px; }
+      #inspector dt { color: var(--dim); }
+      #inspector dd { margin: 0; }
+      #inspector .section { margin-top: 9px; padding-top: 7px; border-top: 1px solid var(--edge); }
+      #inspector .section h3 { margin: 0 0 4px; font-size: 12px; font-weight: 400; color: var(--dim); }
+      #inspector .lineage .step { display: flex; gap: 7px; }
+      #inspector .lineage .step .yr { color: var(--dim); flex: 0 0 40px; }
+      #followBtn { margin-top: 9px; width: 100%; }
+      #followBtn.on { color: var(--amber); border-color: var(--amber); }
+
+      #crew { top: 42px; left: 12px; width: 270px; display: none; }
+      #crew.on { display: block; }
+      #crew .a { display: flex; gap: 7px; align-items: baseline; padding: 2px 0; cursor: pointer; }
+      #crew .a:hover .nm { color: var(--amber); }
+      #crew .a .chip { flex: 0 0 7px; height: 7px; margin-top: 3px; align-self: center; }
+      #crew .a .nm { flex: 0 0 74px; }
+      #crew .a .plan { flex: 1; min-width: 0; color: var(--dim); white-space: nowrap;
+                       overflow: hidden; text-overflow: ellipsis; }
+      #crew .a .ct { color: var(--dimmer); }
+
+      #chunks { top: 36px; left: 84px; min-width: 250px; display: none; }
+      #chunks.on { display: block; }
+      #chunks .c { display: flex; gap: 8px; padding: 2px 0; cursor: pointer; }
+      #chunks .c:hover, #chunks .c.here { color: var(--amber); }
+      #chunks .c .where { margin-left: auto; color: var(--dim); }
+      #chunks .c:hover .where, #chunks .c.here .where { color: var(--amber); }
+
+      #changelog { bottom: 52px; left: 12px; width: 300px; display: none; }
+      #changelog.on { display: block; }
+      #changelog .body { max-height: 40vh; overflow-y: auto; }
+      #changelog .g { margin-bottom: 7px; }
+      #changelog .g .hd { color: var(--dim); }
+      #changelog .g .ev { display: flex; gap: 7px; cursor: pointer; padding: 1px 0; }
+      #changelog .g .ev:hover { color: var(--amber); }
+      #changelog .g .ev .w { color: var(--dimmer); flex: 0 0 26px; text-align: right; }
+      #changelog .g .ev .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden;
+                             text-overflow: ellipsis; }
+
+      /*
+       * §36.3: the entry card. Never modal: no backdrop, the world runs live
+       * behind it and any interaction dismisses it.
+       */
+      #cards {
+        position: fixed; z-index: 4; inset: 0; pointer-events: none;
+        display: flex; align-items: center; justify-content: center; gap: 12px;
+      }
+      #cards .pane { position: static; pointer-events: auto; }
+      #explainer { width: 400px; }
+      #explainer .body { padding: 12px 14px; }
+      #explainer p { margin: 0 0 10px; }
+      #explainer p:last-of-type { margin-bottom: 12px; }
+      #watchBtn { width: 100%; color: var(--amber); }
+      #help { width: 380px; display: none; }
+      #help.on { display: block; }
+      #help dl { margin: 0 0 4px; display: grid; grid-template-columns: 86px 1fr; gap: 2px 10px; }
+      #help dt { color: var(--amber); }
+      #help dd { margin: 0; color: var(--cream); }
+      #help .credits { margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--edge);
+                       color: var(--dim); }
+      #help .credits div { margin-bottom: 3px; }
+
+      /*
+       * §35.6: the shot label is a lowercase chip anchored to what it labels,
+       * not a floating pill mid-canvas.
+       */
+      #chip {
+        position: fixed; z-index: 1; transform: translate(-50%, -140%);
+        padding: 1px 7px; border: 1px solid var(--edge); background: var(--pane);
+        color: var(--dim); opacity: 0; transition: opacity 0.4s ease; pointer-events: none;
+      }
+      #chip.on { opacity: 1; }
+      #chip .who { color: var(--amber); }
+
+      /*
+       * §35.2 boot: over the world fading in. Two seconds, skippable, once per
+       * session.
+       */
+      #boot {
+        position: fixed; inset: 0; z-index: 10; background: var(--bg);
+        display: grid; place-items: center;
+        transition: opacity 600ms ease;
+      }
+      #boot.fading { opacity: 0; pointer-events: none; }
+      #boot .lines { min-width: 320px; min-height: 60px; color: var(--dim); }
+      #boot .lines div { margin: 2px 0; }
+      #boot .lines .done { color: var(--cream); }
+      #boot .lines .live { color: var(--amber); }
+
+      /* ambient (§15 leave-it-running): chrome recedes, the way out stays */
+      body.ambient .bar, body.ambient .pane, body.ambient #chip { opacity: 0; pointer-events: none; }
+      body.ambient #barTop { opacity: 1; pointer-events: none; background: none; border-color: transparent; }
+      body.ambient #barTop > * { opacity: 0; transition: opacity 420ms ease; }
+      body.ambient #barTop #ambient { opacity: 0.6; pointer-events: auto; }
     </style>
   </head>
   <body>
-    <div id="scrim"></div>
-    <div id="loading">loading the real world…</div>
+    <div id="boot"><div class="lines" id="bootLines"><div>mounting /earth</div></div></div>
 
-    <div class="panel" id="titlecard">
-      <h1 id="chunkName">—</h1>
-      <p class="place" id="chunkNote"></p>
-      <div class="stats" id="chunkStats"></div>
-      <div class="prov" id="chunkProv"></div>
+    <div class="bar" id="barTop">
+      <span id="wordmark">terrafork</span>
+      <span class="sep">·</span>
+      <button id="chunkBtn" title="switch city">—</button>
+      <span class="sep">·</span>
+      <span id="genN">gen 1</span>
+      <span class="sep">·</span>
+      <span id="diffStat"><b>0.0%</b> diff</span>
+      <span class="push"></span>
+      <span id="season" class="dim">s1</span>
+      <span id="pace" class="dim">—</span>
+      <span id="link" class="connecting">connecting…</span>
+      <span id="durability" class="dim"></span>
+      <button id="helpBtn" title="what is this (?)">?</button>
+      <button id="ambient" aria-pressed="true" title="ambient, the director drives (a)">ambient</button>
     </div>
 
     <!--
-      §21.6: there is no speed control any more. Throughput is a property of the
-      world, which one server owns and everyone is watching; a viewer reads the
-      pace and cannot set it. That is the difference between a shared world and
-      a synchronised one.
+      §21.6: no speed control. Throughput is a property of the world, which one
+      server owns; a viewer reads the pace and cannot set it.
     -->
-    <div class="panel" id="clock">
-      <span class="season" id="season">season 1</span>
-      <span class="label">thinking</span>
-      <span class="pace" id="pace">—</span>
-      <span class="link" id="link">connecting…</span>
-      <span class="viewers" id="durability"></span>
-      <button id="ambient" aria-pressed="true" title="ambient mode — the director drives the camera (a)">ambient</button>
-    </div>
-
-    <div id="shot"></div>
-
-    <div class="panel" id="modes">
+    <div class="bar" id="barBottom">
       <div class="row">
-        <label for="mode">Divergence</label>
+        <label for="mode">diff</label>
         <input id="mode" type="range" min="0" max="1" step="0.01" value="0" />
-        <output id="modeOut">normal</output>
+        <output id="modeOut">as built</output>
       </div>
       <div class="row">
-        <label for="scrub">History</label>
+        <label for="scrub">log</label>
         <input id="scrub" type="range" min="0" max="1" step="1" value="1" />
         <output id="scrubOut">live</output>
       </div>
-      <!-- §20.6: divergence index primary, generation secondary, no third readout -->
-      <div id="divergenceIndex">
-        <span class="n" id="divN">0.0%</span>
-        <span class="l" id="divL">divergence index<br />baseline stock touched</span>
+      <span id="actionsGen" class="dim"></span>
+      <span class="push"></span>
+      <span id="keys"><b>d</b> diff · <b>f</b> follow · <b>r</b> crew · <b>[ ]</b> city · <b>a</b> ambient · <b>?</b> help</span>
+    </div>
+
+    <div class="pane" id="log">
+      <div class="title"><span class="name">world.log</span><span class="meta" id="logMeta"></span></div>
+      <div class="body" id="feedList"></div>
+    </div>
+
+    <div class="pane" id="inspector">
+      <div class="title"><span class="name" id="insName">bldg</span><span class="meta" id="insMeta"></span>
+        <button class="x" id="close" title="close">x</button></div>
+      <div class="body">
+        <h2 id="insTitle"></h2>
+        <p class="sub" id="insSub"></p>
+        <dl id="insFacts"></dl>
+        <div class="section hidden" id="insLineageBox">
+          <h3>lineage</h3>
+          <div class="lineage" id="insLineage"></div>
+        </div>
+        <button id="followBtn" class="hidden">follow (f)</button>
       </div>
-      <div id="generationLine"><span id="genN">generation 1</span></div>
     </div>
 
-    <div class="panel" id="inspector">
-      <button id="close" title="close">×</button>
-      <h2 id="insTitle"></h2>
-      <p class="sub" id="insSub"></p>
-      <dl id="insFacts"></dl>
-      <div class="section hidden" id="insLineageBox">
-        <h3>Provenance</h3>
-        <div class="lineage" id="insLineage"></div>
+    <div class="pane" id="crew">
+      <div class="title"><span class="name">crew</span><span class="meta">this generation</span>
+        <button class="x" id="crewClose" title="close">x</button></div>
+      <div class="body" id="crewList"></div>
+    </div>
+
+    <div class="pane" id="chunks">
+      <div class="title"><span class="name">chunks</span><span class="meta">[ ] to cycle</span>
+        <button class="x" id="chunksClose" title="close">x</button></div>
+      <div class="body" id="chunkList"></div>
+    </div>
+
+    <div class="pane" id="changelog">
+      <div class="title"><span class="name">changelog</span><span class="meta">as observed</span></div>
+      <div class="body" id="changelogList"></div>
+    </div>
+
+    <div id="cards">
+      <div class="pane" id="explainer" style="display: none">
+        <div class="title"><span class="name">terrafork</span>
+          <button class="x" id="explainerClose" title="close">x</button></div>
+        <div class="body">
+          <p id="exPlace">this is a real place, real buildings.</p>
+          <p>we forked it. autonomous agents own the fork now.<br />
+             they buy, build, demolish and remake it. nobody controls them.</p>
+          <p>grey is the world as we left it. colour is theirs.</p>
+          <p>click a building for its history. click an agent to follow.<br />
+             press d for the diff against reality.</p>
+          <button id="watchBtn">[watch]</button>
+        </div>
+      </div>
+      <div class="pane" id="help">
+        <div class="title"><span class="name">vocabulary</span>
+          <button class="x" id="helpClose" title="close">x</button></div>
+        <div class="body">
+          <dl>
+            <dt>upstream</dt><dd>the real city as imported. the fork's baseline.</dd>
+            <dt>diff</dt><dd>what the agents changed against upstream. d toggles it.</dd>
+            <dt>log</dt><dd>every event since the fork. scrub travels it.</dd>
+            <dt>generation</dt><dd>agents retire, heirs continue. the world's clock.</dd>
+          </dl>
+          <div class="credits" id="credits"></div>
+        </div>
       </div>
     </div>
 
-    <div class="panel" id="feed">
-      <h3>Live feed</h3>
-      <div id="feedList"></div>
-    </div>
-
-    <div id="hint">drag orbit · shift-drag pan · wheel zoom · click a building · <b>a</b> for ambient · <a href="/preview/">archetype harness</a></div>
+    <div id="chip"><span class="who" id="chipWho"></span><span id="chipWhat"></span></div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

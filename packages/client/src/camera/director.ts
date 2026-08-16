@@ -38,6 +38,12 @@ export interface DirectorHooks {
   locateAgent(id: string): Vector3 | null
   locatePoint(x: number, y: number): Vector3
   onShot?(label: string, intent: CameraIntent): void
+  /**
+   * §35.6: with nothing worth watching, the drift-back returns to the §24.1
+   * framed orientation rather than persisting an arbitrary orbit. Absent, the
+   * old behaviour (keep drifting) applies.
+   */
+  homeAzimuth?: number
 }
 
 const IDLE_BEFORE_RESUME_S = 12
@@ -65,6 +71,15 @@ export class CameraDirector {
 
   get activeLabel(): string | null {
     return this.current?.label ?? null
+  }
+
+  /** where the active shot is looking, so the ui can anchor its chip there */
+  get shotTarget(): Vector3 | null {
+    return this.current?.target ?? null
+  }
+
+  get shotIntent(): CameraIntent | null {
+    return this.current?.intent ?? null
   }
 
   get inControl(): boolean {
@@ -114,10 +129,11 @@ export class CameraDirector {
         })
         this.hooks.onShot?.(next.label, next.intent)
       } else if (mustCut) {
-        // nothing worth watching: drift back out over the district
+        // nothing worth watching: drift back out over the district, returning
+        // to the framed orientation when one is configured (§35.6)
         this.shotElapsed = 0
         this.rig.flyTo(new Vector3(0, this.rig.target.y, 0), this.rig.limits.maxDistance * 0.78, {
-          azimuth: this.rig.azimuth + 0.35,
+          azimuth: this.hooks.homeAzimuth ?? this.rig.azimuth + 0.35,
           polar: 0.62,
           duration: 6,
         })

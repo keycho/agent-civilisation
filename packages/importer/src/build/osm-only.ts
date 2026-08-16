@@ -14,7 +14,8 @@
  * cannot run here, so the quality/decay asymmetry it proxied is priced
  * directly in the engine instead.
  */
-import type { ChunkFrame, OsmTags, Purpose, Ring, RoofHint } from '@civ/core'
+import type { ChunkFrame, Purpose, Ring, RoofHint } from '@civ/core'
+import type { OsmTags } from '../sources/overpass.ts'
 import {
   type BaselineBuilding,
   area as ringArea,

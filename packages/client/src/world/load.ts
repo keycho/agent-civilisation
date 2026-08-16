@@ -8,16 +8,31 @@ import {
 import type { BatchItem } from '../render/batch.ts'
 import { eraTint, jitterFor, roofToneFor } from '../render/tones.ts'
 
+export interface ChunkEntry {
+  id: string
+  name: string
+  file: string
+}
+
 export interface LoadedChunk {
   seed: WorldSeed
   items: BatchItem[]
   statics: Array<{ roofTone: number; jitter: number; era: number; agent: boolean }>
+  /** every chunk the index lists — §36.1's switcher reads this */
+  chunks: ChunkEntry[]
+  entry: ChunkEntry
+  /** §36.1: one server per chunk, so the switcher needs to know where each
+   *  world lives. Optional static file; absent means the default url applies. */
+  servers: Record<string, string>
 }
 
 export async function loadChunk(base = '/world'): Promise<LoadedChunk> {
-  const index = (await (await fetch(`${base}/index.json`)).json()) as {
-    chunks: Array<{ id: string; name: string; file: string }>
-  }
+  const [index, servers] = await Promise.all([
+    (await fetch(`${base}/index.json`)).json() as Promise<{ chunks: ChunkEntry[] }>,
+    fetch(`${base}/servers.json`)
+      .then((r) => (r.ok ? (r.json() as Promise<Record<string, string>>) : ({} as Record<string, string>)))
+      .catch(() => ({}) as Record<string, string>),
+  ])
   // §31: the index now lists more than one chunk. ?chunk= selects; the default
   // stays the first entry. The real fix is selecting by the server's hello,
   // which lands with the multi-chunk client (§31.6-6).
@@ -50,7 +65,7 @@ export async function loadChunk(base = '/world'): Promise<LoadedChunk> {
     })
   }
 
-  return { seed, items, statics }
+  return { seed, items, statics, chunks: index.chunks, entry, servers }
 }
 
 /** Static texture values for a building the simulation has just created. */
