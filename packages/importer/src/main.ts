@@ -328,7 +328,7 @@ const seed: WorldSeed = {
 }
 
 log('\n[6/7] emitting')
-const { jsonPath, bytes, written } = await emitSeed(seed)
+const { jsonPath, bytes, written } = await emitSeed(seed, { index: !NO_SPLIT })
 const sqlPath = await emitSql(seed, frame)
 log(`      ${jsonPath}  (${(bytes / 1024 / 1024).toFixed(2)} MB)`)
 log(`      ${sqlPath}`)
@@ -427,7 +427,7 @@ if (seed.stats.importHealth) {
   const h = seed.stats.importHealth as { viableShare?: number; viableIncomeOnly?: number }
   h.viableShare = +viability.best.toFixed(3)
   h.viableIncomeOnly = +viability.income.toFixed(3)
-  await emitSeed(seed)
+  await emitSeed(seed, { index: !NO_SPLIT })
 }
 
 const sql = await checkSql(sqlPath, written, frame)

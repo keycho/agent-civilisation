@@ -15,15 +15,34 @@ export const SQL_DIR = join(HERE, '..', '..', 'persistence', 'seed')
  */
 export async function emitSeed(
   seed: WorldSeed,
+  opts: { index?: boolean } = {},
 ): Promise<{ jsonPath: string; bytes: number; written: WorldSeed }> {
   await mkdir(SEED_DIR, { recursive: true })
   const jsonPath = join(SEED_DIR, `${seed.chunk.id}.json`)
   const text = JSON.stringify(seed, roundNumbers)
   await writeFile(jsonPath, text)
-  await writeFile(
-    join(SEED_DIR, 'index.json'),
-    JSON.stringify({ chunks: [{ id: seed.chunk.id, name: seed.chunk.name, file: `${seed.chunk.id}.json` }] }, null, 2),
-  )
+  /**
+   * The index MERGES. The single-entry write here was a single-chunk
+   * assumption that survived until the second chunk existed, at which point
+   * whichever import ran last silently erased every other chunk's entry —
+   * caught because a commit's own output showed London missing. Upsert by id,
+   * keep existing order, append new entries; diagnostic emits (§34's
+   * --no-split) pass index:false and never appear.
+   */
+  if (opts.index !== false) {
+    const indexPath = join(SEED_DIR, 'index.json')
+    let chunks: Array<{ id: string; name: string; file: string }> = []
+    try {
+      chunks = (JSON.parse(await readFile(indexPath, 'utf8')) as { chunks: typeof chunks }).chunks
+    } catch {
+      /* first chunk ever */
+    }
+    const entry = { id: seed.chunk.id, name: seed.chunk.name, file: `${seed.chunk.id}.json` }
+    const at = chunks.findIndex((c) => c.id === entry.id)
+    if (at >= 0) chunks[at] = entry
+    else chunks.push(entry)
+    await writeFile(indexPath, JSON.stringify({ chunks }, null, 2))
+  }
   const written = JSON.parse(await readFile(jsonPath, 'utf8')) as WorldSeed
   return { jsonPath, bytes: Buffer.byteLength(text), written }
 }
