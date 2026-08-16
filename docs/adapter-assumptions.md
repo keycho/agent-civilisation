@@ -96,6 +96,27 @@ completion flow fell 5.3 -> 2.4 per 10k on the control while conversions
 boomed. Whether that is crowding-out to correct or the honest price of a
 fuller market is a design decision, held as a loud KNOWN until made.
 
+§37.2 composition run (gated, 8 paired seeds, instrument committed with its
+pre-registration ahead of the measurement): absolute completed chains fell 18
+-> 10 median (7 of 8 seeds down, one up +9), so the fall is real and not the
+denominator artifact half of the prediction. The pre-registered ground split
+is structurally uninformative on the control: a completed chain requires
+standing stock by definition (assemble -> demolish -> develop), 82% of
+parcels carry stock the §34 formula marks conversion-preferred at day 0, and
+both cells that should discriminate are empty in both arms. What the numbers
+do show: the entire decline sits on ground where conversion is strictly the
+better project by the artifact's own formula, conversions rose 790 -> 1103
+per run where chains fell 8.5, and under the gated ruler chain sites were
+already high-value before the third use (1.16x median, 1.13x after) — the
+ungated smoke had shown the 0.69 -> 1.07 migration, meaning the boundary gate
+had been carrying the low-value chain population. Mechanism evidence is
+substitution along the price, consistent with honest price; the clean
+signature §37.2 asked for cannot be produced on this fabric. Verdict:
+UNDERDETERMINED by the pre-registered split; the call stays with the
+operator. London's vacant-superblock fabric would not populate the empty
+cell either — the chain definition itself binds completions to standing
+ground. The KNOWN stays loud in tune.ts until the call is made.
+
 ## 3. Block derivation starves in superblock fabric
 
 Schiedam: 9% of buildings fell outside every block face. London: 48% (227 of
