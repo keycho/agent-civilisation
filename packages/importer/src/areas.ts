@@ -76,6 +76,9 @@ export const AREAS: Record<string, AreaDef> = {
     radiusM: 280,
     adminCode: 'GM0606',
     country: 'NL',
+    // §42.2: the Sint-Jan-de-Doperkerk anchors the silhouette; hand-picked
+    // from the import flag log
+    untouchable: ['way/274172367'],
     /**
      * §24.2, measured and applied. The fabric axis here is 45.4 degrees,
      * binned off the emitted seed's road graph and weighted by edge length —
@@ -161,6 +164,8 @@ export const AREAS: Record<string, AreaDef> = {
      */
     adminCode: 'E09000023',
     country: 'GB',
+    // §42.2: st luke's, hand-picked from the import flag log
+    untouchable: ['way/87499720'],
     note: 'Thames-side post-industrial: Convoys Wharf, Deptford terraces, creek-mouth sheds.',
   },
   /**
@@ -179,6 +184,8 @@ export const AREAS: Record<string, AreaDef> = {
     radiusM: 360,
     adminCode: '36047',
     country: 'US',
+    // §42.2: the principal church mass on the grid, hand-picked from the flag log
+    untouchable: ['way/248168996'],
     /**
      * §24.2 procedure, second pass: imported north-cut first, axis measured
      * off the emitted road graph — 21.4% peak share at 130 deg against the 6%
@@ -196,6 +203,8 @@ export const AREAS: Record<string, AreaDef> = {
     radiusM: 320,
     adminCode: '75119',
     country: 'FR',
+    // §42.2: église saint-jacques saint-christophe, hand-picked from the flag log
+    untouchable: ['way/64037954'],
     /**
      * §24.2 second pass: north-cut first, axis measured off the emitted road
      * graph — 17.5% peak at 52 deg against the 6% bar, with the §33.3
