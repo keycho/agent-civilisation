@@ -6,7 +6,8 @@
   "scripts": {
     "import": "NODE_USE_ENV_PROXY=1 node --no-warnings src/main.ts",
     "coarse": "NODE_USE_ENV_PROXY=1 node --no-warnings src/coarse.ts",
-    "probe": "NODE_USE_ENV_PROXY=1 node --no-warnings src/probe.ts"
+    "probe": "NODE_USE_ENV_PROXY=1 node --no-warnings src/probe.ts",
+    "coarse:global": "NODE_USE_ENV_PROXY=1 node --no-warnings src/coarse-global.ts"
   },
   "dependencies": {
     "@civ/core": "*",
