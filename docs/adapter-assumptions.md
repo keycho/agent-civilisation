@@ -154,6 +154,29 @@ agent can capitalise. Across three fabrics the structural dark class is
 never the rank tail — the §37.3 gap metric is measuring the capital ceiling
 plus the budget floor, and both chunks hold at the gate on one decision.
 
+## 2f. Paris: the capital ceiling at its deepest, and 71 refused relations
+
+The §41.2 admission flagged paris at 15.6 pts stable dark (94 buildings,
+6/6 seeds) — the only chunk whose stable core alone exceeds the threshold.
+dark-rank names the same mechanism as london and brooklyn, at its strongest:
+stable dark sits at median cap percentile 0.64 against touched 0.44 (the
+sharpest rank inversion of the four chunks), 12% in the bottom quartile,
+split pieces underrepresenting at 0.55x, median area 245 m2 vs touched 41.
+The fabric explanation: the radial cut's atomic unit is a 15 m slice of a
+six-storey mansard block — even split pieces are institutional-scale
+capital, so the capital-ceiling class is structurally larger here. The
+ceiling-watch evidence (dynasties reach the class by gen 4-5 at 3x budget on
+brooklyn) says the class trades in longer runs. Paris holds at the gate on
+the operator's accept, mechanism named; enum ratio 216% — the most
+enumerated-never-chosen stock of any chunk.
+
+Also recorded: 71 multipolygon relations refused at ring stitching (counted,
+never silent). Expected causes: outer ways clipped by the fetch bbox at the
+chunk edge, and multi-part buildings. These buildings never enter the
+ownable denominator — the §33.1 silent-shrinkage caveat applies, so the
+count stays in the import log and here. The 32 perimeter blocks that did
+split radially conserved area within the asserted ±4%.
+
 ## 2e. US data carries no construction years (§18.4 note, recorded at import)
 
 What the year signal feeds: startingCondition (flattens to 0.7 without it),
