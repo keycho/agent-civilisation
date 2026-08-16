@@ -279,6 +279,8 @@ export interface ChunkMeta {
    * because no administrative scheme is global and the coarse layer is.
    */
   adminCode?: string
+  /** ISO2 country, set by the importer — picks the sim's name culture (§15) */
+  country?: string
 }
 
 // ---------------------------------------------------------------------------

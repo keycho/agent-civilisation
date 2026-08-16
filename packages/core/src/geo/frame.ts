@@ -14,17 +14,28 @@ export interface ChunkFrame {
 
 const EARTH_R = 6378137
 
-/** Fallback frame for anywhere without a national metric grid. */
-export function enuFrame(lat0: number, lon0: number): ChunkFrame {
+/**
+ * Fallback frame for anywhere without a national metric grid. Carries the same
+ * §24.2 fabric-axis rotation as the RD frame, because London's streets are no
+ * more north-aligned than Schiedam's canals.
+ */
+export function enuFrame(lat0: number, lon0: number, bearingDeg = 0): ChunkFrame {
   const mPerDegLat = (Math.PI / 180) * EARTH_R
   const mPerDegLon = mPerDegLat * Math.cos((lat0 * Math.PI) / 180)
+  const t = (-bearingDeg * Math.PI) / 180
+  const c = Math.cos(t)
+  const sn = Math.sin(t)
   return {
-    origin: { lat: lat0, lon: lon0 },
+    origin: { lat: lat0, lon: lon0, bearingDeg },
     toLocal(lat, lon) {
-      return [(lon - lon0) * mPerDegLon, (lat - lat0) * mPerDegLat]
+      const dx = (lon - lon0) * mPerDegLon
+      const dy = (lat - lat0) * mPerDegLat
+      return [dx * c - dy * sn, dx * sn + dy * c]
     },
     toWgs(x, y) {
-      return { lat: lat0 + y / mPerDegLat, lon: lon0 + x / mPerDegLon }
+      const dx = x * c + y * sn
+      const dy = -x * sn + y * c
+      return { lat: lat0 + dy / mPerDegLat, lon: lon0 + dx / mPerDegLon }
     },
   }
 }

@@ -262,6 +262,23 @@ function focusPoint(world: World, agent: Agent): [number, number] {
   return [x / n, y / n]
 }
 
+/**
+ * §18.4: what a square metre added to this structure earns, relative to new
+ * build. The discount is fabric, not maintenance — renovation restores
+ * condition but a 1909 shell keeps 1909 floorplates, ceiling heights and party
+ * walls. Year sharpens it where a year exists; the fallback is the generic
+ * old-fabric discount, which is what an adapter without years (§31.2) gets.
+ */
+function fabricQuality(b: { source: string; constructionYear?: number }): number {
+  if (b.source === 'agent_built') return 1
+  const y = b.constructionYear
+  if (y === undefined) return 0.78
+  if (y < 1920) return 0.62
+  if (y < 1945) return 0.7
+  if (y < 1980) return 0.82
+  return 0.9
+}
+
 function averageLandValue(world: World, focus: [number, number]): number {
   let sum = 0
   let n = 0
@@ -355,30 +372,29 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
 
       // Expansion needs intensity to pay off, which is why it clusters.
       //
-      // It is also capped hard, and that cap is doing real work: adding floors
-      // is always cheaper per square metre than replacing a building, so
-      // uncapped it wins every comparison and the entire historic centre
-      // quietly grows storeys instead of ever being redeveloped. You cannot
-      // stack two floors on a worn-out 1909 rowhouse.
-      // Pre-war structures are not extended. In fabric with a median
-      // construction year of 1909 this is the rule that decides the shape of
-      // the whole run: without it every old rowhouse simply gains a floor and
-      // 80% of the district ends up in one divergence class. With it, the
-      // inherited stock has to be renovated, converted or replaced — which is
-      // what §14's "first demolition and replacement" milestone describes.
-      const expandable = b.source === 'agent_built' || (b.constructionYear ?? 1900) >= 1945
+      // §18.4, landed here by §31.2 because London has no construction years
+      // for a gate to read: the era gate is retired and the asymmetry it
+      // proxied is priced instead. "A floor added to a 1909 building is
+      // 1909-quality space inheriting a 1909 decay curve, while replacement
+      // yields new stock on a fresh curve with a modern floorplate."
+      //
+      // So everything is expandable, and added floors on inherited stock earn
+      // at the structure's fabric quality rather than at new-build rent. Where
+      // a construction year exists it sharpens the price (a 1909 shell takes a
+      // deeper discount than a 1975 one); where it does not, the generic
+      // old-fabric discount applies. Agent-built structures price at par —
+      // they are the modern floorplate the comparison is against. The cap and
+      // the condition floor stay: they are physics, not era.
       const maxLevels = b.source === 'agent_built' ? 8 : 6
       const addLevels = b.source === 'agent_built' && b.levels <= 3 ? 2 : 1
       const cost = expansionCost(b, addLevels)
-      if (
-        expandable &&
-        cost <= funds &&
-        b.levels + addLevels <= maxLevels &&
-        b.condition >= 0.5
-      ) {
-        const uplift =
-          yieldPerTick(world, { ...b, levels: b.levels + addLevels, heightM: b.heightM + addLevels * 3.2 }) -
-          b.yieldPerTick
+      if (cost <= funds && b.levels + addLevels <= maxLevels && b.condition >= 0.5) {
+        const grown = yieldPerTick(world, {
+          ...b,
+          levels: b.levels + addLevels,
+          heightM: b.heightM + addLevels * 3.2,
+        })
+        const uplift = (grown - b.yieldPerTick) * fabricQuality(b)
         const payback = paybackWindows(cost, uplift)
         if (payback < s.maxPayback) {
           options.push({

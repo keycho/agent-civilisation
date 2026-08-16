@@ -58,15 +58,36 @@ export interface SimulationOptions {
   onSnapshot?: (s: SnapshotSignal) => void
 }
 
-const FIRST_NAMES = [
-  'Wilhelmina', 'Cornelis', 'Adriana', 'Hendrik', 'Margriet', 'Joris', 'Sanne',
-  'Bram', 'Femke', 'Teun', 'Roosmarijn', 'Kasper', 'Lieke', 'Maarten', 'Anouk',
-  'Sietse', 'Nynke', 'Ruben', 'Elske', 'Wouter',
-]
-const HOUSE_NAMES = [
-  'Vermeer', 'Haan', 'Kluyver', 'Bruggink', 'Nooteboom', 'Verhoeven', 'Slagter',
-  'Oosterhuis', 'Rietveld', 'Dijkgraaf', 'Wielinga', 'Ketelaar',
-]
+/**
+ * §15's recurring characters, localised: the first London render had Sietse
+ * and Roosmarijn redeveloping Deptford, which breaks the fiction the names
+ * exist to carry. The pool follows the chunk's country; NL is the default and
+ * the fallback for countries without a pool yet.
+ */
+const NAME_POOLS: Record<string, { first: string[]; house: string[] }> = {
+  NL: {
+    first: [
+      'Wilhelmina', 'Cornelis', 'Adriana', 'Hendrik', 'Margriet', 'Joris', 'Sanne',
+      'Bram', 'Femke', 'Teun', 'Roosmarijn', 'Kasper', 'Lieke', 'Maarten', 'Anouk',
+      'Sietse', 'Nynke', 'Ruben', 'Elske', 'Wouter',
+    ],
+    house: [
+      'Vermeer', 'Haan', 'Kluyver', 'Bruggink', 'Nooteboom', 'Verhoeven', 'Slagter',
+      'Oosterhuis', 'Rietveld', 'Dijkgraaf', 'Wielinga', 'Ketelaar',
+    ],
+  },
+  GB: {
+    first: [
+      'Nell', 'Arthur', 'Iris', 'Alfred', 'Vera', 'Sidney', 'Mabel', 'Reg',
+      'Doris', 'Ernest', 'Peggy', 'Wilf', 'Edith', 'Stan', 'Rose', 'Albert',
+      'Florence', 'Harold', 'Ivy', 'Len',
+    ],
+    house: [
+      'Hartley', 'Webb', 'Sullivan', 'Prescott', 'Drake', 'Whitmore', 'Cobb',
+      'Fletcher', 'Ainsworth', 'Rowe', 'Tanner', 'Gould',
+    ],
+  },
+}
 
 /**
  * §20.5's budget, in effort units. Spread rather than fixed so the population
@@ -88,6 +109,8 @@ export class Simulation {
   private readonly onSnapshot?: SimulationOptions['onSnapshot']
   private readonly rng: ReturnType<typeof makeRng>
   private namedDistricts = new Set<string>()
+  /** §15: name culture follows the chunk's country; NL is the fallback */
+  private readonly names: { first: string[]; house: string[] }
   private lastReport: DivergenceReport
   private lastSnapshotEventCount = 0
   private nextHeirSerial = 0
@@ -100,6 +123,7 @@ export class Simulation {
     this.snapshotEvery = opts.snapshotEveryEvents ?? 350
     this.onSnapshot = opts.onSnapshot
     this.rng = makeRng(`${seedKey}:sim`)
+    this.names = NAME_POOLS[seed.chunk.country ?? 'NL'] ?? NAME_POOLS.NL
 
     buildAdjacency(this.world)
     recomputeIntensity(this.world)
@@ -138,7 +162,7 @@ export class Simulation {
       const id = `agent-${i}`
       w.agents.set(id, {
         id,
-        name: `${FIRST_NAMES[i % FIRST_NAMES.length]} ${HOUSE_NAMES[i % HOUSE_NAMES.length]}`,
+        name: `${this.names.first[i % this.names.first.length]} ${this.names.house[i % this.names.house.length]}`,
         capital:
           ECONOMY.startingCapital[0] +
           this.rng() * (ECONOMY.startingCapital[1] - ECONOMY.startingCapital[0]),
@@ -332,7 +356,7 @@ export class Simulation {
     const heir: Agent = {
       ...agent,
       id: heirId,
-      name: `${FIRST_NAMES[hash(heirId) % FIRST_NAMES.length]} ${agent.name.split(' ').slice(1).join(' ')}`,
+      name: `${this.names.first[hash(heirId) % this.names.first.length]} ${agent.name.split(' ').slice(1).join(' ')}`,
       // cash takes an estate haircut; debt passes at face value with the
       // property that secures it, so a leveraged dynasty inherits its leverage
       capital: agent.capital * 0.82,

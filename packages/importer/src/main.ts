@@ -9,10 +9,12 @@
  * committed output in packages/client/public/world is what the app loads.
  */
 import type { ChunkMeta, Provenance, Substrate, WorldSeed } from '@civ/core'
-import { boundsOfMany, rdFrame, seedChecks, validateSeed } from '@civ/core'
+import { boundsOfMany, enuFrame,
+  rdFrame, seedChecks, validateSeed } from '@civ/core'
 import { AREAS, rdBboxOf, wgsBboxOf } from './areas.ts'
 import { extractBlocks } from './build/blocks.ts'
 import { buildBaselineBuildings } from './build/buildings.ts'
+import { buildFromOsm } from './build/osm-only.ts'
 import { deriveParcels } from './build/parcels.ts'
 import { buildRoadGraph } from './build/roads.ts'
 import { buildSubstrate, waterRings } from './build/substrate.ts'
@@ -35,14 +37,21 @@ const t0 = Date.now()
 const log = (s: string) => console.log(s)
 
 log(`# importing ${area.name}`)
-const frame = rdFrame(area.lat, area.lon, area.bearingDeg ?? 0)
-const rd = rdBboxOf(area)
+/**
+ * §31.2: the frame and the geometry source are the two things that vary by
+ * country. NL works in RD so 3DBAG needs no reprojection; everywhere else is a
+ * local ENU frame and OSM is both geometry and tags.
+ */
+const frame =
+  area.country === 'NL'
+    ? rdFrame(area.lat, area.lon, area.bearingDeg ?? 0)
+    : enuFrame(area.lat, area.lon, area.bearingDeg ?? 0)
 const wgs = wgsBboxOf(area)
 const r = area.radiusM
 const clip = { minX: -r, minY: -r, maxX: r, maxY: r }
 
 log('\n[1/7] fetching sources')
-const bag = await fetchBag(rd)
+const bag = area.country === 'NL' ? await fetchBag(rdBboxOf(area)) : []
 const osmBuildings = await overpass(queryBuildings(wgs), 'buildings')
 const osmRoads = await overpass(queryRoads(wgs), 'roads')
 const osmWater = await overpass(queryWater(wgs), 'water')
@@ -52,8 +61,11 @@ log(
     `highways=${osmRoads.elements.length}  water=${osmWater.elements.length}  landcover=${osmLand.elements.length}`,
 )
 
-log('\n[2/7] buildings: 3dbag geometry + osm tags')
-const built = buildBaselineBuildings(bag, osmBuildings.elements, frame, area.id, clip)
+log(area.country === 'NL' ? '\n[2/7] buildings: 3dbag geometry + osm tags' : '\n[2/7] buildings: osm only (§31.2 fallback adapter)')
+const built =
+  area.country === 'NL'
+    ? buildBaselineBuildings(bag, osmBuildings.elements, frame, area.id, clip)
+    : buildFromOsm(osmBuildings.elements, frame, area.id, clip)
 log(
   `      ${built.buildings.length} baseline buildings  (tag match ${built.matched}, fallback ${built.unmatched})`,
 )
@@ -154,7 +166,10 @@ log(
 log(`      substrate: ${substrate.surfaces.length} surfaces, ${substrate.cols}x${substrate.rows} elevation grid`)
 
 const SUBSTRATE_SOURCE: Record<Substrate['provider'], string> = {
-  'flat-datum': 'OSM landcover + datum interpolated from BAG ground heights',
+  'flat-datum':
+    area.country === 'NL'
+      ? 'OSM landcover + datum interpolated from BAG ground heights'
+      : 'OSM landcover + flat datum (no national DTM wired for this country yet)',
   voxcity: 'voxcity (build-time pipeline, tools/voxcity)',
   ahn: 'AHN dtm_05m via PDOK WCS (build-time pipeline, tools/ahn)',
 }
@@ -165,13 +180,28 @@ const SUBSTRATE_LICENCE: Record<Substrate['provider'], string> = {
 }
 
 const today = new Date().toISOString().slice(0, 10)
+/**
+ * §21.4 applies to provenance too: the first London render showed a panel
+ * claiming 3DBAG and AHN over a chunk built from neither. Provenance is
+ * assembled from what THIS import actually used, not from what the pipeline
+ * was first written against.
+ */
 const provenance: Provenance[] = [
-  {
-    layer: 'buildings (footprint, height, levels, construction year, roof type)',
-    source: '3DBAG v2023.10.08 via api.3dbag.nl',
-    licence: 'CC BY 4.0',
-    retrieved: today,
-  },
+  area.country === 'NL'
+    ? {
+        layer: 'buildings (footprint, height, levels, construction year, roof type)',
+        source: '3DBAG v2023.10.08 via api.3dbag.nl',
+        licence: 'CC BY 4.0',
+        retrieved: today,
+      }
+    : {
+        layer:
+          'buildings (footprint; height/levels from OSM tags where present, ' +
+          `estimated otherwise — ${Math.round((built.buildings.filter((b) => b.heightSource !== 'estimated').length / Math.max(1, built.buildings.length)) * 100)}% measured)`,
+        source: 'OpenStreetMap via Overpass API',
+        licence: 'ODbL 1.0 — share-alike applies to published derived databases',
+        retrieved: today,
+      },
   {
     layer: 'building purpose tags, road graph, water, landcover',
     source: 'OpenStreetMap via Overpass API',
@@ -203,6 +233,7 @@ const chunk: ChunkMeta = {
   localBounds,
   sourceNote: area.note,
   adminCode: area.adminCode,
+  country: area.country,
 }
 
 /**

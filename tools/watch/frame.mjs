@@ -28,7 +28,8 @@ const browser = await chromium.launch({
 })
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } })
 page.on('pageerror', (e) => console.log('PAGE EXCEPTION', e.message))
-await page.goto(`http://127.0.0.1:5173/?server=${encodeURIComponent(WS)}`, {
+const CHUNK = process.argv[4] && process.argv[4] !== 'ambient' ? `&chunk=${process.argv[4]}` : ''
+await page.goto(`http://127.0.0.1:5173/?server=${encodeURIComponent(WS)}${CHUNK}`, {
   waitUntil: 'domcontentloaded',
 })
 await page.waitForFunction(() => window.civ?.readouts != null, null, { timeout: 120000 })

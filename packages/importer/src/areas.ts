@@ -13,6 +13,13 @@ export interface AreaDef {
   /** national admin code where one exists (NL: CBS GMxxxx). Provenance, not a join key. */
   adminCode: string
   /**
+   * §31.2: which source adapter imports this area. 'NL' is the 3DBAG+BAG+AHN
+   * path; 'GB' (and every later country) is the OSM-only fallback adapter with
+   * estimated heights until a national dataset is wired. Also selects the
+   * frame: RD for NL, local ENU elsewhere.
+   */
+  country: 'NL' | 'GB'
+  /**
    * §24.2: the axis of the fabric, in degrees clockwise from grid north. The
    * chunk is cut along this rather than along north, so the same building count
    * fills a rectangle instead of a diamond and the corners stop being dead grey.
@@ -50,6 +57,7 @@ export const AREAS: Record<string, AreaDef> = {
     lon: 4.3959,
     radiusM: 280,
     adminCode: 'GM0606',
+    country: 'NL',
     /**
      * §24.2, measured and applied. The fabric axis here is 45.4 degrees,
      * binned off the emitted seed's road graph and weighted by edge length —
@@ -91,6 +99,7 @@ export const AREAS: Record<string, AreaDef> = {
     lon: 4.3268,
     radiusM: 300,
     adminCode: 'GM0622',
+    country: 'NL',
     note: 'Postwar expansion district: 1950s-60s slab blocks, rowhouses, green courts.',
   },
   'maasland-dorp': {
@@ -100,6 +109,7 @@ export const AREAS: Record<string, AreaDef> = {
     lon: 4.2758,
     radiusM: 300,
     adminCode: 'GM1842',
+    country: 'NL',
     note: 'Polder village core: church, dike streets, farmyards on the edge.',
   },
   'maassluis-haven': {
@@ -109,7 +119,34 @@ export const AREAS: Record<string, AreaDef> = {
     lon: 4.2492,
     radiusM: 280,
     adminCode: 'GM0556',
+    country: 'NL',
     note: 'Small port town: historic haven, locks, working waterfront edge.',
+  },
+  /**
+   * §31.4: london — thames-side post-industrial. Anchored on Convoys Wharf,
+   * the former royal dockyard at Deptford: a large cleared post-industrial
+   * site on the river (visible vacancy, §2's list), Victorian terraces and
+   * council estates south of it, wharf sheds along the creek. Recognisably
+   * London at the water; nothing in frame is immovable.
+   */
+  'london-deptford': {
+    id: 'london-deptford',
+    name: 'London — Deptford Riverside',
+    lat: 51.4855,
+    lon: -0.031,
+    radiusM: 400,
+    /**
+     * §24.2 measured, with a caveat schiedam did not have: the histogram is
+     * multi-axial. Peak 86.6 deg carries 3.5% of road length against a uniform
+     * 1.1% (schiedam's 45.4 peak carried 8.7%) — riverside curve plus three
+     * street grids at 87/56/31 deg. The rotation aligns the dominant grid and
+     * the near-90 cut costs almost nothing in fetch (cos+sin = 1.06), but the
+     * fabric genuinely has no single axis and the framing win is smaller here.
+     */
+    bearingDeg: 86.6,
+    adminCode: 'E09000023',
+    country: 'GB',
+    note: 'Thames-side post-industrial: Convoys Wharf, Deptford terraces, creek-mouth sheds.',
   },
   'schiedam-wide': {
     id: 'schiedam-wide',
@@ -118,6 +155,7 @@ export const AREAS: Record<string, AreaDef> = {
     lon: 4.3959,
     radiusM: 420,
     adminCode: 'GM0606',
+    country: 'NL',
     note: 'Wider frame for measuring; above the ratio band.',
   },
   'dordrecht-old': {
@@ -127,6 +165,7 @@ export const AREAS: Record<string, AreaDef> = {
     lon: 4.665,
     radiusM: 260,
     adminCode: 'GM0505',
+    country: 'NL',
     note: 'Fallback: older and denser, less vacant land.',
   },
 }

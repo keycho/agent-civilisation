@@ -102,10 +102,23 @@ export function seedChecks(r: SeedReport): Check[] {
       label: 'no derived parcel overlaps a carriageway',
       detail: `${r.derivedParcelsOverCarriageway} over`,
     },
+    /**
+     * §31.6-2, diagnosed on the first London import before this was touched:
+     * 22 of 268 buildings (8%) carried a carriageway, all plain
+     * highway=service through post-industrial wharf sheds — no covering, no
+     * tunnels, both geometries OSM ground truth. A footprint parcel IS the
+     * building's own footprint, so the derivation fault this canary hunts
+     * cannot occur here by construction; the old 1% bound encoded "OSM rarely
+     * does this in Dutch fabric", which is a fact about the fabric, not about
+     * the pipeline. The hard zero stays on derived parcels above, where
+     * derivation can actually err. This bound is now a misalignment tripwire:
+     * a whole building layer offset against the road layer would push far
+     * past it.
+     */
     {
-      ok: r.footprintParcelsOverCarriageway <= Math.ceil(r.parcels * 0.01),
-      label: 'footprint parcels over a carriageway within 1%',
-      detail: `${r.footprintParcelsOverCarriageway} (OSM draws a road through the building)`,
+      ok: r.footprintParcelsOverCarriageway <= Math.ceil(r.parcels * 0.15),
+      label: 'footprint parcels over a carriageway within 15%',
+      detail: `${r.footprintParcelsOverCarriageway} (OSM asserts road and building coexist)`,
     },
   ]
 }

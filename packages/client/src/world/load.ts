@@ -18,7 +18,12 @@ export async function loadChunk(base = '/world'): Promise<LoadedChunk> {
   const index = (await (await fetch(`${base}/index.json`)).json()) as {
     chunks: Array<{ id: string; name: string; file: string }>
   }
-  const seed = (await (await fetch(`${base}/${index.chunks[0].file}`)).json()) as WorldSeed
+  // §31: the index now lists more than one chunk. ?chunk= selects; the default
+  // stays the first entry. The real fix is selecting by the server's hello,
+  // which lands with the multi-chunk client (§31.6-6).
+  const want = new URLSearchParams(location.search).get('chunk')
+  const entry = index.chunks.find((c) => c.id === want) ?? index.chunks[0]
+  const seed = (await (await fetch(`${base}/${entry.file}`)).json()) as WorldSeed
 
   const items: BatchItem[] = []
   const statics: LoadedChunk['statics'] = []
