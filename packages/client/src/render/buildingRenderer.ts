@@ -152,6 +152,13 @@ export class BuildingRenderer {
     this.material.civ.uDivergenceMode.value = mode
   }
 
+  /** §42.1: the chunk's material base — wall tint and roof pull. */
+  setCityMaterial(m: { wall: [number, number, number]; roofTarget: string; roofW: number }): void {
+    this.material.civ.uCityWall.value.setRGB(m.wall[0], m.wall[1], m.wall[2])
+    this.material.civ.uCityRoof.value.set(m.roofTarget)
+    this.material.civ.uCityRoofW.value = m.roofW
+  }
+
   setHighlight(index: number): void {
     this.material.civ.uHighlight.value = index
   }

@@ -13,7 +13,14 @@
  * and the world underneath stays the §15 diorama. Nothing in the ui layer
  * touches the render's palette, and nothing in this file advances the world.
  */
-import { AGENT_MOTION_MAX_THROUGHPUT, BUILDING_SLOT_SPARE, DIVERGENCE_LABEL, PURPOSE_INDEX } from '@civ/core'
+import {
+  AGENT_MOTION_MAX_THROUGHPUT,
+  BUILDING_SLOT_SPARE,
+  CITY_MATERIALS,
+  CITY_MATERIAL_DEFAULT,
+  DIVERGENCE_LABEL,
+  PURPOSE_INDEX,
+} from '@civ/core'
 import type { BuildingDetail, EventWire, Frame, Hello, Readouts, ScrubResult } from '@civ/protocol'
 import { FRAME_INTERVAL_MS } from '@civ/protocol'
 import {
@@ -70,6 +77,9 @@ seed.buildings.forEach((b, i) => {
   buildings.data.set(i, 1, 0, PURPOSE_INDEX[b.purpose], 1)
 })
 buildings.flush()
+// §42.1: the chunk wears its own material base — schiedam's identity row
+// keeps it exactly as built
+buildings.setCityMaterial(CITY_MATERIALS[seed.chunk.id] ?? CITY_MATERIAL_DEFAULT)
 scene.add(buildings.group)
 
 const roads = createRoadMeshes(seed.roads.nodes, seed.roads.edges, substrate.heightAt, HALF_EXTENT)

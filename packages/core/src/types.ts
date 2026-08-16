@@ -79,6 +79,8 @@ export const ARCHETYPES = [
   'setback_industrial',
   // §31.6-4b: the fr family — the mansard block is the perimeter-ring parcel
   'mansard_block',
+  // §31.6-4c: the jp family — shitamachi fine grain, wood under grey tile
+  'machiya_row',
   // agent vocabulary — flat roofs, cleaner geometry, larger floorplates
   'agent_block',
   'agent_slab',

@@ -95,6 +95,22 @@ export function selectArchetype(input: ArchetypeInput): ArchetypeChoice {
   }
 
   /**
+   * §31.6-4c: the jp fabric. Shitamachi grain is the smallest in the set —
+   * wooden two-storey dwellings and workshop-houses on alley plots. Form
+   * only, like the us rules: jp data carries years rarely.
+   */
+  if (input.country === 'JP') {
+    if (
+      (input.purpose === 'residential' || input.purpose === 'retail' || input.purpose === 'industrial') &&
+      input.levels <= 3 &&
+      area <= 180 &&
+      h <= 11
+    ) {
+      return pick('machiya_row', `jp fine grain ${area.toFixed(0)}m2, ${input.levels} levels`)
+    }
+  }
+
+  /**
    * §31.6-4b: the fr fabric. The mansard block is the haussmannian/faubourien
    * perimeter parcel: mid-rise, deep, continuous roofline. Height carries the
    * rule (4-8 storeys); the perimeter split hands this selector pieces of
@@ -217,6 +233,10 @@ export function selectRoof(
     // system — the roof slot stays flat above it.
     case 'mansard_block':
       return 'parapet'
+    // §31.6-4c: the machiya's gentle tiled gable is the type; flat evidence
+    // still wins where osm says so.
+    case 'machiya_row':
+      return flatEvidence ? 'parapet' : 'shallow'
     default:
       return 'gable'
   }

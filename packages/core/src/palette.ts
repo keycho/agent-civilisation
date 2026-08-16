@@ -97,6 +97,45 @@ export const DIVERGENCE_COLORS_RGB: RGB[] = DIVERGENCE_COLOR.map(hexToRgb)
 /** How grey an untouched building goes at full divergence mode. */
 export const UNTOUCHED_DESATURATION = 0.85
 
+/**
+ * §42.1: per-city material base, riding the palette lerp. The cities were
+ * reading as the same place — deptford, ourcq and red hook all wore
+ * schiedam's terracotta. Each chunk gets a restrained material base: a
+ * multiplicative wall tint (value/hue shift, so purpose, jitter, era and
+ * condition variation all survive) and a roof pull toward a city target at a
+ * stated weight. §15's worldwide coherence holds — one family, shifted, no
+ * new art directions. Authored in the §16.1 harness; the identity row keeps
+ * schiedam exactly as built. Applied before the divergence lerp, so the diff
+ * view stays grey-and-amber everywhere.
+ */
+export interface CityMaterial {
+  /** multiplicative wall tint, authored near 1 */
+  wall: [number, number, number]
+  /** roof lerp target */
+  roofTarget: string
+  /** roof lerp weight, 0..1 */
+  roofW: number
+}
+
+export const CITY_MATERIALS: Record<string, CityMaterial> = {
+  // terracotta as built — the identity row
+  'schiedam-havens': { wall: [1, 1, 1], roofTarget: '#b07a63', roofW: 0 },
+  // london stock brick, yellow-brown, under slate
+  'london-deptford': { wall: [1.05, 0.99, 0.84], roofTarget: '#6e7480', roofW: 0.55 },
+  // limestone cream under zinc blue-grey
+  'paris-ourcq': { wall: [1.07, 1.03, 0.95], roofTarget: '#77808a', roofW: 0.6 },
+  // brownstone under dark membrane and tar
+  'brooklyn-redhook': { wall: [0.97, 0.87, 0.79], roofTarget: '#4f4a46', roofW: 0.55 },
+  // grey tile over wood and plaster
+  'tokyo-kyojima': { wall: [0.99, 0.96, 0.9], roofTarget: '#6d7278', roofW: 0.65 },
+}
+
+export const CITY_MATERIAL_DEFAULT: CityMaterial = {
+  wall: [1, 1, 1],
+  roofTarget: '#b07a63',
+  roofW: 0,
+}
+
 export const ENVIRONMENT = {
   sky: '#c9d3d8',
   horizon: '#dfe2e0',

@@ -95,6 +95,9 @@ export function generateArchetype(
     case 'mansard_block':
       mansardBlock(ctx)
       break
+    case 'machiya_row':
+      machiyaRow(ctx)
+      break
     case 'agent_block':
       agentBlock(ctx)
       break
@@ -503,6 +506,31 @@ function mansardBlock(ctx: FormCtx): void {
   } else {
     parapet(b, ring, h, 0.7, 0.35)
   }
+}
+
+// ---------------------------------------------------------------------------
+// §31.6-4c: the jp family
+// ---------------------------------------------------------------------------
+
+/**
+ * The machiya reads through smallness and the roof: a low two-storey wooden
+ * mass under a gentle tiled gable whose deep eaves overhang the walls — the
+ * overhang is the element, the way the cornice is the brownstone's. At twelve
+ * pixels a machiya street is a texture of small overhanging roofs.
+ */
+function machiyaRow(ctx: FormCtx): void {
+  const { b, ring, h, metrics, roof } = ctx
+  if (roof === 'parapet') {
+    walls(b, ring, h, 2.6)
+    parapet(b, ring, h, 0.45, 0.25)
+    return
+  }
+  const rise = Math.min(h * 0.42, Math.max(1.2, metrics.obb.width * 0.3))
+  const eaves = Math.max(2.2, h - rise)
+  walls(b, ring, eaves, 2.6)
+  // the deep eaves line, low and thin
+  cornice(b, ring, eaves - 0.08, 0.45, 0.12)
+  gableRoof(b, metrics.obb, eaves, rise, 0.62)
 }
 
 // ---------------------------------------------------------------------------

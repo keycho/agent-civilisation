@@ -22,6 +22,10 @@ export interface BuildingMaterialUniforms {
   uDivergenceMode: { value: number }
   uHighlight: { value: number }
   uHighlightColor: { value: Color }
+  /** §42.1: per-city material base — wall tint and roof pull */
+  uCityWall: { value: Color }
+  uCityRoof: { value: Color }
+  uCityRoofW: { value: number }
 }
 
 export interface BuildingMaterial extends MeshStandardMaterial {
@@ -42,6 +46,9 @@ export function createBuildingMaterial(data: BuildingDataTexture): BuildingMater
     uDivergenceMode: { value: 0 },
     uHighlight: { value: -1 },
     uHighlightColor: { value: new Color('#ffe6a8') },
+    uCityWall: { value: new Color(1, 1, 1) },
+    uCityRoof: { value: new Color('#b07a63') },
+    uCityRoofW: { value: 0 },
   }
   material.civ = civ
 
@@ -111,6 +118,9 @@ export function createBuildingMaterial(data: BuildingDataTexture): BuildingMater
 
         uniform float uDivergenceMode;
         uniform vec3 uHighlightColor;
+        uniform vec3 uCityWall;
+        uniform vec3 uCityRoof;
+        uniform float uCityRoofW;
 
         ${paletteGlsl()}
       `,
@@ -134,10 +144,17 @@ export function createBuildingMaterial(data: BuildingDataTexture): BuildingMater
         // roles: 0 wall, 1 roof, 2 ground floor, 3 trim
         if (vRole > 0.5 && vRole < 1.5) {
           base = mix(base, ROOF_TONES[clamp(roofToneIdx, 0, 4)], 0.88);
+          // §42.1: the city's roof material — slate, zinc, membrane, tile —
+          // pulled at an authored weight so the tone family still varies
+          base = mix(base, uCityRoof, uCityRoofW);
         } else if (vRole > 1.5 && vRole < 2.5) {
-          base *= GROUND_FLOOR_DARKEN;
+          base *= GROUND_FLOOR_DARKEN * uCityWall;
         } else if (vRole > 2.5) {
-          base *= TRIM_LIGHTEN;
+          base *= TRIM_LIGHTEN * uCityWall;
+        } else {
+          // §42.1: wall material base — a value/hue shift, never a repaint,
+          // so purpose, jitter, era and condition all keep reading through
+          base *= uCityWall;
         }
 
         // per-building variation, and an era tint so the real age of the stock

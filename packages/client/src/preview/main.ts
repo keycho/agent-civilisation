@@ -10,6 +10,8 @@
 import {
   ARCHETYPES,
   type ArchetypeId,
+  CITY_MATERIALS,
+  CITY_MATERIAL_DEFAULT,
   type Purpose,
   PURPOSE_INDEX,
   type Ring,
@@ -48,6 +50,12 @@ rig.polar = 0.62
 rig.flyTo(new Vector3(0, 0, 0), FRAME, { azimuth: 0.32, polar: 0.62, duration: 0.01 })
 attachRigControls(rig, canvas)
 
+// §42.1: which city's material base the harness is showing
+let activeCity = 'schiedam-havens'
+function cityMaterial() {
+  return CITY_MATERIALS[activeCity] ?? CITY_MATERIAL_DEFAULT
+}
+
 // exposed so tools/shot.mjs can frame a single row while iterating on a form
 ;(window as unknown as Record<string, unknown>).civPreview = {
   rig,
@@ -60,6 +68,12 @@ attachRigControls(rig, canvas)
       duration: 0.01,
     })
   },
+  setCity(id: string) {
+    if (!CITY_MATERIALS[id]) return
+    activeCity = id
+    rebuild()
+  },
+  cities: () => Object.keys(CITY_MATERIALS),
 }
 
 // ---------------------------------------------------------------------------
@@ -122,6 +136,7 @@ const PURPOSE_FOR: Record<ArchetypeId, Purpose> = {
   brownstone_row: 'residential',
   setback_industrial: 'industrial',
   mansard_block: 'residential',
+  machiya_row: 'residential',
   agent_block: 'residential',
   agent_slab: 'residential',
   agent_tower: 'office',
@@ -257,6 +272,11 @@ function rebuild(): void {
   data.flush()
 
   const material = createBuildingMaterial(data)
+  // §42.1: the harness is where the city bases are authored — reapply the
+  // active one on every rebuild
+  material.civ.uCityWall.value.setRGB(...cityMaterial().wall)
+  material.civ.uCityRoof.value.set(cityMaterial().roofTarget)
+  material.civ.uCityRoofW.value = cityMaterial().roofW
   mesh = new Mesh(batch.geometry, material)
   mesh.castShadow = true
   mesh.receiveShadow = true
