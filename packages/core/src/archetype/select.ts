@@ -94,6 +94,27 @@ export function selectArchetype(input: ArchetypeInput): ArchetypeChoice {
     }
   }
 
+  /**
+   * §31.6-4b: the fr fabric. The mansard block is the haussmannian/faubourien
+   * perimeter parcel: mid-rise, deep, continuous roofline. Height carries the
+   * rule (4-8 storeys); the perimeter split hands this selector pieces of
+   * roughly 15 m frontage, and small low stock falls through to the shared
+   * rules.
+   */
+  if (input.country === 'FR') {
+    if (
+      (input.purpose === 'residential' ||
+        input.purpose === 'commercial' ||
+        input.purpose === 'office' ||
+        input.purpose === 'retail') &&
+      h >= 11 &&
+      input.levels >= 4 &&
+      area >= 120
+    ) {
+      return pick('mansard_block', `fr mid-rise ${input.levels} levels, ${area.toFixed(0)}m2`)
+    }
+  }
+
   if (input.purpose === 'industrial' || input.purpose === 'utility') {
     return area >= 700
       ? pick('industrial', `industrial, ${area.toFixed(0)}m2`)
@@ -191,6 +212,10 @@ export function selectRoof(
     // setback tiers carry the silhouette, never a pitch.
     case 'brownstone_row':
     case 'setback_industrial':
+      return 'parapet'
+    // §31.6-4b: the mansard band is built by the generator, not the roof
+    // system — the roof slot stays flat above it.
+    case 'mansard_block':
       return 'parapet'
     default:
       return 'gable'

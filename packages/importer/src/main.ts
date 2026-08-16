@@ -81,7 +81,9 @@ const built =
       })
 log(
   `      ${built.buildings.length} baseline buildings  (tag match ${built.matched}, fallback ${built.unmatched})` +
-    (built.rowsSplit ? `  rows split at party walls: ${built.rowsSplit} (§33.2)` : ''),
+    (built.rowsSplit ? `  rows split at party walls: ${built.rowsSplit} (§33.2)` : '') +
+    (built.perimetersSplit ? `  perimeter blocks split radially: ${built.perimetersSplit} (§31.6-4b)` : '') +
+    (built.relationsDropped ? `  relations refused at stitching: ${built.relationsDropped}` : ''),
 )
 log(`      purpose   ${fmtCounts(built.purposeCounts)}`)
 log(`      archetype ${fmtCounts(built.archetypeCounts)}`)

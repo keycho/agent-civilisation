@@ -34,6 +34,7 @@ import {
 import type { OsmElement } from '../sources/overpass.ts'
 import { purposeFromTags } from './purpose.ts'
 import type { BuildingsResult } from './buildings.ts'
+import { readsAsPerimeter, splitPerimeter } from './perimeter.ts'
 
 const SIMPLIFY_TOLERANCE_M = 0.28
 
@@ -140,6 +141,53 @@ function splitRow(ring: Ring, tags: OsmTags, purpose: Purpose, frontageM: number
   return pieces
 }
 
+/**
+ * §31.6-4b: multipolygon relations were silently dropped before — a relation
+ * carries no direct geometry, so `el.geometry` skipped every courtyard block
+ * mapped as outer+inner rings, which on paris fabric is a §18.2-class
+ * shrinkage. Members arrive with per-way geometry under `out geom`; outer
+ * ways are stitched end-to-end into closed rings and inners kept for the
+ * perimeter split.
+ */
+function assembleRelation(
+  el: OsmElement,
+): { outer: Array<{ lat: number; lon: number }>; inners: Array<Array<{ lat: number; lon: number }>> } | null {
+  const outers: Array<Array<{ lat: number; lon: number }>> = []
+  const inners: Array<Array<{ lat: number; lon: number }>> = []
+  for (const role of ['outer', 'inner'] as const) {
+    const segs = (el.members ?? [])
+      .filter((m) => m.role === role && m.geometry && m.geometry.length >= 2)
+      .map((m) => [...(m.geometry as Array<{ lat: number; lon: number }>)])
+    const rings = role === 'outer' ? outers : inners
+    const key = (p: { lat: number; lon: number }) => `${p.lat.toFixed(7)},${p.lon.toFixed(7)}`
+    while (segs.length) {
+      const ring = segs.shift() as Array<{ lat: number; lon: number }>
+      let extended = true
+      while (extended && key(ring[0]) !== key(ring[ring.length - 1])) {
+        extended = false
+        for (let i = 0; i < segs.length; i++) {
+          const s = segs[i]
+          if (key(s[0]) === key(ring[ring.length - 1])) ring.push(...s.slice(1))
+          else if (key(s[s.length - 1]) === key(ring[ring.length - 1])) ring.push(...s.slice(0, -1).reverse())
+          else if (key(s[s.length - 1]) === key(ring[0])) ring.unshift(...s.slice(0, -1))
+          else if (key(s[0]) === key(ring[0])) ring.unshift(...s.slice(1).reverse())
+          else continue
+          segs.splice(i, 1)
+          extended = true
+          break
+        }
+      }
+      if (key(ring[0]) === key(ring[ring.length - 1]) && ring.length >= 4) rings.push(ring.slice(0, -1))
+      else return null // an open outer or inner is a stitching failure; refuse
+    }
+  }
+  if (outers.length === 0) return null
+  // the largest outer is the building; extra outers are separate parts, rare
+  // at this scale and dropped with the refusal counted by the caller
+  outers.sort((a, b) => b.length - a.length)
+  return { outer: outers[0], inners }
+}
+
 export function buildFromOsm(
   osmBuildings: OsmElement[],
   frame: ChunkFrame,
@@ -153,13 +201,28 @@ export function buildFromOsm(
   let matched = 0
   let unmatched = 0
   let rowsSplit = 0
+  let perimetersSplit = 0
+  let relationsDropped = 0
   const purposeCounts: Record<string, number> = {}
   const archetypeCounts: Record<string, number> = {}
 
   for (const el of osmBuildings) {
-    if (!el.geometry || el.geometry.length < 3) continue
     const tags = el.tags ?? {}
-    const localRing = cleanRing(el.geometry.map((g) => frame.toLocal(g.lat, g.lon)))
+    let wgsRing = el.geometry
+    let innerRings: Ring[] = []
+    if (el.type === 'relation') {
+      const assembled = assembleRelation(el)
+      if (!assembled) {
+        relationsDropped++
+        continue
+      }
+      wgsRing = assembled.outer
+      innerRings = assembled.inners
+        .map((r) => cleanRing(r.map((g) => frame.toLocal(g.lat, g.lon))))
+        .filter((r) => r.length >= 3)
+    }
+    if (!wgsRing || wgsRing.length < 3) continue
+    const localRing = cleanRing(wgsRing.map((g) => frame.toLocal(g.lat, g.lon)))
     if (localRing.length < 3) continue
 
     const c = centroid(localRing)
@@ -188,8 +251,17 @@ export function buildFromOsm(
     const heightM = taggedHeight ?? Math.max(2.6, levels * 3.1 + 0.8)
     const constructionYear = parseYear(tags)
 
-    const rowPieces = doSplit ? splitRow(ring, tags, purpose, frontageM) : [ring]
-    if (rowPieces.length > 1) rowsSplit++
+    // §31.6-4b: on fr fabric a courtyard perimeter block gets the radial cut;
+    // everything else keeps the §33.2 slab split, whose own gates exclude
+    // ring-shaped footprints anyway
+    let rowPieces: Ring[]
+    if (doSplit && opts.country === 'FR' && readsAsPerimeter(ring, innerRings)) {
+      rowPieces = splitPerimeter(ring, innerRings)
+      if (rowPieces.length > 1) perimetersSplit++
+    } else {
+      rowPieces = doSplit ? splitRow(ring, tags, purpose, frontageM) : [ring]
+      if (rowPieces.length > 1) rowsSplit++
+    }
 
     for (let k = 0; k < rowPieces.length; k++) {
       const piece = rowPieces[k]
@@ -210,9 +282,12 @@ export function buildFromOsm(
       archetypeCounts[choice.archetype] = (archetypeCounts[choice.archetype] ?? 0) + 1
 
       buildings.push({
-        id: rowPieces.length > 1 ? `b-osm-${el.id}-t${k}` : `b-osm-${el.id}`,
+        id:
+          rowPieces.length > 1
+            ? `b-osm-${el.type === 'relation' ? 'r' : ''}${el.id}-t${k}`
+            : `b-osm-${el.type === 'relation' ? 'r' : ''}${el.id}`,
         chunkId,
-        osmId: `way/${el.id}`,
+        osmId: `${el.type}/${el.id}`,
         footprint: piece,
         // flat-datum substrate for this adapter's first pass; the seam accepts
         // a real DTM later without this field changing meaning
@@ -229,5 +304,14 @@ export function buildFromOsm(
     }
   }
 
-  return { buildings, matched, unmatched, purposeCounts, archetypeCounts, rowsSplit }
+  return {
+    buildings,
+    matched,
+    unmatched,
+    purposeCounts,
+    archetypeCounts,
+    rowsSplit,
+    perimetersSplit,
+    relationsDropped,
+  }
 }

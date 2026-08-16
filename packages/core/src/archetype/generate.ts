@@ -92,6 +92,9 @@ export function generateArchetype(
     case 'setback_industrial':
       setbackIndustrial(ctx)
       break
+    case 'mansard_block':
+      mansardBlock(ctx)
+      break
     case 'agent_block':
       agentBlock(ctx)
       break
@@ -461,6 +464,45 @@ function setbackIndustrial(ctx: FormCtx): void {
     [c[0] - s, c[1] + s],
   ]
   b.prism(tank, h + 0.7, h + 3.1 + rng() * 1.2, ROLE_TRIM, ROLE_TRIM)
+}
+
+// ---------------------------------------------------------------------------
+// §31.6-4b: the fr family
+// ---------------------------------------------------------------------------
+
+/**
+ * The mansard block reads through the roofline: a vertical wall to a strong
+ * cornice line, then the steep slate band — nearly two storeys of it — set
+ * slightly in, with a flat top above. At city scale the dark inset band under
+ * a continuous cornice IS the mansard; dormers are sub-pixel. The ground
+ * floor band runs tall (shopfronts under apartments).
+ */
+function mansardBlock(ctx: FormCtx): void {
+  const { b, ring, h, levels } = ctx
+  const mansardH = Math.min(4.6, Math.max(2.4, h * 0.24))
+  const eaves = Math.max(3.2, h - mansardH)
+  b.wallBand(ring, 0, Math.min(4.2, eaves * 0.5), ROLE_GROUND_FLOOR)
+  if (eaves > 4.2) {
+    b.wallBand(ring, Math.min(4.2, eaves * 0.5), eaves, ROLE_WALL)
+    floorBands(b, ring, 4.2, eaves, Math.max(2, levels - 2), 0.06)
+  }
+  // the cornice line the whole street shares
+  cornice(b, ring, eaves - 0.12, 0.42, 0.22)
+  // the mansard band: inset, roof-role, nearly vertical read
+  const band = insetRing(ring, 0.7)
+  if (band) {
+    b.capWithHole(ring, band, eaves, ROLE_TRIM)
+    b.wallBand(band, eaves, h - 0.35, ROLE_ROOF)
+    const top = insetRing(band, 0.5)
+    if (top) {
+      b.capWithHole(band, top, h - 0.35, ROLE_ROOF)
+      b.cap(top, h - 0.35, ROLE_ROOF)
+    } else {
+      b.cap(band, h - 0.35, ROLE_ROOF)
+    }
+  } else {
+    parapet(b, ring, h, 0.7, 0.35)
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -121,6 +121,7 @@ const PURPOSE_FOR: Record<ArchetypeId, Purpose> = {
   agricultural: 'agricultural',
   brownstone_row: 'residential',
   setback_industrial: 'industrial',
+  mansard_block: 'residential',
   agent_block: 'residential',
   agent_slab: 'residential',
   agent_tower: 'office',

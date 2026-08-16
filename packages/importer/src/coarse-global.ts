@@ -170,6 +170,65 @@ const hpi = new Map<string, number>()
 /** GBP -> k-EUR at a stated rate, so the index shares the WOZ unit. */
 const GBP_EUR = 1.17
 
+// -- the FR tier-1 join: DVF (demandes de valeurs foncières) -----------------
+/**
+ * §31.6-4b: paris becomes emergence-grade the way london did — real
+ * transaction data in the same tier pattern. DVF publishes every french
+ * property mutation; the etalab geo-dvf distribution serves one csv.gz per
+ * department per year. Department 75 is fetched once, apartment mutations are
+ * deduplicated by mutation id (one mutation spans many rows, one per lot) and
+ * the median mutation value in k-EUR joins the WOZ unit directly — EUR
+ * native, no conversion. The join lands on the paris candidate alone; other
+ * fr cities stay on the proxy tier with the label saying so, exactly the GB
+ * towns-inside-authorities honesty.
+ */
+async function dvfParisMedianKEur(): Promise<number | undefined> {
+  try {
+    const gz = await fetchCached(
+      'https://files.data.gouv.fr/geo-dvf/latest/csv/2024/departements/75.csv.gz',
+      'dvf-75-2024.csv.gz',
+    )
+    const { gunzipSync } = await import('node:zlib')
+    const text = gunzipSync(gz).toString('utf8')
+    const values: number[] = []
+    const seen = new Set<string>()
+    let header: string[] | null = null
+    let iMutation = -1
+    let iValeur = -1
+    let iType = -1
+    for (const line of text.split('\n')) {
+      if (!header) {
+        header = line.split(',')
+        iMutation = header.indexOf('id_mutation')
+        iValeur = header.indexOf('valeur_fonciere')
+        iType = header.indexOf('type_local')
+        if (iMutation < 0 || iValeur < 0 || iType < 0) return undefined
+        continue
+      }
+      const f = line.split(',')
+      if (f.length <= Math.max(iMutation, iValeur, iType)) continue
+      if (f[iType] !== 'Appartement') continue
+      const id = f[iMutation]
+      if (seen.has(id)) continue
+      const v = Number(f[iValeur])
+      if (!Number.isFinite(v) || v < 10_000 || v > 20_000_000) continue
+      seen.add(id)
+      values.push(v)
+    }
+    if (values.length < 500) return undefined
+    values.sort((a, b) => a - b)
+    const medianEur = values[values.length >> 1]
+    console.log(
+      `  dvf dept 75: ${values.length} apartment mutations 2024, median ${(medianEur / 1000).toFixed(0)} k-EUR`,
+    )
+    return medianEur / 1000
+  } catch (err) {
+    console.log(`  dvf join unavailable (${String(err).slice(0, 90)}); paris stays on the proxy tier`)
+    return undefined
+  }
+}
+const dvfParis = await dvfParisMedianKEur()
+
 // -- the NL tier-1 join -------------------------------------------------------
 const nl = JSON.parse(await readFile(NL_LAYER, 'utf8')) as {
   settlements: Array<{
@@ -243,6 +302,19 @@ const candidates: GlobalCandidate[] = cities.map((c) => {
       }
     }
   }
+  if (c.country === 'FR' && c.name === 'Paris' && dvfParis !== undefined) {
+    return {
+      id: c.id,
+      name: c.name,
+      country: c.country,
+      lat: c.lat,
+      lon: c.lon,
+      population: c.population,
+      valueIndex: +(dvfParis / wozMedian).toFixed(3),
+      valueTier: 'national-valuation' as const,
+      stockTier: 'absent' as const,
+    }
+  }
   if (c.country === 'GB') {
     const price = hpi.get(c.name)
     if (price !== undefined) {
@@ -278,10 +350,11 @@ const layer: GlobalCoarseLayer = {
   source:
     'geonames cities15000 (settlements, population); World Bank NY.GDP.PCAP.CD (proxy tier); ' +
     'CBS 85036NED via the NL municipal layer (NL tier-1); HM Land Registry UK HPI average ' +
-    'prices, GBP converted at 1.17 EUR/GBP (GB tier-1)',
+    'prices, GBP converted at 1.17 EUR/GBP (GB tier-1); DVF via etalab geo-dvf, dept 75 ' +
+    'apartment mutation median (FR tier-1, paris)',
   licence:
     'CC BY 4.0 (geonames, World Bank, CBS); OGL v3 — contains HM Land Registry data ' +
-    '(c) Crown copyright and database right 2025',
+    '(c) Crown copyright and database right 2025; Licence Ouverte 2.0 (DVF/etalab)',
   gdpYear,
   candidates,
 }

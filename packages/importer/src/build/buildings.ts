@@ -30,6 +30,10 @@ import { purposeFromTags } from './purpose.ts'
 export interface BuildingsResult {
   /** §33.2: OSM rows split at estimated party walls (OSM-only adapter; 0 for NL) */
   rowsSplit?: number
+  /** §31.6-4b: courtyard perimeter blocks split radially (FR adapter) */
+  perimetersSplit?: number
+  /** §31.6-4b: multipolygon relations whose ring stitching failed, refused */
+  relationsDropped?: number
   buildings: BaselineBuilding[]
   matched: number
   unmatched: number

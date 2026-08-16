@@ -34,7 +34,13 @@ export interface OsmElement {
   lon?: number
   nodes?: number[]
   tags?: OsmTags
-  members?: Array<{ type: string; ref: number; role: string }>
+  /** `out geom` annotates relation members with their way geometry */
+  members?: Array<{
+    type: string
+    ref: number
+    role: string
+    geometry?: Array<{ lat: number; lon: number }>
+  }>
   geometry?: Array<{ lat: number; lon: number }>
 }
 
