@@ -50,6 +50,16 @@ It must be `wss://`, not `ws://` — the page is served over https and a browser
 will refuse the mixed connection. Without the variable the client guesses
 `wss://<its own hostname>:8787`, which is wrong on Vercel.
 
+With more than one chunk deployed (§36.1's city switcher), one env var cannot
+name them all: fill `packages/client/public/world/servers.json` with a
+`wss://` url per chunk id instead, one Railway service each. Resolution order
+per chunk is `?server=` override, then `servers.json`, then `VITE_SERVER_URL`.
+The committed file carries local dev `ws://` entries, which an https page
+skips automatically, so a single-chunk deployment can ignore it. The client
+also checks the server's hello against the loaded chunk id and refuses the
+socket on a mismatch ("wrong world"), so a misrouted url degrades to a
+baseline view rather than painting another city's mutations onto this one.
+
 `?server=wss://…` overrides it at runtime, which is the quickest way to point a
 deployed client at a different world.
 

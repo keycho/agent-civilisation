@@ -308,7 +308,7 @@ function pointAt(x: number, y: number): Vector3 {
 if (arriving) {
   director.enabled = false
   setTimeout(() => {
-    director.enabled = el('ambient').getAttribute('aria-pressed') === 'true'
+    if (!followId) director.enabled = true
   }, 3400)
 }
 
@@ -634,11 +634,13 @@ function follow(id: string | null): void {
   followId = id
   followRefit = 0
   if (id) {
+    // following suspends the director and surfaces the chrome; release
+    // re-arms the director, whose idle-resume rules take it from there
     director.enabled = false
     document.body.classList.remove('ambient')
     el('ambient').setAttribute('aria-pressed', 'false')
   } else {
-    director.enabled = el('ambient').getAttribute('aria-pressed') === 'true'
+    director.enabled = true
   }
   if (selectedAgentId) {
     const btn = el('followBtn')
@@ -909,15 +911,22 @@ el('credits').innerHTML =
 // keys
 // ---------------------------------------------------------------------------
 
-// ambient mode: §15's "leave it running"
+/**
+ * Ambient mode: §15's "leave it running". The director is on by default — the
+ * attract camera is the default experience, chrome or no chrome — so ambient
+ * is purely the chrome receding. The old toggle flipped the director instead,
+ * which on first press turned the auto-camera off and left every panel up:
+ * the opposite of ambient, while the button claimed otherwise.
+ */
 function toggleAmbient(): void {
   if (followId) follow(null)
-  director.enabled = !director.enabled
-  el('ambient').setAttribute('aria-pressed', String(director.enabled))
+  const on = !document.body.classList.contains('ambient')
   // §24.1: "panels ... gone entirely in ambient." The top bar keeps the ambient
   // button itself reachable, so it is exempt — leaving it running must not mean
   // leaving it with no way out.
-  document.body.classList.toggle('ambient', director.enabled)
+  document.body.classList.toggle('ambient', on)
+  director.enabled = true
+  el('ambient').setAttribute('aria-pressed', String(on))
 }
 el('ambient').addEventListener('click', toggleAmbient)
 
