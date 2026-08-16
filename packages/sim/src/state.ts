@@ -199,6 +199,14 @@ export interface Assembly {
  */
 export const BOUNDARY = { gate: false }
 
+/**
+ * §37.2. The third use (buy-to-convert in the acquisition score, §37.1) is
+ * always on in the product. The composition instrument flips it off for its
+ * before-arm — the same mutable-toggle pattern as BOUNDARY, so an a/b runs in
+ * one process against identical seeds without a mixed-code tree.
+ */
+export const THIRD_USE = { on: true }
+
 export class World {
   /**
    * §20.2: an internal monotonic sequence number. Construction spans it, decay

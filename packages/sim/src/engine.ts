@@ -24,7 +24,7 @@ import {
   withDuty,
   yieldPerTick,
 } from './economy.ts'
-import { type Agent, type MemoryEntry, type PlanSpec, type SitePlan, type World, floorArea } from './state.ts'
+import { type Agent, type MemoryEntry, type PlanSpec, type SitePlan, THIRD_USE, type World, floorArea } from './state.ts'
 
 /**
  * §9. Async, may return null, carries a rationale on the action.
@@ -662,7 +662,7 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
        * commits price plus conversion cost, and pricing it over price alone
        * would flatter every marginal conversion.
        */
-      const conv = bestConversion(world, b, agent)
+      const conv = THIRD_USE.on ? bestConversion(world, b, agent) : null
       const capConvert = conv
         ? ((b.yieldPerTick + conv.uplift) * RATE_WINDOW_TICKS) /
           Math.max(1, price + conversionCost(b))
