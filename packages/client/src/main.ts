@@ -279,12 +279,27 @@ function setReadouts(index: number, generation: number, label: string): void {
 
 const feedList = el('feedList')
 let lastFeedId = 0
+// §35.6: one plan's constituent actions share a rationale and would otherwise
+// print it once per action. Consecutive same-agent same-line events collapse
+// into the newest row with a ×N count instead.
+let lastFeedKey = ''
+let lastFeedCount = 0
 
 function pushFeedRow(e: EventWire): void {
   if (e.id <= lastFeedId) return
   lastFeedId = e.id
   const who = e.agentId ? roster.get(e.agentId) : undefined
   const text = e.rationale ?? e.type.replace(/_/g, ' ')
+  const key = `${e.agentId ?? ''}|${e.type}|${text}`
+  const head = feedList.firstElementChild
+  if (key === lastFeedKey && head) {
+    lastFeedCount++
+    const n = head.querySelector('.n')
+    if (n) n.textContent = ` ×${lastFeedCount}`
+    return
+  }
+  lastFeedKey = key
+  lastFeedCount = 1
   // §20.2: the feed never prints the tick. Generation is the public vocabulary.
   feedList.insertAdjacentHTML(
     'afterbegin',
@@ -292,7 +307,7 @@ function pushFeedRow(e: EventWire): void {
       `<span class="yr">g${who?.generation ?? e.generation}</span>` +
       `<span class="t">${
         e.agentName ? `<b>${escapeHtml(e.agentName.split(' ')[0])}</b> ` : ''
-      }${escapeHtml(text)}</span></div>`,
+      }${escapeHtml(text)}<span class="n"></span></span></div>`,
   )
   while (feedList.childElementCount > 11) feedList.lastElementChild?.remove()
 }

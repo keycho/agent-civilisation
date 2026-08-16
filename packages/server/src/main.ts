@@ -31,6 +31,7 @@ import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer, type WebSocket } from 'ws'
+import { NAME_POOLS } from '@civ/sim/names.ts'
 import { buildingDetail } from './frames.ts'
 import { WorldService } from './world.ts'
 
@@ -46,6 +47,20 @@ const SEED_PATH =
   join(HERE, '..', '..', 'client', 'public', 'world', `${CHUNK}.json`)
 
 const STARTED = Date.now()
+
+function nameCultureCheck(): { country: string; ok: boolean } {
+  const country = seed.chunk.country ?? 'NL'
+  const pool = NAME_POOLS[country] ?? NAME_POOLS.NL
+  const firsts = new Set(pool.first)
+  let sampled = 0
+  let matched = 0
+  for (const a of world.sim.world.agents.values()) {
+    if (sampled >= 8) break
+    sampled++
+    if (firsts.has(a.name.split(' ')[0])) matched++
+  }
+  return { country, ok: sampled > 0 && matched === sampled }
+}
 const seed = JSON.parse(await readFile(SEED_PATH, 'utf8')) as WorldSeed
 
 /**
@@ -131,6 +146,15 @@ const http = createServer((req, res) => {
     res.end(
       JSON.stringify({
         ok: true,
+        /**
+         * §35.6-1's durable fix, house-prediction style: the dutch-names-on-
+         * deptford class was a stale PROCESS serving an old name pool while
+         * the source was correct, caught only by eye. This asserts the
+         * running artifact: the live world's spawned names are looked up
+         * against the pool its chunk's country selects. False here means the
+         * process is serving code older than its seed.
+         */
+        nameCulture: nameCultureCheck(),
         protocol: PROTOCOL_VERSION,
         chunk: world.chunkId,
         durability: store.durability,
