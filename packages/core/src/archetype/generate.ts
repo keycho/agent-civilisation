@@ -86,6 +86,12 @@ export function generateArchetype(
     case 'agricultural':
       agricultural(ctx)
       break
+    case 'brownstone_row':
+      brownstoneRow(ctx)
+      break
+    case 'setback_industrial':
+      setbackIndustrial(ctx)
+      break
     case 'agent_block':
       agentBlock(ctx)
       break
@@ -387,6 +393,74 @@ function agricultural(ctx: FormCtx): void {
   walls(b, ring, eaves, 3.0)
   pitchedTop(ctx, eaves, h - eaves, ctx.roof === 'barn' ? 'barn' : 'shallow')
   void metrics
+}
+
+// ---------------------------------------------------------------------------
+// §31.6-4a: the us family
+// ---------------------------------------------------------------------------
+
+/**
+ * A brownstone reads through three elements at city scale: the raised parlor
+ * floor over a half-sunk basement (the stoop is sub-pixel; the tall base is
+ * not), the flat roof, and above all the heavy projecting cornice — which is
+ * the single strongest difference from the Dutch row's street-facing gable.
+ */
+function brownstoneRow(ctx: FormCtx): void {
+  const { b, ring, h } = ctx
+  // basement half-storey + parlor: the base band runs taller than a Dutch
+  // ground floor and the first band sits high
+  const base = Math.min(4.6, h * 0.42)
+  b.wallBand(ring, 0, base, ROLE_GROUND_FLOOR)
+  const eaves = h - 0.55
+  if (eaves > base) {
+    b.wallBand(ring, base, eaves, ROLE_WALL)
+    floorBands(b, ring, base, eaves, Math.max(2, ctx.levels - 1), 0.06)
+  }
+  // the cornice: deeper than anything in the NL vocabulary, and doubled
+  cornice(b, ring, eaves - 0.28, 0.5, 0.22)
+  cornice(b, ring, eaves + 0.02, 0.34, 0.14)
+  parapet(b, ring, h, 0.5, 0.3)
+}
+
+/**
+ * The daylight factory / 1916-zoning loft: big masonry floorplates with heavy
+ * banding, stepping back as they rise, a water tank on the roof. The setback
+ * tiers and the tank are the new york silhouette.
+ */
+function setbackIndustrial(ctx: FormCtx): void {
+  const { b, ring, h, levels, metrics, rng } = ctx
+  const tiers = h >= 20 && metrics.area >= 600 ? 2 : 1
+  const tierTop = tiers === 2 ? h * 0.72 : h
+  b.wallBand(ring, 0, 4.4, ROLE_GROUND_FLOOR)
+  b.wallBand(ring, 4.4, tierTop, ROLE_WALL)
+  floorBands(b, ring, 4.4, tierTop - 0.8, Math.min(Math.max(2, levels), 8), 0.12, 0.15)
+  if (tiers === 2) {
+    const upper = insetRing(ring, Math.max(1.4, Math.sqrt(metrics.area) * 0.07))
+    if (upper) {
+      b.capWithHole(ring, upper, tierTop, ROLE_TRIM)
+      b.wallBand(upper, tierTop, h, ROLE_WALL)
+      floorBands(b, upper, tierTop, h - 0.7, Math.max(1, Math.round(levels * 0.3)), 0.12, 0.15)
+      parapet(b, upper, h, 0.9, 0.4)
+    } else {
+      parapet(b, ring, h, 0.9, 0.45)
+    }
+  } else {
+    parapet(b, ring, h, 0.9, 0.45)
+  }
+  cornice(b, ring, tierTop - 1.0, 0.35, 0.25)
+  // the water tank: one small raised drum on legs, expressed as a box — the
+  // roofline element every new york industrial block carries
+  const s = 1.6 + rng() * 0.9
+  const u = (rng() - 0.5) * metrics.obb.length * 0.45
+  const v = (rng() - 0.5) * metrics.obb.width * 0.35
+  const c = obbPoint(metrics.obb, u, v)
+  const tank: Ring = [
+    [c[0] - s, c[1] - s],
+    [c[0] + s, c[1] - s],
+    [c[0] + s, c[1] + s],
+    [c[0] - s, c[1] + s],
+  ]
+  b.prism(tank, h + 0.7, h + 3.1 + rng() * 1.2, ROLE_TRIM, ROLE_TRIM)
 }
 
 // ---------------------------------------------------------------------------

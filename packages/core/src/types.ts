@@ -73,6 +73,10 @@ export const ARCHETYPES = [
   'retail',
   'tower',
   'agricultural',
+  // §31.6-4a: the us family — a brownstone is not a dutch rowhouse with a
+  // different name, and a daylight factory is not a schiedam distillery
+  'brownstone_row',
+  'setback_industrial',
   // agent vocabulary — flat roofs, cleaner geometry, larger floorplates
   'agent_block',
   'agent_slab',

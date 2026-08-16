@@ -119,6 +119,8 @@ const PURPOSE_FOR: Record<ArchetypeId, Purpose> = {
   retail: 'retail',
   tower: 'office',
   agricultural: 'agricultural',
+  brownstone_row: 'residential',
+  setback_industrial: 'industrial',
   agent_block: 'residential',
   agent_slab: 'residential',
   agent_tower: 'office',

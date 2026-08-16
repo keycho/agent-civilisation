@@ -13,6 +13,14 @@ export interface ArchetypeInput {
   constructionYear?: number
   source: BuildingSource
   roofHint?: RoofHint
+  /**
+   * §31.6-4: which fabric this stock belongs to. Selection is country-aware
+   * because the same metrics mean different buildings in different cities — a
+   * narrow deep three-storey residential is a rowhouse in schiedam and a
+   * brownstone in red hook. Absent means the NL rules, which is what every
+   * pre-§31.6-4 caller was getting.
+   */
+  country?: string
   /** precomputed to avoid recomputing the OBB twice */
   metrics?: FootprintMetrics
 }
@@ -59,6 +67,32 @@ export function selectArchetype(input: ArchetypeInput): ArchetypeChoice {
   if (input.purpose === 'agricultural') return pick('agricultural', 'agricultural purpose')
 
   if (h >= 26 || input.levels >= 9) return pick('tower', `${h.toFixed(0)}m / ${input.levels} levels`)
+
+  /**
+   * §31.6-4a: the us fabric. No construction years in us data (§18.4 note
+   * travels with the adapter), so these rules read form only — width, area,
+   * height — never the year the NL rules lean on.
+   */
+  if (input.country === 'US') {
+    if (
+      input.purpose === 'residential' &&
+      width <= 8.5 &&
+      aspect >= 1.15 &&
+      area <= 260 &&
+      input.levels <= 5
+    ) {
+      return pick('brownstone_row', `us narrow ${width.toFixed(1)}m, ${input.levels} levels`)
+    }
+    if (
+      (input.purpose === 'industrial' ||
+        input.purpose === 'utility' ||
+        input.purpose === 'commercial') &&
+      area >= 450 &&
+      h >= 12
+    ) {
+      return pick('setback_industrial', `us bulk ${area.toFixed(0)}m2, ${h.toFixed(0)}m`)
+    }
+  }
 
   if (input.purpose === 'industrial' || input.purpose === 'utility') {
     return area >= 700
@@ -153,6 +187,11 @@ export function selectRoof(
       // Stepped gables are a pre-industrial canal-frontage element. Gating on
       // year keeps them where they belong instead of sprinkling them.
       return year < 1830 ? 'stepped_gable' : 'gable'
+    // §31.6-4a: both us forms are flat-roofed types — the cornice and the
+    // setback tiers carry the silhouette, never a pitch.
+    case 'brownstone_row':
+    case 'setback_industrial':
+      return 'parapet'
     default:
       return 'gable'
   }
