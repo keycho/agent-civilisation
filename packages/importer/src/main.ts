@@ -73,7 +73,10 @@ log(area.country === 'NL' ? '\n[2/7] buildings: 3dbag geometry + osm tags' : '\n
 const built =
   area.country === 'NL'
     ? buildBaselineBuildings(bag, osmBuildings.elements, frame, area.id, clip)
-    : buildFromOsm(osmBuildings.elements, frame, chunkIdOut, clip, { split: !NO_SPLIT })
+    : buildFromOsm(osmBuildings.elements, frame, chunkIdOut, clip, {
+        split: !NO_SPLIT,
+        country: area.country,
+      })
 log(
   `      ${built.buildings.length} baseline buildings  (tag match ${built.matched}, fallback ${built.unmatched})` +
     (built.rowsSplit ? `  rows split at party walls: ${built.rowsSplit} (§33.2)` : ''),

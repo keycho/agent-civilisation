@@ -100,14 +100,16 @@ function parseYear(tags: OsmTags): number | undefined {
  * the builder asserts area conservation per row (±4%) before emitting.
  */
 const PLOT_FRONTAGE_M = 5.2
+/** §33.2 travels: brooklyn brownstone lots run 20 ft, so the us row cuts at 6.1. */
+const PLOT_FRONTAGE_US_M = 6.1
 
-function splitRow(ring: Ring, tags: OsmTags, purpose: Purpose): Ring[] {
+function splitRow(ring: Ring, tags: OsmTags, purpose: Purpose, frontageM: number): Ring[] {
   const forced = tags.building === 'terrace'
   const box = obb(ring)
   const aspect = box.length / Math.max(1e-6, box.width)
   if (!forced && !(purpose === 'residential' || purpose === 'retail')) return [ring]
   if (!forced && (box.length < 18 || aspect < 2.5)) return [ring]
-  const n = Math.min(40, Math.max(2, Math.round(box.length / PLOT_FRONTAGE_M)))
+  const n = Math.min(40, Math.max(2, Math.round(box.length / frontageM)))
   if (n < 2) return [ring]
 
   const { cx, cy, ux, uy, length, width } = box
@@ -140,9 +142,10 @@ export function buildFromOsm(
   frame: ChunkFrame,
   chunkId: string,
   clip: { minX: number; minY: number; maxX: number; maxY: number },
-  opts: { split?: boolean } = {},
+  opts: { split?: boolean; country?: string } = {},
 ): BuildingsResult {
   const doSplit = opts.split !== false
+  const frontageM = opts.country === 'US' ? PLOT_FRONTAGE_US_M : PLOT_FRONTAGE_M
   const buildings: BaselineBuilding[] = []
   let matched = 0
   let unmatched = 0
@@ -182,7 +185,7 @@ export function buildFromOsm(
     const heightM = taggedHeight ?? Math.max(2.6, levels * 3.1 + 0.8)
     const constructionYear = parseYear(tags)
 
-    const rowPieces = doSplit ? splitRow(ring, tags, purpose) : [ring]
+    const rowPieces = doSplit ? splitRow(ring, tags, purpose, frontageM) : [ring]
     if (rowPieces.length > 1) rowsSplit++
 
     for (let k = 0; k < rowPieces.length; k++) {
@@ -194,6 +197,7 @@ export function buildFromOsm(
         purpose,
         constructionYear,
         source: 'real_world',
+        country: opts.country,
         // no national roof dataset here: the archetype selector treats roof
         // form as a hint, absent is a supported value (§31.2)
         roofHint: 'unknown',
