@@ -14,6 +14,11 @@
       "id": "brooklyn-redhook",
       "name": "Brooklyn — Red Hook",
       "file": "brooklyn-redhook.json"
+    },
+    {
+      "id": "paris-ourcq",
+      "name": "Paris — Ourcq / Petite Ceinture",
+      "file": "paris-ourcq.json"
     }
   ]
 }

@@ -189,6 +189,13 @@ export const AREAS: Record<string, AreaDef> = {
     radiusM: 320,
     adminCode: '75119',
     country: 'FR',
+    /**
+     * §24.2 second pass: north-cut first, axis measured off the emitted road
+     * graph — 17.5% peak at 52 deg against the 6% bar, with the §33.3
+     * multi-axial caveat visible underneath (142 and 68 deg both at 6.5%) but
+     * one axis dominant: the canal basin alignment. Cut along it.
+     */
+    bearingDeg: 52,
     note: 'Periphery fringe, 19e: canal basin, rail belt remnants, workshops under mansard blocks.',
   },
   'tokyo-kyojima': {
