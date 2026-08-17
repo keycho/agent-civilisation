@@ -362,6 +362,61 @@ grain (tokyo) no ceiling, perimeter blocks (paris) deep, slabs
 (vlaardingen) deepest. Per §41.3 the ceiling stays logged, not built;
 the finding holds for operator accept, as paris's did.
 
+## 11. The first region run (§31.6-5, 8 seeds, contract as registered)
+
+10 of 11 asserts green; every statistic reproduced exactly across two runs
+(seed-determinism held through the instrument correction). The record,
+against the pre-registered predictions:
+
+- **First migration origin: schiedam, 7/8 seeds** (london once) — §31.6's
+  prediction confirmed, but only after an instrument fault was fixed: the
+  report sorted by chunk-LOCAL ticks, and a late-gated village's tick 300
+  outsorted schiedam's tick 2000. Cross-chunk clocks are not comparable;
+  the region's own event order is. (Re-registered, instrument only.)
+- **Warm slot -> maasland in 8/8** (highest NL valueIndex via the WOZ
+  join); gated by real migrants in all 8. maassluis gates in 4/8, so the
+  materialised set varies. vlaardingen — the slab chunk, third-best
+  estimate — is never reached at migration's §30.5 cadence.
+- **Winner-not-leader (§28.5): landed 5/8.** The village of Maasland
+  out-activates the mature control on cumulative applied actions in five
+  seeds — the ledgered doubt (maturity favours schiedam) was wrong; the
+  migration-fed frontier is simply that active.
+- **All 34 migrations intra-European, national-valuation destinations** —
+  brooklyn and tokyo priced out by the facility exactly as the transit
+  anchoring intended. Emergence-grade under §32.2: every one.
+- **Reversals: 0 across 8 seeds.** The §28.1 report line says it plainly:
+  0 means the estimate reads too accurate. Mechanism look: destinations
+  DELIVERED — migrants plant within the grace window (holdings non-empty
+  = reversal-ineligible) because village stock is affordable on arrival
+  funds. A watch item, not a pass: if reversal never fires across future
+  suites, the estimate's stated loss is not binding and §28.1 wants a
+  look.
+- **Region Moran 0.1868 vs control 0.1453 (1.29x)** — clears the 1.25
+  spectacle margin, same instrument same run. Chain flow region-wide
+  13.5/10k vs the single-chunk ~2.1: the region multiplied chain flow
+  ~6x. No chunk drained; abandonment stays untested and unbuilt (§30.5).
+
+**The one failure, escalated as registered: §43.2.** The most-contested
+chunk's chain rate medians 5.5/34k against the floor of 7. Two findings
+under it, both for operator decision:
+
+1. The chain economy is emphatically NOT structurally marginal — it is
+   ravenous exactly where migration concentrates capital: maasland runs
+   58-188 completions/34k, maassluis 148-293, london 17-34, all far above
+   the floor. Schiedam — mature, compressed, chain-exhausted across six
+   prior builds' equivalents — runs 1-22. Capital concentration and
+   bidding pressure point at DIFFERENT chunks: migration flows toward
+   affordable supply, which is by construction where per-cell competition
+   is low.
+2. The ranking instrument cannot see this: contest (competitionMedian)
+   reads 1.00 in every materialised chunk at end-of-run — terminal
+   saturation, the same effect §29.1 documented for pricing, which is why
+   offered orderings are measured at half budget. "Most-contested" at
+   end-of-run is an argmax over ties resolved by insertion order. If
+   §43.2 is to be measurable, contest must be sampled mid-run like the
+   §29.1 pricing read — that is a re-registration only the operator
+   makes; until then the failure stands as recorded.
+
 ## Carried, not fixed
 
 - ~~UK tier-1 valuations~~ — done (build 10, §33.4): HM Land Registry UK HPI
