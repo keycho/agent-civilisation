@@ -139,6 +139,26 @@
       #chunkList .card .ln.spark { letter-spacing: 1px; color: var(--amber); opacity: 0.8; }
       #chunkList .card .ln.dim { color: var(--dimmer); }
 
+      /* §49: globe chrome. Labels are screen-space and never blurred. */
+      #globeLabels { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+      .glabel {
+        position: absolute; display: none; transform: translateY(-50%);
+        pointer-events: auto; cursor: pointer; padding: 1px 7px;
+        background: var(--pane); border: 1px solid var(--edge);
+        color: var(--amber); white-space: nowrap;
+      }
+      .glabel.on { display: block; }
+      .glabel:hover { color: var(--cream); border-color: var(--amber); }
+      #globeCard { top: 42px; right: 12px; width: 270px; display: none; }
+      body.globe #globeCard.on { display: block; }
+      #globeCard .body { padding: 8px 11px; }
+      #globeTools {
+        position: fixed; left: 12px; bottom: 40px; z-index: 5; display: none;
+        gap: 10px; align-items: center;
+      }
+      body.globe #globeTools { display: flex; }
+      #candidatesBtn.on { color: var(--amber); border-color: var(--amber); }
+
       #inspector { top: 42px; right: 12px; width: 300px; max-height: calc(100vh - 100px); display: none; }
       #inspector.on { display: block; }
       #inspector .body { overflow-y: auto; max-height: calc(100vh - 134px); }
@@ -350,6 +370,15 @@
     </div>
 
     <div id="chip"><span class="who" id="chipWho"></span><span id="chipWhat"></span></div>
+
+    <!-- §49: the globe's chrome — crisp screen-space labels, the hover card,
+         the candidates layer toggle, and the arcs' provenance tag -->
+    <div id="globeLabels"></div>
+    <div class="pane" id="globeCard"><div class="body" id="globeCardBody"></div></div>
+    <div id="globeTools">
+      <button id="candidatesBtn" title="show the 34k coarse candidates">candidates</button>
+      <span class="dim" id="arcsTag">arcs: replayed region run</span>
+    </div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

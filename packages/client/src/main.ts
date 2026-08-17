@@ -434,6 +434,8 @@ function toGlobe(): void {
   rig.limits.panRadius = 0
   rig.flyTo(new Vector3(0, 0, 0), globe.radius * 3.1, { polar: 1.05, duration: 2.0 })
   el('chunkBtn').textContent = 'earth'
+  document.body.classList.add('globe')
+  void pollSummaries()
 }
 
 /**
@@ -457,6 +459,9 @@ function diveTo(id: string): void {
 
 function toCity(): void {
   mode = 'city'
+  document.body.classList.remove('globe')
+  el('globeCard').classList.remove('on')
+  el('chunkBtn').textContent = placeName(entry.name)
   globe.group.visible = false
   cityRoot.visible = true
   rig.limits.maxDistance = frameThePlate(innerWidth / innerHeight) * 1.25
@@ -476,6 +481,84 @@ function toCity(): void {
     if (!followId && mode === 'city') director.enabled = true
   }, 3000)
 }
+
+/**
+ * §49: labels are chrome — mono, lowercase, crisp screen-space divs projected
+ * per frame, never pushed through the world render. Hover shows the city's
+ * §46.1 card; click dives.
+ */
+const globeLabels = el('globeLabels')
+const labelEls = new Map<string, HTMLElement>()
+for (const m of globe.markers) {
+  const div = document.createElement('div')
+  div.className = 'glabel'
+  div.textContent = m.name.toLowerCase()
+  div.dataset.id = m.id
+  globeLabels.appendChild(div)
+  labelEls.set(m.id, div)
+}
+globeLabels.addEventListener('click', (e) => {
+  const id = (e.target as HTMLElement).dataset?.id
+  if (id) diveTo(id)
+})
+globeLabels.addEventListener('mouseover', (e) => {
+  const id = (e.target as HTMLElement).dataset?.id
+  if (id) showGlobeCard(id)
+})
+
+const labelV = new Vector3()
+function updateGlobeLabels(): void {
+  // project, then declutter: labels sharing screen space stack downward so
+  // the NL constellation enumerates instead of colliding
+  const placed: Array<{ x: number; y: number; div: HTMLElement }> = []
+  for (const m of globe.markers) {
+    const div = labelEls.get(m.id)
+    if (!div) continue
+    const facing =
+      m.position.clone().normalize().dot(rig.camera.position.clone().normalize()) > 0.12
+    labelV.copy(m.position).project(rig.camera)
+    if (!facing || labelV.z > 1) {
+      div.classList.remove('on')
+      continue
+    }
+    placed.push({
+      x: ((labelV.x + 1) / 2) * innerWidth + 10,
+      y: (1 - (labelV.y + 1) / 2) * innerHeight - 8,
+      div,
+    })
+  }
+  placed.sort((a, b) => a.y - b.y || a.x - b.x)
+  const ROW = 22
+  for (let i = 0; i < placed.length; i++) {
+    const p = placed[i]
+    for (let j = 0; j < i; j++) {
+      const q = placed[j]
+      if (Math.abs(p.y - q.y) < ROW && Math.abs(p.x - q.x) < 190) p.y = q.y + ROW
+    }
+    p.div.classList.add('on')
+    p.div.style.left = `${p.x}px`
+    p.div.style.top = `${p.y}px`
+  }
+}
+
+/** §46.1's card, docked to the marker being hovered */
+function showGlobeCard(id: string): void {
+  const s = citySummaries.get(id)
+  const c = chunks.find((x) => x.id === id)
+  if (!c) return
+  const facts = s
+    ? `gen ${s.generation ?? '·'} · ${((s.divergenceIndex ?? 0) * 100).toFixed(1)}% diff · ${s.agentCount ?? '·'} active`
+    : 'unreached — baseline only'
+  el('globeCardBody').innerHTML =
+    `<b>${escapeHtml(placeName(c.name))}</b><br>${escapeHtml(facts)}` +
+    (s?.lastEvent ? `<br><span class="dim">last: ${escapeHtml(s.lastEvent.text)}</span>` : '')
+  el('globeCard').classList.add('on')
+}
+
+el('candidatesBtn').addEventListener('click', () => {
+  globe.setCandidates(!globe.candidatesOn)
+  el('candidatesBtn').classList.toggle('on', globe.candidatesOn)
+})
 
 // zooming out past the city framing lifts off to the globe
 let liftPressure = 0
@@ -1573,7 +1656,19 @@ renderer.setAnimationLoop(() => {
    */
   tiltShift.focusRange =
     Math.max(30, rig.distance * 0.1 * (Math.sin(rig.polar) / Math.sin(0.66)))
-  tiltShift.render(renderer, scene, rig.camera, rig.distance, 1 - rig.streetness * 0.85)
+  // §49: the globe is fully exempt from the miniature's depth of field — the
+  // grade and vignette still apply, the blur does not
+  tiltShift.render(
+    renderer,
+    scene,
+    rig.camera,
+    rig.distance,
+    mode === 'globe' ? 0 : 1 - rig.streetness * 0.85,
+  )
+  if (mode === 'globe') {
+    globe.updateLOD(rig.distance)
+    updateGlobeLabels()
+  }
 })
 
 function* floatAgents(): Generator<import('./render/floatlights.ts').FloatAgent> {

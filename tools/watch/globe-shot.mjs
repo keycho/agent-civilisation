@@ -10,7 +10,13 @@ await page.evaluate(() => document.getElementById('watchBtn')?.click())
 // hold on the globe: cancel the auto-dive by re-entering globe mode
 await page.waitForTimeout(1200)
 await page.evaluate(() => window.civ.ui.toGlobe())
-await page.waitForTimeout(9000)
+await page.waitForTimeout(2600)
+// europe-facing: lat ~50, lon ~10 toward the camera
+await page.evaluate(() => {
+  const V = window.civ.rig.target.constructor
+  window.civ.rig.flyTo(new V(0, 0, 0), window.civ.rig.distance, { azimuth: 1.746, polar: 0.698, duration: 1.2 })
+})
+await page.waitForTimeout(6500)
 await page.screenshot({ path: 'tools/watch/ab/globe.png' })
 console.log('globe.png')
 await browser.close()

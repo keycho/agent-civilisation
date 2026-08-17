@@ -1,10 +1,11 @@
 /**
- * §49: the globe — the top of the scale chain, floating in §47.1's void and
- * wearing §48.2's grade like everything else. A stylized sphere from data
- * that already exists: 34k coarse candidates as dim points, active chunks as
- * amber marks with pane-grammar labels, coastline from one committed
- * Natural Earth 110m asset drawn in the dim register, a faint graticule.
- * No basemap, no terrain, nothing traversable — §15 at planetary scale.
+ * §49 (simplified): the globe is a SELECTOR, not a world visualization. The
+ * default view is the dark legible earth — lifted coastline ink over a
+ * minimally-lit blue-grey body, never void-black — and the eight active-city
+ * marks; labels live in the crisp screen-space chrome layer. The 34k coarse
+ * candidates are preserved behind a layer toggle and return as the default
+ * only when on-demand materialisation ships to production, when an unseeded
+ * town igniting is something a spectator could actually witness.
  */
 import {
   BufferAttribute,
@@ -12,7 +13,6 @@ import {
   CanvasTexture,
   Color,
   Group,
-  Line,
   LineBasicMaterial,
   LineSegments,
   Mesh,
@@ -60,40 +60,36 @@ interface Candidate {
   valueIndex?: number
 }
 
-function labelTexture(text: string): CanvasTexture {
-  const canvas = document.createElement('canvas')
-  canvas.width = 256
-  canvas.height = 40
-  const ctx = canvas.getContext('2d')!
-  ctx.font = '20px ui-monospace, monospace'
-  const label = text.toLowerCase()
-  const w = Math.min(240, ctx.measureText(label).width + 14)
-  ctx.fillStyle = 'rgba(13,12,10,0.78)'
-  ctx.fillRect(0, 0, w, 40)
-  ctx.fillStyle = '#e2a54f'
-  ctx.textBaseline = 'middle'
-  ctx.fillText(label, 7, 21, 226)
-  return new CanvasTexture(canvas)
-}
-
 export interface GlobeMarker {
   id: string
   position: Vector3
   sprite: Sprite
+  /** §49 r2: labels render in the crisp chrome layer, so the name ships raw */
+  name: string
 }
 
 export class GlobeView {
   readonly group = new Group()
   readonly radius: number
   readonly markers: GlobeMarker[] = []
+  private tailPoints: Points | null = null
+
+  /** §49 r2: the long tail fades in below ~2.4 radii and is gone far out */
+  updateLOD(cameraDistance: number): void {
+    if (!this.tailPoints) return
+    const t = Math.max(0, Math.min(1, (this.radius * 2.4 - cameraDistance) / (this.radius * 1.2)))
+    ;(this.tailPoints.material as PointsMaterial).opacity = 0.8 * t
+  }
 
   constructor(radius: number, chunkIds: string[], names: Map<string, string>) {
     this.radius = radius
     this.group.visible = false
 
+    // §49 r2: a very dark blue-grey body, minimally lit — the planet is a
+    // form against the void, never void-black itself
     const sphere = new Mesh(
       new SphereGeometry(radius, 48, 32),
-      new MeshLambertMaterial({ color: new Color('#16140f') }),
+      new MeshLambertMaterial({ color: new Color('#182029'), emissive: new Color('#0b0f14') }),
     )
     this.group.add(sphere)
 
@@ -131,25 +127,30 @@ export class GlobeView {
       const mark = new Sprite(
         new SpriteMaterial({ map: markTexture(), depthTest: false, transparent: true }),
       )
-      mark.scale.set(radius * 0.045, radius * 0.045, 1)
+      mark.scale.set(radius * 0.028, radius * 0.028, 1)
       mark.position.copy(position)
       this.group.add(mark)
-      const label = new Sprite(
-        new SpriteMaterial({
-          map: labelTexture(shortName(names.get(id) ?? id)),
-          depthTest: false,
-          transparent: true,
-        }),
-      )
-      label.scale.set(radius * 0.34, radius * 0.053, 1)
-      label.center.set(-0.06, 0.5)
-      label.position.copy(position)
-      this.group.add(label)
-      this.markers.push({ id, position, sprite: mark })
+      this.markers.push({ id, position, sprite: mark, name: shortName(names.get(id) ?? id) })
     }
 
     void this.loadCoastline()
-    void this.loadCandidates()
+  }
+
+  private candidatesLoaded = false
+  private candidateGroup = new Group()
+
+  /** §49: the candidates layer toggle — off by default, lazy on first use */
+  setCandidates(on: boolean): void {
+    if (on && !this.candidatesLoaded) {
+      this.candidatesLoaded = true
+      this.group.add(this.candidateGroup)
+      void this.loadCandidates()
+    }
+    this.candidateGroup.visible = on
+  }
+
+  get candidatesOn(): boolean {
+    return this.candidatesLoaded && this.candidateGroup.visible
   }
 
   /** coastline in the dim register, from the committed 110m land asset */
@@ -179,7 +180,7 @@ export class GlobeView {
       this.group.add(
         new LineSegments(
           geo,
-          new LineBasicMaterial({ color: new Color('#3d3931'), transparent: true, opacity: 0.55 }),
+          new LineBasicMaterial({ color: new Color('#6b6353'), transparent: true, opacity: 0.85 }),
         ),
       )
     } catch {
@@ -201,20 +202,43 @@ export class GlobeView {
         positions[i * 3 + 1] = v.y
         positions[i * 3 + 2] = v.z
         const w = Math.min(1, Math.log10(Math.max(10, c.population)) / 7) * (c.valueIndex ?? 0.8)
-        const b = 0.16 + 0.3 * w
+        const b = 0.1 + 0.62 * Math.pow(w, 1.4)
         colors[i * 3] = b * 1.05
         colors[i * 3 + 1] = b * 0.92
         colors[i * 3 + 2] = b * 0.72
       })
-      const geo = new BufferGeometry()
-      geo.setAttribute('position', new BufferAttribute(positions, 3))
-      geo.setAttribute('color', new BufferAttribute(colors, 3))
-      this.group.add(
-        new Points(
-          geo,
-          new PointsMaterial({ size: 2.2, vertexColors: true, transparent: true, opacity: 0.85, sizeAttenuation: false }),
-        ),
+      // §49 r2: hierarchy, not noise — the top of the population order is
+      // always lit; the long tail fades in as the camera approaches
+      const order = j.candidates
+        .map((c, i) => ({ i, p: c.population }))
+        .sort((a, b) => b.p - a.p)
+      const TOP = 3200
+      const build = (idx: Array<{ i: number }>) => {
+        const pos = new Float32Array(idx.length * 3)
+        const col = new Float32Array(idx.length * 3)
+        idx.forEach(({ i }, k) => {
+          pos[k * 3] = positions[i * 3]
+          pos[k * 3 + 1] = positions[i * 3 + 1]
+          pos[k * 3 + 2] = positions[i * 3 + 2]
+          col[k * 3] = colors[i * 3]
+          col[k * 3 + 1] = colors[i * 3 + 1]
+          col[k * 3 + 2] = colors[i * 3 + 2]
+        })
+        const g = new BufferGeometry()
+        g.setAttribute('position', new BufferAttribute(pos, 3))
+        g.setAttribute('color', new BufferAttribute(col, 3))
+        return g
+      }
+      const major = new Points(
+        build(order.slice(0, TOP)),
+        new PointsMaterial({ size: 2.6, vertexColors: true, transparent: true, opacity: 0.95, sizeAttenuation: false }),
       )
+      this.tailPoints = new Points(
+        build(order.slice(TOP)),
+        new PointsMaterial({ size: 1.8, vertexColors: true, transparent: true, opacity: 0, sizeAttenuation: false }),
+      )
+      this.candidateGroup.add(major)
+      this.candidateGroup.add(this.tailPoints)
     } catch {
       // without the coarse layer the marks still say where civilization is
     }
