@@ -24,6 +24,21 @@
       "id": "tokyo-kyojima",
       "name": "Tokyo — Kyojima",
       "file": "tokyo-kyojima.json"
+    },
+    {
+      "id": "vlaardingen-westwijk",
+      "name": "Vlaardingen — Westwijk",
+      "file": "vlaardingen-westwijk.json"
+    },
+    {
+      "id": "maasland-dorp",
+      "name": "Maasland — Dorp",
+      "file": "maasland-dorp.json"
+    },
+    {
+      "id": "maassluis-haven",
+      "name": "Maassluis — Haven",
+      "file": "maassluis-haven.json"
     }
   ]
 }
