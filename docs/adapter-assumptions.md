@@ -417,6 +417,31 @@ under it, both for operator decision:
    §29.1 pricing read — that is a re-registration only the operator
    makes; until then the failure stands as recorded.
 
+## 12. The §44 re-registered run: contract green, the zero sharpened
+
+Same 8 seeds under the §44.2/§44.3 contract — every prior statistic
+reproduced exactly, and the re-registered assertions passed with room:
+migration-destination chunks' chain rate medians 75.0/34k against the
+floor of 7, and concentration is 75.0 vs 11.4 for the rest of the region.
+The §43.2 question is closed in both directions: the chain economy is not
+structurally marginal, and it concentrates precisely where migration
+delivers capital.
+
+**§44.3 answered: the zero is honest.** The would-have-reversed set is
+nonempty in every seed (4,1,2,3,1,1,2,2 — 16 of 34 migrants sat below
+their origin's realised yield at grace-window end and stayed because they
+planted). The commitment device is doing real work; §28.1's estimate is
+lossy enough for failure to be visible, and reversal-zero can be trusted.
+
+One instrument note, escalated not patched: contest sampled at the
+half-budget point still reads 1.00 in all 64 chunk-samples. The live-cell
+competition MEDIAN is structurally pinned — §27.5's own print shows the
+distribution bimodal (p10 0.00, p90 1.00) — so the kept rate-vs-rank
+report cannot rank at any sampling time. A discriminating version needs
+the live-cell MEAN (the 0/1 mix share); that is a further re-registration
+for the operator. The §44.2 assertions themselves no longer depend on
+contest, so nothing asserted rides on this.
+
 ## Carried, not fixed
 
 - ~~UK tier-1 valuations~~ — done (build 10, §33.4): HM Land Registry UK HPI
