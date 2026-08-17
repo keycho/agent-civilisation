@@ -1,0 +1,29 @@
+{
+ "_": "real migrations recorded from region run globe-record-0 at 90k decisions (§49); replayed on the globe until live migration exists on the wire",
+ "migrations": [
+  {
+   "fromChunk": "schiedam-havens",
+   "toSettlement": "maasland-dorp"
+  },
+  {
+   "fromChunk": "london-deptford",
+   "toSettlement": "maassluis-haven"
+  },
+  {
+   "fromChunk": "schiedam-havens",
+   "toSettlement": "maasland-dorp"
+  },
+  {
+   "fromChunk": "maasland-dorp",
+   "toSettlement": "london-deptford"
+  },
+  {
+   "fromChunk": "maassluis-haven",
+   "toSettlement": "schiedam-havens"
+  },
+  {
+   "fromChunk": "maassluis-haven",
+   "toSettlement": "maasland-dorp"
+  }
+ ]
+}

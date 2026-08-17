@@ -27,6 +27,7 @@ import {
   BufferAttribute,
   Color,
   BufferGeometry,
+  Group,
   LineBasicMaterial,
   LineSegments,
   Raycaster,
@@ -47,6 +48,8 @@ import { ConstructionOverlay } from './render/scaffold.ts'
 import { createSubstrateView } from './render/substrateMesh.ts'
 import { createTrees } from './render/trees.ts'
 import { PunctuationLayer } from './render/punctuation.ts'
+import { FloatLights } from './render/floatlights.ts'
+import { GlobeView } from './render/globe.ts'
 import { AgentInterpolator, Connection, fromBase64 } from './world/connection.ts'
 import { loadChunk } from './world/load.ts'
 import { Observer } from './world/observer.ts'
@@ -57,6 +60,9 @@ const renderer = new WebGLRenderer({ canvas, antialias: true })
 configureRenderer(renderer)
 
 const scene = new Scene()
+// §49: the world lives under one root so the globe can take the stage
+const cityRoot = new Group()
+scene.add(cityRoot)
 // The baseline is immutable and served as a static file (§5, §21.6): it never
 // travels over the socket, and every viewer already has the same copy.
 const { seed, items, statics, chunks, entry, servers } = await loadChunk()
@@ -70,7 +76,7 @@ const radius =
 // the plate stops just past the chunk, so the world reads as an object
 const HALF_EXTENT = radius + 22
 const substrate = createSubstrateView(seed.substrate, HALF_EXTENT)
-scene.add(substrate.group)
+cityRoot.add(substrate.group)
 const env = createEnvironment(scene, { radius, groundY: substrate.groundY, chunkId: entry.id })
 
 const buildings = new BuildingRenderer(items, seed.buildings.length + BUILDING_SLOT_SPARE)
@@ -83,19 +89,19 @@ buildings.flush()
 // §42.1: the chunk wears its own material base — schiedam's identity row
 // keeps it exactly as built
 buildings.setCityMaterial(CITY_MATERIALS[seed.chunk.id] ?? CITY_MATERIAL_DEFAULT)
-scene.add(buildings.group)
+cityRoot.add(buildings.group)
 
 const roads = createRoadMeshes(seed.roads.nodes, seed.roads.edges, substrate.heightAt, HALF_EXTENT)
-scene.add(roads.baseline)
-scene.add(roads.agent)
+cityRoot.add(roads.baseline)
+cityRoot.add(roads.agent)
 
 // §42.2: linear landmarks — the petite ceinture reads as a cutting, not a road
 if (seed.landmarkLines?.length) {
-  scene.add(createLandmarkLines(seed.landmarkLines, substrate.heightAt))
+  cityRoot.add(createLandmarkLines(seed.landmarkLines, substrate.heightAt))
 }
 
 // §48.4: stylized canopy over green landcover, chunk-palette tinted
-scene.add(
+cityRoot.add(
   createTrees(
     seed.substrate.surfaces,
     substrate.heightAt,
@@ -105,19 +111,19 @@ scene.add(
 )
 
 const construction = new ConstructionOverlay()
-scene.add(construction.scaffold)
-scene.add(construction.siteMarks)
-scene.add(construction.glow)
-scene.add(construction.cranes)
+cityRoot.add(construction.scaffold)
+cityRoot.add(construction.siteMarks)
+cityRoot.add(construction.glow)
+cityRoot.add(construction.cranes)
 
 // §46.2: one frame of punctuation at the §16.5 staging endpoints
 const punctuation = new PunctuationLayer()
 punctuation.setGround(substrate.groundY)
-scene.add(punctuation.dust)
-scene.add(punctuation.flash)
+cityRoot.add(punctuation.dust)
+cityRoot.add(punctuation.flash)
 
 const agentMarkers = new AgentMarkers(200)
-scene.add(agentMarkers.mesh)
+cityRoot.add(agentMarkers.mesh)
 
 /**
  * §36.2: the site tether. A thin line linking a working agent's marker to the
@@ -136,7 +142,42 @@ const tether = new LineSegments(
   new LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.35, depthWrite: false }),
 )
 tether.frustumCulled = false
-scene.add(tether)
+cityRoot.add(tether)
+
+/**
+ * §47.3a: the floating lights — agent glyphs over the miniature, chrome
+ * register. §49 reuses the identical grammar for migration arcs on the globe.
+ */
+const floatLights = new FloatLights()
+cityRoot.add(floatLights.group)
+
+// §49: the globe, same void, same grade
+const globe = new GlobeView(
+  HALF_EXTENT * 0.92,
+  chunks.map((c) => c.id),
+  new Map(chunks.map((c) => [c.id, c.name])),
+)
+scene.add(globe.group)
+const globeArcs = new FloatLights()
+globe.group.add(globeArcs.group)
+
+/**
+ * §49 deviation, stated: migration events are NOT on the wire — migration
+ * lives in the region harness (§31.6-5), and live servers do not move
+ * agents. The arcs replay the committed record of a real region run
+ * (world/region/migrations.json); absent that artifact, the globe simply
+ * shows no arcs. When live migration exists, this feed swaps for the wire.
+ */
+let migrationRecord: Array<{ fromChunk: string; toSettlement: string }> = []
+void fetch('/world/region/migrations.json')
+  .then((r) => (r.ok ? r.json() : []))
+  .then((list: { migrations?: typeof migrationRecord } | typeof migrationRecord) => {
+    migrationRecord = Array.isArray(list) ? list : (list.migrations ?? [])
+  })
+  .catch(() => {})
+let arcCursor = 0
+let arcTimer = 0
+
 
 // ---------------------------------------------------------------------------
 // the connection to the world (§21.6)
@@ -371,10 +412,101 @@ function pointAt(x: number, y: number): Vector3 {
 director.enabled = false
 setTimeout(
   () => {
-    if (!followId) director.enabled = true
+    if (!followId && mode === 'city') director.enabled = true
   },
   arriving ? 3400 : 2600,
 )
+
+// ---------------------------------------------------------------------------
+// §49: the scale chain — city <-> globe
+// ---------------------------------------------------------------------------
+
+let mode: 'city' | 'globe' = 'city'
+
+function toGlobe(): void {
+  if (mode === 'globe') return
+  mode = 'globe'
+  if (followId) follow(null)
+  director.enabled = false
+  cityRoot.visible = false
+  globe.group.visible = true
+  rig.limits.maxDistance = globe.radius * 4.2
+  rig.limits.panRadius = 0
+  rig.flyTo(new Vector3(0, 0, 0), globe.radius * 3.1, { polar: 1.05, duration: 2.0 })
+  el('chunkBtn').textContent = 'earth'
+}
+
+/**
+ * §40.6/§49.2: the dive — fly to the marker, then descend into the city.
+ * Same-chunk dives are one unbroken move; a cross-chunk dive flies to the
+ * marker, navigates, and the §36.1 arrival sweep finishes the descent with
+ * the boot caption on the far side of the load.
+ */
+function diveTo(id: string): void {
+  const m = globe.markers.find((x) => x.id === id)
+  if (!m) return
+  rig.flyTo(m.position.clone().multiplyScalar(1.12), globe.radius * 0.7, { duration: 1.7 })
+  setTimeout(() => {
+    if (id === entry.id) toCity()
+    else {
+      sessionStorage.setItem('tf-arrive', '1')
+      switchTo(id)
+    }
+  }, 1750)
+}
+
+function toCity(): void {
+  mode = 'city'
+  globe.group.visible = false
+  cityRoot.visible = true
+  rig.limits.maxDistance = frameThePlate(innerWidth / innerHeight) * 1.25
+  rig.limits.panRadius = radius * 1.1
+  rig.flyTo(new Vector3(0, substrate.groundY, 0), CITY_FRAMING * 1.55, {
+    azimuth: CITY_AZIMUTH + 0.7,
+    polar: 0.36,
+    duration: 0.01,
+  })
+  rig.update(0.05)
+  rig.flyTo(new Vector3(0, substrate.groundY, 0), CITY_FRAMING, {
+    azimuth: CITY_AZIMUTH,
+    polar: 0.66,
+    duration: 2.6,
+  })
+  setTimeout(() => {
+    if (!followId && mode === 'city') director.enabled = true
+  }, 3000)
+}
+
+// zooming out past the city framing lifts off to the globe
+let liftPressure = 0
+canvas.addEventListener('wheel', (e) => {
+  if (mode !== 'city' || !bootDone) return
+  if (e.deltaY > 0 && rig.distance >= rig.limits.maxDistance * 0.995) {
+    liftPressure += 1
+    if (liftPressure >= 3) {
+      liftPressure = 0
+      toGlobe()
+    }
+  } else if (e.deltaY < 0) {
+    liftPressure = 0
+  }
+})
+
+// on the globe, clicking a marker dives; the cards pane stays one keypress away
+canvas.addEventListener('click', (e) => {
+  if (mode !== 'globe') return
+  const v = new Vector3()
+  let best: { id: string; d: number } | null = null
+  for (const m of globe.markers) {
+    v.copy(m.position).project(rig.camera)
+    if (v.z > 1) continue
+    const sx = ((v.x + 1) / 2) * innerWidth
+    const sy = (1 - (v.y + 1) / 2) * innerHeight
+    const d = Math.hypot(sx - e.clientX, sy - e.clientY)
+    if (d < 28 && (!best || d < best.d)) best = { id: m.id, d }
+  }
+  if (best) diveTo(best.id)
+})
 
 attachRigControls(rig, canvas, () => {
   director.takeControl()
@@ -585,6 +717,7 @@ let selectedIndex: number | null = null
 let selectedAgentId: string | null = null
 
 canvas.addEventListener('click', (e) => {
+  if (mode !== 'city') return
   // §36.2: agents are clickable ahead of the fabric — a marker is a few pixels
   // and a raycast against instanced cones is not worth the precision
   const hitAgent = pickAgent(e.clientX, e.clientY)
@@ -1384,6 +1517,22 @@ renderer.setAnimationLoop(() => {
   updateTethers()
   updateChip()
 
+  if (mode === 'city') {
+    floatLights.setAgents(floatAgents(), substrate.groundY, rig.distance)
+    floatLights.update(dt)
+  } else {
+    // §49: the recorded migrations replay as travelling lights
+    globeArcs.update(dt)
+    arcTimer -= dt
+    if (arcTimer <= 0 && migrationRecord.length) {
+      arcTimer = 2.6
+      const m = migrationRecord[arcCursor++ % migrationRecord.length]
+      const from = globe.markers.find((x) => x.id === m.fromChunk)?.position
+      const to = globe.markers.find((x) => x.id === m.toSettlement)?.position
+      if (from && to) globeArcs.launchArc(from, to)
+    }
+  }
+
   crewTimer += dt
   if (crewTimer > 1.5) {
     crewTimer = 0
@@ -1427,6 +1576,22 @@ renderer.setAnimationLoop(() => {
   tiltShift.render(renderer, scene, rig.camera, rig.distance, 1 - rig.streetness * 0.85)
 })
 
+function* floatAgents(): Generator<import('./render/floatlights.ts').FloatAgent> {
+  for (const a of presence.positions()) {
+    const who = roster.get(a.id)
+    if (!who) continue
+    yield {
+      id: a.id,
+      x: a.x,
+      y: a.y,
+      activity: a.activity,
+      strategy: who.strategy,
+      name: who.name,
+      followed: followId === a.id,
+    }
+  }
+}
+
 function* withIdentity(): Generator<AgentPresence> {
   for (const a of presence.positions()) {
     const who = roster.get(a.id)
@@ -1467,6 +1632,8 @@ function* withIdentity(): Generator<AgentPresence> {
     agentCard: (id: string) => showAgentCard(id),
     chunks: () => chunks,
     switchTo,
+    toGlobe,
+    diveTo,
     /** return to the §24.1 framed orientation, for tooling and captures */
     home() {
       director.takeControl()
@@ -1477,4 +1644,30 @@ function* withIdentity(): Generator<AgentPresence> {
       })
     },
   },
+}
+
+
+/**
+ * §49.4: first load is boot -> globe -> one beat -> dive to the busiest
+ * city. Once per session: a switch or a refresh mid-visit lands directly in
+ * its city, and the intro never traps a returning viewer.
+ */
+const bareLoad = !new URLSearchParams(location.search).has('chunk')
+if (bareLoad && !arriving && !sessionStorage.getItem('tf-globe-seen')) {
+  sessionStorage.setItem('tf-globe-seen', '1')
+  toGlobe()
+  void pollSummaries().then(() => {
+    setTimeout(() => {
+      if (mode !== 'globe') return
+      let busiest = entry.id
+      let bestRate = -1
+      for (const [id, s] of citySummaries) {
+        if ((s.activityRate ?? 0) > bestRate) {
+          bestRate = s.activityRate ?? 0
+          busiest = id
+        }
+      }
+      diveTo(busiest)
+    }, 2600)
+  })
 }
