@@ -49,7 +49,7 @@ import { createSubstrateView } from './render/substrateMesh.ts'
 import { createTrees } from './render/trees.ts'
 import { PunctuationLayer } from './render/punctuation.ts'
 import { FloatLights } from './render/floatlights.ts'
-import { GlobeView } from './render/globe.ts'
+import { GLOBE_HOME, GLOBE_HOME_SPAN, GLOBE_ZOOM, GlobeView, orbitFor } from './render/globe.ts'
 import { AgentInterpolator, Connection, fromBase64 } from './world/connection.ts'
 import { loadChunk } from './world/load.ts'
 import { Observer } from './world/observer.ts'
@@ -437,6 +437,23 @@ setTimeout(
 // ---------------------------------------------------------------------------
 
 let mode: 'city' | 'globe' = 'city'
+/** §49 r3: seconds since the globe camera was last touched */
+let globeIdle = 0
+
+/**
+ * §49 r3: the globe's own §24.1. One fixed home framing — full disc, limb all
+ * the way round, europe centred, comfortable margin — that zoom-out lands on
+ * and ambient returns to. Free zoom is clamped either side so the frame never
+ * degenerates into coastline scribbles at one end or a speck at the other.
+ */
+function globeHomeDistance(): number {
+  return rig.distanceToFrame(globe.radius * GLOBE_HOME_SPAN)
+}
+
+function frameGlobeHome(duration: number): void {
+  const orbit = orbitFor(GLOBE_HOME.lat, GLOBE_HOME.lon)
+  rig.flyTo(new Vector3(0, 0, 0), globeHomeDistance(), { ...orbit, duration })
+}
 
 function toGlobe(): void {
   if (mode === 'globe') return
@@ -445,9 +462,10 @@ function toGlobe(): void {
   director.enabled = false
   cityRoot.visible = false
   globe.group.visible = true
-  rig.limits.maxDistance = globe.radius * 4.2
+  rig.limits.minDistance = rig.distanceToFrame(globe.radius * GLOBE_ZOOM.minSpan)
+  rig.limits.maxDistance = rig.distanceToFrame(globe.radius * GLOBE_ZOOM.maxSpan)
   rig.limits.panRadius = 0
-  rig.flyTo(new Vector3(0, 0, 0), globe.radius * 3.1, { polar: 1.05, duration: 2.0 })
+  frameGlobeHome(2.0)
   el('chunkBtn').textContent = 'earth'
   document.body.classList.add('globe')
   void pollSummaries()
@@ -479,6 +497,7 @@ function toCity(): void {
   el('chunkBtn').textContent = placeName(entry.name)
   globe.group.visible = false
   cityRoot.visible = true
+  rig.limits.minDistance = 40
   rig.limits.maxDistance = frameThePlate(innerWidth / innerHeight) * 1.25
   rig.limits.panRadius = radius * 1.1
   rig.flyTo(new Vector3(0, substrate.groundY, 0), CITY_FRAMING * 1.55, {
@@ -504,7 +523,12 @@ function toCity(): void {
  */
 const globeLabels = el('globeLabels')
 const labelEls = new Map<string, HTMLElement>()
+const leaderEls = new Map<string, HTMLElement>()
 for (const m of globe.markers) {
+  const leader = document.createElement('div')
+  leader.className = 'gleader'
+  globeLabels.appendChild(leader)
+  leaderEls.set(m.id, leader)
   const div = document.createElement('div')
   div.className = 'glabel'
   div.textContent = m.name.toLowerCase()
@@ -522,37 +546,92 @@ globeLabels.addEventListener('mouseover', (e) => {
 })
 
 const labelV = new Vector3()
+const camDir = new Vector3()
+
+/**
+ * §49 r3: labels anchor to their marks. Each sits immediately beside its mark
+ * and only moves when its box genuinely collides with one already placed —
+ * then by the smallest step that clears, with a leader line back to the mark
+ * so the geography stays honest. The visible label set is exactly the visible
+ * mark set: a city behind the limb drops both.
+ */
 function updateGlobeLabels(): void {
-  // project, then declutter: labels sharing screen space stack downward so
-  // the NL constellation enumerates instead of colliding
-  const placed: Array<{ x: number; y: number; div: HTMLElement }> = []
+  camDir.copy(rig.camera.position).normalize()
+  const live: Array<{ m: (typeof globe.markers)[number]; sx: number; sy: number; div: HTMLElement }> = []
   for (const m of globe.markers) {
     const div = labelEls.get(m.id)
     if (!div) continue
-    const facing =
-      m.position.clone().normalize().dot(rig.camera.position.clone().normalize()) > 0.12
+    // one test drives both: behind the limb means no mark and no label
+    const facing = m.position.clone().normalize().dot(camDir) > 0.08
     labelV.copy(m.position).project(rig.camera)
-    if (!facing || labelV.z > 1) {
+    const onScreen = facing && labelV.z <= 1
+    m.sprite.visible = onScreen
+    if (!onScreen) {
       div.classList.remove('on')
       continue
     }
-    placed.push({
-      x: ((labelV.x + 1) / 2) * innerWidth + 10,
-      y: (1 - (labelV.y + 1) / 2) * innerHeight - 8,
+    live.push({
+      m,
+      sx: ((labelV.x + 1) / 2) * innerWidth,
+      sy: (1 - (labelV.y + 1) / 2) * innerHeight,
       div,
     })
   }
-  placed.sort((a, b) => a.y - b.y || a.x - b.x)
-  const ROW = 22
-  for (let i = 0; i < placed.length; i++) {
-    const p = placed[i]
-    for (let j = 0; j < i; j++) {
-      const q = placed[j]
-      if (Math.abs(p.y - q.y) < ROW && Math.abs(p.x - q.x) < 190) p.y = q.y + ROW
+
+  // north-first placement keeps the ladder deterministic between frames
+  live.sort((a, b) => a.sy - b.sy || a.sx - b.sx)
+  const placed: Array<{ x: number; y: number; w: number; h: number }> = []
+  const GAP = 11
+  for (const item of live) {
+    item.div.classList.add('on')
+    const w = item.div.offsetWidth || 120
+    const h = item.div.offsetHeight || 18
+    // adjacent first, then the smallest displacement that clears
+    const candidates: Array<[number, number]> = [
+      [GAP, -h / 2],
+      [GAP, -h / 2 - (h + 3)],
+      [GAP, -h / 2 + (h + 3)],
+      [-w - GAP, -h / 2],
+      [GAP, -h / 2 + 2 * (h + 3)],
+      [-w - GAP, -h / 2 - (h + 3)],
+      [GAP, -h / 2 - 2 * (h + 3)],
+    ]
+    // beyond the fixed ladder, keep stepping down until something clears —
+    // a label printed on top of another is worse than one row further out
+    for (let k = 3; k <= 9; k++) candidates.push([GAP, -h / 2 + k * (h + 3)])
+    let chosen = candidates[0]
+    for (const c of candidates) {
+      const box = { x: item.sx + c[0], y: item.sy + c[1], w, h }
+      const hits = placed.some(
+        (p) => box.x < p.x + p.w + 4 && box.x + box.w + 4 > p.x && box.y < p.y + p.h + 2 && box.y + box.h + 2 > p.y,
+      )
+      if (!hits) {
+        chosen = c
+        break
+      }
     }
-    p.div.classList.add('on')
-    p.div.style.left = `${p.x}px`
-    p.div.style.top = `${p.y}px`
+    const x = item.sx + chosen[0]
+    const y = item.sy + chosen[1]
+    placed.push({ x, y, w, h })
+    item.div.style.left = `${x}px`
+    item.div.style.top = `${y}px`
+    // a leader only when the label had to leave its mark's side
+    const displaced = chosen !== candidates[0]
+    const leader = leaderEls.get(item.m.id)
+    if (leader) {
+      if (displaced) {
+        const tx = chosen[0] < 0 ? x + w : x
+        const ty = y + h / 2
+        const len = Math.hypot(tx - item.sx, ty - item.sy)
+        leader.style.width = `${len}px`
+        leader.style.left = `${item.sx}px`
+        leader.style.top = `${item.sy}px`
+        leader.style.transform = `rotate(${Math.atan2(ty - item.sy, tx - item.sx)}rad)`
+        leader.classList.add('on')
+      } else {
+        leader.classList.remove('on')
+      }
+    }
   }
 }
 
@@ -607,6 +686,7 @@ canvas.addEventListener('click', (e) => {
 })
 
 attachRigControls(rig, canvas, () => {
+  globeIdle = 0
   director.takeControl()
   // §36.2: grabbing the camera releases the tether — following is a mode the
   // viewer leaves by looking elsewhere, not a lock
@@ -1683,6 +1763,12 @@ renderer.setAnimationLoop(() => {
   if (mode === 'globe') {
     globe.updateLOD(rig.distance)
     updateGlobeLabels()
+    // §49 r3: ambient returns to the home framing, the globe's drift-back
+    globeIdle += dt
+    if (globeIdle > 14 && document.body.classList.contains('ambient')) {
+      globeIdle = -24
+      frameGlobeHome(3.4)
+    }
   }
 })
 
@@ -1744,6 +1830,7 @@ function* withIdentity(): Generator<AgentPresence> {
     switchTo,
     toGlobe,
     diveTo,
+    orbitFor,
     /** return to the §24.1 framed orientation, for tooling and captures */
     home() {
       director.takeControl()

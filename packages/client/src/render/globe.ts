@@ -7,6 +7,7 @@
  * only when on-demand materialisation ships to production, when an unseeded
  * town igniting is something a spectator could actually witness.
  */
+import earcut from 'earcut'
 import {
   BufferAttribute,
   BufferGeometry,
@@ -16,7 +17,8 @@ import {
   LineBasicMaterial,
   LineSegments,
   Mesh,
-  MeshLambertMaterial,
+  DoubleSide,
+  MeshBasicMaterial,
   Points,
   PointsMaterial,
   SphereGeometry,
@@ -40,6 +42,39 @@ export const CHUNK_ANCHORS: Record<string, [lat: number, lon: number]> = {
   'vlaardingen-westwijk': [51.9048, 4.3268],
   'maasland-dorp': [51.9366, 4.2758],
   'maassluis-haven': [51.9224, 4.2492],
+}
+
+/**
+ * §49 r3: the globe's §24.1 — one fixed home framing. Europe centred because
+ * six of the eight cities are European; the disc is framed with margin so the
+ * limb reads all the way round.
+ */
+export const GLOBE_HOME = { lat: 48, lon: 10 } as const
+/** disc diameter times this fills the frame with a comfortable margin */
+export const GLOBE_HOME_SPAN = 2.55
+/**
+ * Free zoom stops before the frame degenerates into coastline scribbles.
+ * minSpan is a regional framing — a quarter of the disc's diameter, about
+ * 30 degrees of arc, where europe fills the frame and the 110m outline is
+ * still an honest coastline. Closer than that and the data has nothing left
+ * to say: the NL constellation's four towns sit within 15 km of each other,
+ * so no permitted zoom ever separates their marks — the label ladder is
+ * their permanent answer, not a stopgap.
+ */
+export const GLOBE_ZOOM = { minSpan: 0.5, maxSpan: 3.4 } as const
+
+/**
+ * The orbit that puts a lat/lon at the centre of frame. The rig's camera sits
+ * at (sinP sin az, cos P, sinP cos az) from its target, so matching that to
+ * the point's own surface normal is the whole derivation.
+ */
+export function orbitFor(lat: number, lon: number): { azimuth: number; polar: number } {
+  const la = (lat * Math.PI) / 180
+  const lo = (lon * Math.PI) / 180
+  return {
+    polar: Math.acos(Math.sin(la)),
+    azimuth: Math.atan2(Math.cos(la) * Math.cos(lo), -Math.cos(la) * Math.sin(lo)),
+  }
 }
 
 export function latLonTo(radius: number, lat: number, lon: number, out = new Vector3()): Vector3 {
@@ -85,11 +120,15 @@ export class GlobeView {
     this.radius = radius
     this.group.visible = false
 
-    // §49 r2: a very dark blue-grey body, minimally lit — the planet is a
-    // form against the void, never void-black itself
+    /**
+     * §49 r3: the ocean. Unlit and flat on purpose — legibility at every
+     * permitted zoom beats modelled shading, and a fixed value keeps the disc
+     * readable wherever the city's sun happens to be. Lighter than the void
+     * (#0d0c0a) so the limb reads as an edge without drawing one.
+     */
     const sphere = new Mesh(
-      new SphereGeometry(radius, 48, 32),
-      new MeshLambertMaterial({ color: new Color('#182029'), emissive: new Color('#0b0f14') }),
+      new SphereGeometry(radius, 64, 40),
+      new MeshBasicMaterial({ color: new Color('#18222c') }),
     )
     this.group.add(sphere)
 
@@ -115,7 +154,7 @@ export class GlobeView {
     this.group.add(
       new LineSegments(
         gratGeo,
-        new LineBasicMaterial({ color: new Color('#2a2721'), transparent: true, opacity: 0.35 }),
+        new LineBasicMaterial({ color: new Color('#232a31'), transparent: true, opacity: 0.3 }),
       ),
     )
 
@@ -153,34 +192,111 @@ export class GlobeView {
     return this.candidatesLoaded && this.candidateGroup.visible
   }
 
-  /** coastline in the dim register, from the committed 110m land asset */
+  /**
+   * §49 r3: land is a filled mass, not a lone stroke. The 110m rings are
+   * triangulated in lon/lat and each triangle is subdivided until its edges
+   * are short enough that the chord hugs the sphere, then every vertex is
+   * projected. The coastline stroke stays on top as the value edge between
+   * warm-grey land and colder ocean — which is what makes continents nameable
+   * rather than a scribble.
+   */
   private async loadCoastline(): Promise<void> {
     try {
       const r = await fetch('/world/coarse/land-110m.json')
       const gj = (await r.json()) as {
         features: Array<{ geometry: { type: string; coordinates: number[][][] | number[][][][] } }>
       }
+      const polygons: number[][][][] = []
+      for (const f of gj.features) {
+        if (f.geometry.type === 'Polygon') polygons.push(f.geometry.coordinates as number[][][])
+        else if (f.geometry.type === 'MultiPolygon')
+          for (const poly of f.geometry.coordinates as number[][][][]) polygons.push(poly)
+      }
+
+      // -- fill ------------------------------------------------------------
+      const fill: number[] = []
+      const v = new Vector3()
+      const emit = (lon: number, lat: number) => {
+        latLonTo(this.radius + 0.5, lat, lon, v)
+        fill.push(v.x, v.y, v.z)
+      }
+      /** split until every edge is under MAX_ARC degrees, so chords stay near the surface */
+      const MAX_ARC = 4
+      const tri = (
+        a: [number, number],
+        b: [number, number],
+        c: [number, number],
+        depth: number,
+      ): void => {
+        const longest = Math.max(
+          Math.hypot(a[0] - b[0], a[1] - b[1]),
+          Math.hypot(b[0] - c[0], b[1] - c[1]),
+          Math.hypot(c[0] - a[0], c[1] - a[1]),
+        )
+        if (longest <= MAX_ARC || depth >= 4) {
+          emit(a[0], a[1])
+          emit(b[0], b[1])
+          emit(c[0], c[1])
+          return
+        }
+        const ab: [number, number] = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]
+        const bc: [number, number] = [(b[0] + c[0]) / 2, (b[1] + c[1]) / 2]
+        const ca: [number, number] = [(c[0] + a[0]) / 2, (c[1] + a[1]) / 2]
+        tri(a, ab, ca, depth + 1)
+        tri(ab, b, bc, depth + 1)
+        tri(ca, bc, c, depth + 1)
+        tri(ab, bc, ca, depth + 1)
+      }
+
+      for (const poly of polygons) {
+        // a ring spanning almost the whole globe is an antimeridian artifact
+        // of flat triangulation, not a landmass; it would paint a band
+        const lons = poly[0].map((p) => p[0])
+        if (Math.max(...lons) - Math.min(...lons) > 340) continue
+        const flat: number[] = []
+        const holes: number[] = []
+        poly.forEach((ring, i) => {
+          if (i > 0) holes.push(flat.length / 2)
+          for (const [lon, lat] of ring) flat.push(lon, lat)
+        })
+        const idx = earcut(flat, holes)
+        for (let i = 0; i < idx.length; i += 3) {
+          const p = (k: number): [number, number] => [flat[idx[k] * 2], flat[idx[k] * 2 + 1]]
+          tri(p(i), p(i + 1), p(i + 2), 0)
+        }
+      }
+      const fillGeo = new BufferGeometry()
+      fillGeo.setAttribute('position', new BufferAttribute(new Float32Array(fill), 3))
+      /**
+       * DoubleSide is load-bearing: latLonTo negates z (render space is
+       * -y-forward), which flips handedness, so rings that wind
+       * counter-clockwise in lon/lat come out clockwise on the sphere and
+       * front-side culling ate the entire fill — the first r3 capture had
+       * outlines over void and no mass at all.
+       */
+      const land = new Mesh(
+        fillGeo,
+        new MeshBasicMaterial({ color: new Color('#4d4638'), side: DoubleSide }),
+      )
+      land.renderOrder = -1
+      this.group.add(land)
+
+      // -- coastline, the value edge on top of the fill ---------------------
       const positions: number[] = []
       const push = (ring: number[][]) => {
         for (let i = 0; i < ring.length - 1; i++) {
-          const a = latLonTo(this.radius + 0.8, ring[i][1], ring[i][0])
-          const b = latLonTo(this.radius + 0.8, ring[i + 1][1], ring[i + 1][0])
+          const a = latLonTo(this.radius + 0.9, ring[i][1], ring[i][0])
+          const b = latLonTo(this.radius + 0.9, ring[i + 1][1], ring[i + 1][0])
           positions.push(a.x, a.y, a.z, b.x, b.y, b.z)
         }
       }
-      for (const f of gj.features) {
-        if (f.geometry.type === 'Polygon')
-          for (const ring of f.geometry.coordinates as number[][][]) push(ring)
-        else if (f.geometry.type === 'MultiPolygon')
-          for (const poly of f.geometry.coordinates as number[][][][])
-            for (const ring of poly) push(ring)
-      }
+      for (const poly of polygons) for (const ring of poly) push(ring)
       const geo = new BufferGeometry()
       geo.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3))
       this.group.add(
         new LineSegments(
           geo,
-          new LineBasicMaterial({ color: new Color('#6b6353'), transparent: true, opacity: 0.85 }),
+          new LineBasicMaterial({ color: new Color('#9c9078'), transparent: true, opacity: 0.95 }),
         ),
       )
     } catch {

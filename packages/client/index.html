@@ -149,6 +149,12 @@
       }
       .glabel.on { display: block; }
       .glabel:hover { color: var(--cream); border-color: var(--amber); }
+      /* §49 r3: the leader, drawn only when a label had to leave its mark */
+      .gleader {
+        position: absolute; display: none; height: 1px; transform-origin: 0 50%;
+        background: var(--amber); opacity: 0.45; pointer-events: none;
+      }
+      .gleader.on { display: block; }
       #globeCard { top: 42px; right: 12px; width: 270px; display: none; }
       body.globe #globeCard.on { display: block; }
       #globeCard .body { padding: 8px 11px; }

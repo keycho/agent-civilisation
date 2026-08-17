@@ -9,14 +9,19 @@ await page.waitForTimeout(2500)
 await page.evaluate(() => document.getElementById('watchBtn')?.click())
 // hold on the globe: cancel the auto-dive by re-entering globe mode
 await page.waitForTimeout(1200)
+// (1) home framing — the globe's own §24.1, no camera arguments at all
 await page.evaluate(() => window.civ.ui.toGlobe())
-await page.waitForTimeout(2600)
-// europe-facing: lat ~50, lon ~10 toward the camera
+await page.waitForTimeout(9000)
+await page.screenshot({ path: 'tools/watch/ab/globe-home.png' })
+console.log('globe-home.png')
+
+// (2) mid-zoom on the nl cluster
 await page.evaluate(() => {
   const V = window.civ.rig.target.constructor
-  window.civ.rig.flyTo(new V(0, 0, 0), window.civ.rig.distance, { azimuth: 1.746, polar: 0.698, duration: 1.2 })
+  const o = window.civ.ui.orbitFor(51.9, 4.35)
+  window.civ.rig.flyTo(new V(0, 0, 0), window.civ.rig.limits.minDistance * 1.04, { ...o, duration: 2.2 })
 })
-await page.waitForTimeout(6500)
-await page.screenshot({ path: 'tools/watch/ab/globe.png' })
-console.log('globe.png')
+await page.waitForTimeout(7000)
+await page.screenshot({ path: 'tools/watch/ab/globe-nl.png' })
+console.log('globe-nl.png')
 await browser.close()
