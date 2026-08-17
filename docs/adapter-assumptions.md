@@ -442,6 +442,15 @@ the live-cell MEAN (the 0/1 mix share); that is a further re-registration
 for the operator. The §44.2 assertions themselves no longer depend on
 contest, so nothing asserted rides on this.
 
+**§44.4's extreme fixture, baselined.** Ceiling-watch on vlaardingen at
+3x budget: seeds touch 4/43 and 2/43 ceiling candidates (5-9%), against
+brooklyn's 38/51 and 45/51 (75-88%) at the same setting. Slab fabric
+does not self-solve at this horizon — dynastic capital reaches the class
+almost nowhere — which is precisely why it holds the §41.3 longitudinal
+watch: if accumulation ever reaches vlaardingen's slabs, the ceiling has
+closed everywhere free; until then syndication stays a live later
+mechanism decision, still unbuilt.
+
 ## Carried, not fixed
 
 - ~~UK tier-1 valuations~~ — done (build 10, §33.4): HM Land Registry UK HPI
