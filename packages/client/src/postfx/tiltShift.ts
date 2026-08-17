@@ -56,6 +56,9 @@ export class TiltShiftPass {
         uMaxBlur: { value: this.maxBlurPx },
         uStrength: { value: 1 },
         uVignette: { value: 0.42 },
+        uExposure: { value: 1.06 },
+        uContrast: { value: 0.32 },
+        uDesat: { value: 0.18 },
       },
       vertexShader: /* glsl */ `
         varying vec2 vUv;
@@ -70,13 +73,32 @@ export class TiltShiftPass {
         uniform sampler2D tDepth;
         uniform vec2 uTexel;
         uniform float uNear, uFar, uFocus, uRange, uMaxBlur, uStrength, uVignette;
+        uniform float uExposure, uContrast, uDesat;
+
+        /**
+         * §48.2: the one post chain — filmic tonemap (ACES approximation),
+         * a gentle contrast s-curve, and a slight desaturation of the mids
+         * with the warm band protected, so terracotta and the fork's amber
+         * keep their voice while the greys quiet down. The divergence lerp
+         * reads through: it is a relative move in the same gamut, and the
+         * protection is exactly its hue family.
+         */
+        vec3 grade(vec3 c) {
+          vec3 x = c * uExposure;
+          vec3 tm = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+          vec3 sc = mix(tm, tm * tm * (3.0 - 2.0 * tm), uContrast);
+          float lum = dot(sc, vec3(0.299, 0.587, 0.114));
+          float mids = smoothstep(0.10, 0.34, lum) * (1.0 - smoothstep(0.62, 0.92, lum));
+          float warm = clamp((sc.r - max(sc.g, sc.b)) * 4.0, 0.0, 1.0);
+          return mix(sc, vec3(lum), uDesat * mids * (1.0 - warm));
+        }
 
         // §47.1: subtle radial falloff toward the void, so the plate edge
         // reads as an object sitting in darkness rather than a viewport crop
         vec4 vignetted(vec4 c) {
           float r = length(vUv * 2.0 - 1.0);
           float v = 1.0 - uVignette * smoothstep(0.62, 1.42, r);
-          return vec4(c.rgb * v, c.a);
+          return vec4(grade(c.rgb) * v, c.a);
         }
 
         float viewZ(vec2 uv) {
