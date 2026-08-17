@@ -45,6 +45,7 @@ import { createLandmarkLines } from './render/landmarkLines.ts'
 import { createRoadMeshes } from './render/roadMesh.ts'
 import { ConstructionOverlay } from './render/scaffold.ts'
 import { createSubstrateView } from './render/substrateMesh.ts'
+import { PunctuationLayer } from './render/punctuation.ts'
 import { AgentInterpolator, Connection, fromBase64 } from './world/connection.ts'
 import { loadChunk } from './world/load.ts'
 import { Observer } from './world/observer.ts'
@@ -95,6 +96,14 @@ if (seed.landmarkLines?.length) {
 const construction = new ConstructionOverlay()
 scene.add(construction.scaffold)
 scene.add(construction.siteMarks)
+scene.add(construction.glow)
+scene.add(construction.cranes)
+
+// §46.2: one frame of punctuation at the §16.5 staging endpoints
+const punctuation = new PunctuationLayer()
+punctuation.setGround(substrate.groundY)
+scene.add(punctuation.dust)
+scene.add(punctuation.flash)
 
 const agentMarkers = new AgentMarkers(200)
 scene.add(agentMarkers.mesh)
@@ -161,6 +170,12 @@ const connection = new Connection(serverUrl(), {
   onFrame(f: Frame) {
     for (const a of f.born) roster.set(a.id, a)
     for (const id of f.retired) {
+      // §46.3: a retirement is a death the session witnessed, by name
+      const gone = roster.get(id)
+      if (gone) {
+        watched.died.push(gone.name)
+        renderWatched()
+      }
       roster.delete(id)
       agentSite.delete(id)
       if (followId === id) follow(null)
@@ -182,6 +197,9 @@ const connection = new Connection(serverUrl(), {
   },
   onBuilding(b: BuildingDetail) {
     showInspector(b)
+  },
+  onAgent(a) {
+    showAgentSheet(a)
   },
   onStatus(state) {
     if (wrongWorld) return
@@ -313,20 +331,39 @@ const director = new CameraDirector(rig, {
   locatePoint: (x, y) => pointAt(x, y),
   // §35.6: at rest the ambient camera returns to the framed orientation
   homeAzimuth: CITY_AZIMUTH,
+  // §47.4: idle beats weight toward active sites — a viewer left watching is
+  // taken to work in progress rather than orbiting quiet fabric
+  idleSite() {
+    const active: Array<[number, number]> = []
+    for (const s of observer.sites()) {
+      const [x, y] = s.footprint[0]
+      active.push([x, y])
+      if (active.length >= 24) break
+    }
+    if (!active.length) return null
+    const [x, y] = active[Math.floor(Math.random() * active.length)]
+    return pointAt(x, y)
+  },
 })
 
 function pointAt(x: number, y: number): Vector3 {
   return new Vector3(x, substrate.groundY, -y)
 }
 
-// §36.1: the arrival sweep owns the camera until it lands — the director's
-// first cut would otherwise stomp it within a second of load
-if (arriving) {
-  director.enabled = false
-  setTimeout(() => {
+/**
+ * §46.4: first load and every ambient return present the §24.1 framed view.
+ * The director's queue fills within the first frames off the socket and its
+ * first cut used to land the opening camera on an event close-up — often at
+ * the plate's far corner, opening on void. Every load now holds the director
+ * until the frame has presented; the arrival sweep keeps its longer hold.
+ */
+director.enabled = false
+setTimeout(
+  () => {
     if (!followId) director.enabled = true
-  }, 3400)
-}
+  },
+  arriving ? 3400 : 2600,
+)
 
 attachRigControls(rig, canvas, () => {
   director.takeControl()
@@ -419,8 +456,36 @@ function ingest(e: EventWire): void {
   ) {
     agentSite.delete(e.agentId)
   }
+  // §46.2/§46.3: the staging endpoints get one frame of punctuation, and the
+  // session's own tally advances
+  if (e.type === 'construction_completed') {
+    watched.built++
+    if (e.x !== undefined && e.y !== undefined) punctuation.constructionFlash(e.x, e.y)
+  } else if (e.type === 'demolition_completed') {
+    watched.demolished++
+    if (e.x !== undefined && e.y !== undefined) punctuation.demolitionDust(e.x, e.y)
+  }
+  renderWatched()
   // §36.2: while following, the log reads as that agent's log
   if (!followId || e.agentId === followId) pushFeedRow(e)
+}
+
+/**
+ * §46.3 (§40.3 shipped): the session-personal line, computed from the frame
+ * stream since connect — the direct answer to "what are they doing" for
+ * anyone who just arrived.
+ */
+const watched = { built: 0, demolished: 0, died: [] as string[] }
+
+function renderWatched(): void {
+  const bits: string[] = []
+  if (watched.built) bits.push(`${watched.built} built`)
+  if (watched.demolished) bits.push(`${watched.demolished} demolished`)
+  if (watched.died.length) {
+    const last = watched.died[watched.died.length - 1].split(' ')[0].toLowerCase()
+    bits.push(watched.died.length === 1 ? `${last} died` : `${last} + ${watched.died.length - 1} died`)
+  }
+  el('watched').textContent = bits.length ? `while you watched: ${bits.join(' · ')}` : ''
 }
 
 // ---------------------------------------------------------------------------
@@ -442,28 +507,56 @@ function severity(w: number): string {
 function pushFeedRow(e: EventWire): void {
   const text = e.rationale ?? e.type.replace(/_/g, ' ')
   const key = `${e.agentId ?? ''}|${e.type}|${text}`
-  const head = feedList.firstElementChild
+  const head = feedList.firstElementChild as HTMLElement | null
+  const at = feedPlace(e)
   if (key === lastFeedKey && head) {
     lastFeedCount++
     const n = head.querySelector('.n')
     if (n) n.textContent = ` ×${lastFeedCount}`
     const ord = head.querySelector('.ord')
     if (ord) ord.textContent = String(e.id)
+    // the collapsed row keeps pointing at the newest occurrence
+    if (at) {
+      head.dataset.x = String(at[0])
+      head.dataset.y = String(at[1])
+    }
     return
   }
   lastFeedKey = key
   lastFeedCount = 1
   // §35.7: ordinal gutter, never clock time (§20). §20.2 still holds: the
   // ordinal is the log's own key, not a rendering of the tick.
+  // §46.2: rows carry their place — the feed says wilhelmina is clearing a
+  // site; clicking goes there.
   feedList.insertAdjacentHTML(
     'afterbegin',
-    `<div class="e ${severity(e.cinematicWeight)}"><span class="ord">${e.id}</span>` +
+    `<div class="e ${severity(e.cinematicWeight)}${at ? ' place' : ''}"${
+      at ? ` data-x="${at[0]}" data-y="${at[1]}"` : ''
+    }><span class="ord">${e.id}</span>` +
       `<span class="t">${
         e.agentName ? `<b>${escapeHtml(e.agentName.split(' ')[0])}</b> ` : ''
       }${escapeHtml(text)}<span class="n"></span></span></div>`,
   )
   while (feedList.childElementCount > 12) feedList.lastElementChild?.remove()
 }
+
+function feedPlace(e: EventWire): [number, number] | null {
+  if (e.x !== undefined && e.y !== undefined) return [e.x, e.y]
+  const p = e.buildingId ? places.get(e.buildingId) : undefined
+  return p ?? null
+}
+
+// §46.2-1: the single highest-value missing link — clicking a log line flies
+// to where it happened
+feedList.addEventListener('click', (ev) => {
+  const row = (ev.target as HTMLElement).closest('.e') as HTMLElement | null
+  if (!row?.dataset.x) return
+  director.takeControl()
+  rig.flyTo(pointAt(Number(row.dataset.x), Number(row.dataset.y)), 240, {
+    polar: 0.82,
+    duration: 2.0,
+  })
+})
 
 function escapeHtml(s: string): string {
   return s.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' })[c] as string)
@@ -629,27 +722,96 @@ function showAgentCard(id: string): void {
   selectedAgentId = id
   buildings.setHighlight(-1)
   const first = who.name.split(' ')[0]
-  const lastAct = [...archive].reverse().find((e) => e.agentId === id)
-  let activity = 'idle'
-  for (const a of presence.positions()) if (a.id === id) activity = a.activity
   inspector.classList.add('on')
   el('insName').textContent = `agent ${first.toLowerCase()}`
   el('insMeta').textContent = who.strategy
   el('insTitle').textContent = who.name
   el('insSub').textContent = `gen ${who.generation} · ${who.strategy}`
-  el('insFacts').innerHTML = facts([
-    ['doing:', activity],
-    ...(lastAct
-      ? ([['last:', lastAct.rationale ?? lastAct.type.replace(/_/g, ' ')]] as Array<[string, string]>)
-      : []),
-    ...(agentSite.get(id) ? ([['site:', 'attending, tether shows it']] as Array<[string, string]>) : []),
-  ])
+  el('insFacts').innerHTML = facts([['reading:', 'the ledger…']])
   el('insLineageBox').classList.add('hidden')
   const btn = el('followBtn')
   btn.classList.remove('hidden')
   btn.classList.toggle('on', followId === id)
   btn.textContent = followId === id ? 'following (f to release)' : 'follow (f)'
+  // §47.2: the sheet is a server read, like a building's provenance
+  connection.send({ t: 'inspectAgent', agentId: id })
 }
+
+/** text bar in the pane grammar: ▓▓▓░░ */
+function bar(frac: number, n = 8): string {
+  const k = Math.max(0, Math.min(n, Math.round(frac * n)))
+  return '▓'.repeat(k) + '░'.repeat(n - k)
+}
+
+function traitWords(t: { risk: number; horizon: number; intensity: number }): string {
+  const w: string[] = []
+  w.push(t.risk >= 0.66 ? 'bold' : t.risk <= 0.33 ? 'careful' : 'measured')
+  w.push(t.horizon >= 0.66 ? 'patient' : t.horizon <= 0.33 ? 'short-horizon' : 'steady')
+  w.push(t.intensity >= 0.66 ? 'intensifier' : t.intensity <= 0.33 ? 'light touch' : 'moderate')
+  return w.join(' · ')
+}
+
+/**
+ * §47.2: the character sheet — plan with its ground secured, the ledger at
+ * the facility's terms, holdings that fly when clicked, the §23.1 vector as
+ * plain words, and the §20.5 effort budget as a life bar.
+ */
+function showAgentSheet(a: import('@civ/protocol').AgentDetail): void {
+  if (!a.found || selectedAgentId !== a.id) return
+  let activity = 'idle'
+  for (const p of presence.positions()) if (p.id === a.id) activity = p.activity
+  const recent = [...archive]
+    .reverse()
+    .filter((e) => e.agentId === a.id)
+    .slice(0, 3)
+    .map((e) => e.rationale ?? e.type.replace(/_/g, ' '))
+  const lifeFrac = a.effortBudget ? (a.effortSpent ?? 0) / a.effortBudget : 0
+  el('insFacts').innerHTML = facts([
+    ...(a.plan
+      ? ([
+          ['plan:', `${a.plan.text}  ${bar(a.plan.done / Math.max(1, a.plan.total), 5)} ${a.plan.done}/${a.plan.total}`],
+        ] as Array<[string, string]>)
+      : ([['doing:', activity]] as Array<[string, string]>)),
+    [
+      'balance:',
+      `${(a.capital ?? 0).toLocaleString()} · debt ${(a.debt ?? 0).toLocaleString()} @ ${Math.round((a.ltv ?? 0) * 100)}% ltv`,
+    ],
+    [
+      'holdings:',
+      `${a.holdings?.length ?? 0} buildings · ${a.parcelCount ?? 0} parcels · est. ${(
+        a.holdings?.reduce((s, h) => s + h.value, 0) ?? 0
+      ).toLocaleString()}`,
+    ],
+    ...(a.traits ? ([['traits:', traitWords(a.traits)]] as Array<[string, string]>) : []),
+    ['life:', `${bar(lifeFrac)} ${Math.round(lifeFrac * 100)}% of effort spent`],
+    ...(recent.length ? ([['recent:', recent.join(' · ')]] as Array<[string, string]>) : []),
+    ...(agentSite.get(a.id) ? ([['site:', 'attending, tether shows it']] as Array<[string, string]>) : []),
+  ])
+  // holdings as clickable rows, lineage-style — each flies to the asset
+  const box = el('insLineageBox')
+  if (a.holdings?.length) {
+    box.classList.remove('hidden')
+    el('insLineage').innerHTML = a.holdings
+      .map(
+        (h) =>
+          `<div class="step hold" data-x="${h.x}" data-y="${h.y}"><span class="yr">${h.value.toLocaleString()}</span>` +
+          `<span>${escapeHtml(h.label)}</span></div>`,
+      )
+      .join('')
+  } else {
+    box.classList.add('hidden')
+  }
+}
+
+el('insLineage').addEventListener('click', (ev) => {
+  const row = (ev.target as HTMLElement).closest('.hold') as HTMLElement | null
+  if (!row?.dataset.x) return
+  director.takeControl()
+  rig.flyTo(pointAt(Number(row.dataset.x), Number(row.dataset.y)), 210, {
+    polar: 0.84,
+    duration: 2.0,
+  })
+})
 
 /**
  * §36.2: follow mode. The camera tethers loosely — a damped flyTo re-issued as
@@ -751,17 +913,105 @@ el('crewClose').addEventListener('click', () => toggleCrew(false))
 
 const chunksPane = el('chunks')
 
-el('chunkList').innerHTML = chunks
-  .map(
-    (c) =>
-      `<div class="c${c.id === entry.id ? ' here' : ''}" data-id="${c.id}">` +
-      `<span>${escapeHtml(placeName(c.name))}</span>` +
-      `<span class="where">${c.id === entry.id ? 'here' : ''}</span></div>`,
-  )
-  .join('')
+/**
+ * §46.1: the switcher is live city cards fed by /summary — the data is
+ * already served; the switcher spends it. Every distinct server origin is
+ * asked once (production: one origin answers for all eight; local dev: one
+ * per port) and the arrays merge by chunk id.
+ */
+interface CitySummary {
+  id: string
+  generation?: number
+  divergenceIndex?: number
+  agentCount?: number
+  activityRate?: number
+  lastEvent?: { text: string; weight: number }
+}
+const citySummaries = new Map<string, CitySummary>()
+const citySpark = new Map<string, number[]>()
 
-el('chunkBtn').addEventListener('click', () => chunksPane.classList.toggle('on'))
-el('chunksClose').addEventListener('click', () => chunksPane.classList.remove('on'))
+function summaryOrigins(): string[] {
+  const origins = new Set<string>()
+  for (const c of chunks) {
+    const ws = c.id === entry.id ? serverUrl() : servers[c.id]
+    if (!ws) continue
+    if (location.protocol === 'https:' && ws.startsWith('ws://')) continue
+    origins.add(ws.replace(/^ws/, 'http').replace(/\/ws\/.*$/, '').replace(/\/$/, ''))
+  }
+  return [...origins]
+}
+
+async function pollSummaries(): Promise<void> {
+  await Promise.all(
+    summaryOrigins().map(async (origin) => {
+      try {
+        const r = await fetch(`${origin}/summary`, { signal: AbortSignal.timeout(4000) })
+        const list = (await r.json()) as CitySummary[]
+        for (const s of list) {
+          if (!chunks.some((c) => c.id === s.id)) continue
+          citySummaries.set(s.id, s)
+          const hist = citySpark.get(s.id) ?? []
+          hist.push(s.activityRate ?? 0)
+          if (hist.length > 10) hist.shift()
+          citySpark.set(s.id, hist)
+        }
+      } catch {
+        // an unreachable origin leaves its cards static; the pane still works
+      }
+    }),
+  )
+  renderCityCards()
+}
+
+const SPARK_GLYPHS = '▁▂▃▄▅▆▇'
+function sparkline(id: string): string {
+  const hist = citySpark.get(id)
+  if (!hist?.length) return ''
+  const max = Math.max(...hist, 1e-6)
+  return hist.map((v) => SPARK_GLYPHS[Math.min(6, Math.floor((v / max) * 6.99))]).join('')
+}
+
+function renderCityCards(): void {
+  const rows = chunks
+    .map((c) => ({ c, s: citySummaries.get(c.id) }))
+    .sort((a, b) => (b.s?.activityRate ?? -1) - (a.s?.activityRate ?? -1))
+  el('chunkList').innerHTML = rows
+    .map(({ c, s }) => {
+      const mat = CITY_MATERIALS[c.id] ?? CITY_MATERIAL_DEFAULT
+      const facts = s
+        ? `gen ${s.generation ?? '·'} · ${((s.divergenceIndex ?? 0) * 100).toFixed(1)}% diff · ${s.agentCount ?? '·'} active`
+        : 'unreached — baseline only'
+      const spark = sparkline(c.id)
+      const last = s?.lastEvent ? `last: ${s.lastEvent.text}` : ''
+      return (
+        `<div class="c card${c.id === entry.id ? ' here' : ''}" data-id="${c.id}">` +
+        `<div class="hd"><span class="sw" style="background:${mat.roofTarget}"></span>` +
+        `<span class="nm">${escapeHtml(placeName(c.name))}</span>` +
+        `<span class="where">${c.id === entry.id ? 'here' : ''}</span></div>` +
+        `<div class="ln">${escapeHtml(facts)}</div>` +
+        (spark ? `<div class="ln spark">${spark} activity</div>` : '') +
+        (last ? `<div class="ln dim">${escapeHtml(last)}</div>` : '') +
+        `</div>`
+      )
+    })
+    .join('')
+}
+
+renderCityCards()
+let summaryTimer: ReturnType<typeof setInterval> | null = null
+
+function openChunksPane(on: boolean): void {
+  chunksPane.classList.toggle('on', on)
+  if (on) {
+    void pollSummaries()
+    summaryTimer ??= setInterval(() => {
+      if (chunksPane.classList.contains('on')) void pollSummaries()
+    }, 10_000)
+  }
+}
+
+el('chunkBtn').addEventListener('click', () => openChunksPane(!chunksPane.classList.contains('on')))
+el('chunksClose').addEventListener('click', () => openChunksPane(false))
 el('chunkList').addEventListener('click', (e) => {
   const row = (e.target as HTMLElement).closest('.c') as HTMLElement | null
   if (row?.dataset.id) switchTo(row.dataset.id)
@@ -950,8 +1200,22 @@ function toggleAmbient(): void {
   // button itself reachable, so it is exempt — leaving it running must not mean
   // leaving it with no way out.
   document.body.classList.toggle('ambient', on)
-  director.enabled = true
   el('ambient').setAttribute('aria-pressed', String(on))
+  if (on) {
+    // §46.4: an ambient return presents the framed view before the director
+    // resumes its cuts — the same rule as first load
+    director.enabled = false
+    rig.flyTo(new Vector3(0, substrate.groundY, 0), frameThePlate(innerWidth / innerHeight), {
+      azimuth: CITY_AZIMUTH,
+      polar: 0.66,
+      duration: 1.6,
+    })
+    setTimeout(() => {
+      if (!followId && document.body.classList.contains('ambient')) director.enabled = true
+    }, 2400)
+  } else {
+    director.enabled = true
+  }
 }
 el('ambient').addEventListener('click', toggleAmbient)
 
@@ -1105,6 +1369,7 @@ renderer.setAnimationLoop(() => {
   observer.flush()
   agentMarkers.update(withIdentity(), substrate.groundY, dt, clock)
   construction.update(observer.sites(), clock)
+  punctuation.update(dt)
   updateTethers()
   updateChip()
 

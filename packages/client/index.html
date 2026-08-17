@@ -125,6 +125,19 @@
       #log .e.high { color: var(--amber); background: var(--wash); }
       #log .e .n { color: var(--dimmer); }
       #log .e.high .n { color: var(--amber); opacity: 0.7; }
+      /* §46.2: rows that know where they happened invite the click */
+      #log .e.place { cursor: pointer; }
+      #log .e.place:hover { color: var(--cream); background: var(--wash); }
+
+      /* §46.1: city cards in the pane grammar */
+      #chunkList .card { display: block; padding: 6px 9px; border-bottom: 1px solid var(--edge); cursor: pointer; }
+      #chunkList .card:hover { background: var(--wash); }
+      #chunkList .card .hd { display: flex; gap: 7px; align-items: center; }
+      #chunkList .card .sw { width: 9px; height: 9px; display: inline-block; border: 1px solid var(--edge); }
+      #chunkList .card .nm { flex: 1; color: var(--cream); }
+      #chunkList .card .ln { color: var(--dim); padding-left: 16px; }
+      #chunkList .card .ln.spark { letter-spacing: 1px; color: var(--amber); opacity: 0.8; }
+      #chunkList .card .ln.dim { color: var(--dimmer); }
 
       #inspector { top: 42px; right: 12px; width: 300px; max-height: calc(100vh - 100px); display: none; }
       #inspector.on { display: block; }
@@ -265,6 +278,7 @@
         <output id="scrubOut">live</output>
       </div>
       <span id="actionsGen" class="dim"></span>
+      <span id="watched" class="dim"></span>
       <span class="push"></span>
       <span id="keys"><b>d</b> diff · <b>f</b> follow · <b>r</b> crew · <b>[ ]</b> city · <b>a</b> ambient · <b>?</b> help</span>
     </div>

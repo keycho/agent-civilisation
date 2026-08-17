@@ -49,7 +49,7 @@ import { fileURLToPath } from 'node:url'
 import { WebSocketServer, type WebSocket } from 'ws'
 import { NAME_POOLS } from '@civ/sim/names.ts'
 import { fineSummaryOf } from '@civ/sim/region.ts'
-import { buildingDetail } from './frames.ts'
+import { agentDetail, buildingDetail } from './frames.ts'
 import { WorldService } from './world.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -257,12 +257,30 @@ function healthOfChunk(host: ChunkHost): Record<string, unknown> {
  * artifact that owns those fields.
  */
 function summaryOfChunk(host: ChunkHost): Record<string, unknown> {
+  const w = host.world.sim.world
+  /**
+   * §46.1: the city card's "last:" line — the most recent high-weight event,
+   * read from the store's own ranking over a recent window. The agent's name
+   * resolves only while they live; a dead author's line stands unattributed.
+   */
+  const top = host.world.store.weightedEvents(Math.max(0, w.tick - 4000), 1)[0]
+  const author = top?.agentId ? w.agents.get(top.agentId)?.name.split(' ')[0] : undefined
   return {
     id: host.world.chunkId,
     country: host.seed.chunk.country ?? 'NL',
     materialised: true,
-    tick: host.world.sim.world.tick,
-    ...fineSummaryOf(host.world.sim.world),
+    tick: w.tick,
+    // §46.1 card fields: settlement facts the card spends, same read the
+    // status line makes for the connected chunk
+    generation: host.world.sim.generation,
+    divergenceIndex: host.world.sim.report.index,
+    lastEvent: top
+      ? {
+          text: `${author ? `${author.toLowerCase()} ` : ''}${top.rationale ?? top.type.replace(/_/g, ' ')}`,
+          weight: top.cinematicWeight,
+        }
+      : undefined,
+    ...fineSummaryOf(w),
   }
 }
 
@@ -429,6 +447,14 @@ async function handle(host: ChunkHost, ws: WebSocket, msg: ClientMessage): Promi
         detail
           ? { t: 'building', ...detail }
           : { t: 'building', id: msg.buildingId, found: false, lineage: [], history: [] },
+      )
+    }
+    case 'inspectAgent': {
+      // §47.2: the character sheet, read from the world like a building is
+      const detail = agentDetail(host.world.sim, msg.agentId)
+      return send(
+        ws,
+        detail ? { t: 'agent', ...detail } : { t: 'agent', id: msg.agentId, found: false },
       )
     }
   }

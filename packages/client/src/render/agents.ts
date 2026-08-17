@@ -66,12 +66,20 @@ export class AgentMarkers {
     for (const a of agents) {
       if (i >= this.capacity) break
 
-      // activity pulse: the marker breathes while the agent is doing something
-      const busy = a.activity !== 'idle'
-      const pulse = busy ? 1 + 0.18 * Math.sin(time * 4 + a.colourIndex) : 1
-
+      /**
+       * §47.3's marker language: working = parked + bright + pulsing;
+       * travelling/acquiring = normal; idle = dim and slightly smaller. The
+       * loudest markers are the ones doing something a viewer can watch.
+       */
+      const working = a.activity === 'building' || a.activity === 'demolishing'
+      const idle = a.activity === 'idle'
+      const pulse = working
+        ? 1 + 0.22 * Math.sin(time * 4 + a.colourIndex)
+        : idle
+          ? 0.82
+          : 1
       this.dummy.position.set(a.x, groundY + MARKER_HEIGHT * 0.5 * pulse, -a.y)
-      this.dummy.scale.set(1, pulse, 1)
+      this.dummy.scale.set(idle ? 0.85 : 1, pulse, idle ? 0.85 : 1)
       this.dummy.rotation.y = a.colourIndex * 0.5
       this.dummy.updateMatrix()
       this.mesh.setMatrixAt(i, this.dummy.matrix)
@@ -79,6 +87,8 @@ export class AgentMarkers {
       this.colour.set(OCCUPATION_COLOR[a.strategy] ?? '#c8c8c8')
       // a stable per-agent value shift so recurring characters stay recognisable
       this.colour.offsetHSL(0, 0, ((a.colourIndex % 6) - 3) * 0.028)
+      if (working) this.colour.offsetHSL(0, 0.06, 0.1)
+      else if (idle) this.colour.multiplyScalar(0.55)
       this.mesh.setColorAt(i, this.colour)
       i++
     }

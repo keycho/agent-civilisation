@@ -1,4 +1,5 @@
 import type {
+  AgentDetail,
   AgentWire,
   BuildingDetail,
   ClientMessage,
@@ -29,6 +30,8 @@ export interface ConnectionHandlers {
   onFrame(f: Frame): void
   onScrub(s: ScrubResult): void
   onBuilding(b: BuildingDetail): void
+  /** §47.2: the character sheet's answer */
+  onAgent(a: AgentDetail): void
   onStatus(state: 'connecting' | 'live' | 'lost'): void
 }
 
@@ -64,6 +67,8 @@ export class Connection {
           return this.handlers.onScrub(m)
         case 'building':
           return this.handlers.onBuilding(m)
+        case 'agent':
+          return this.handlers.onAgent(m)
         case 'error':
           return console.warn('[server]', m.message)
       }

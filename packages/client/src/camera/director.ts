@@ -44,6 +44,13 @@ export interface DirectorHooks {
    * old behaviour (keep drifting) applies.
    */
   homeAzimuth?: number
+  /**
+   * §47.4: ambient's idle intents weight toward work in progress. When the
+   * event queue is dry, this offers somewhere a build is actually happening;
+   * the director alternates it with the home drift so the framed view still
+   * returns. Absent or null, every idle beat drifts home.
+   */
+  idleSite?(): Vector3 | null
 }
 
 const IDLE_BEFORE_RESUME_S = 12
@@ -57,6 +64,7 @@ export class CameraDirector {
   private idleFor = 0
   private userHasControl = false
   private lastEventId = 0
+  private idleBeat = 0
 
   /** ambient mode: the director drives unless the user is touching the camera */
   enabled = true
@@ -129,15 +137,34 @@ export class CameraDirector {
         })
         this.hooks.onShot?.(next.label, next.intent)
       } else if (mustCut) {
-        // nothing worth watching: drift back out over the district, returning
-        // to the framed orientation when one is configured (§35.6)
         this.shotElapsed = 0
-        this.rig.flyTo(new Vector3(0, this.rig.target.y, 0), this.rig.limits.maxDistance * 0.78, {
-          azimuth: this.hooks.homeAzimuth ?? this.rig.azimuth + 0.35,
-          polar: 0.62,
-          duration: 6,
-        })
-        this.current = null
+        // §47.4: with the queue dry, two idle beats out of three go to work
+        // in progress; the third drifts home so the framed view still returns
+        const site = this.idleBeat++ % 3 === 2 ? null : (this.hooks.idleSite?.() ?? null)
+        if (site) {
+          this.current = {
+            intent: { kind: 'follow_road', x: site.x, y: -site.z },
+            priority: 0,
+            target: site,
+            distance: 320,
+            polar: 0.74,
+            label: 'work in progress',
+          }
+          this.rig.flyTo(site, 320, {
+            azimuth: this.rig.azimuth + 0.4,
+            polar: 0.74,
+            duration: 4.5,
+          })
+        } else {
+          // nothing worth watching: drift back out over the district,
+          // returning to the framed orientation when configured (§35.6)
+          this.rig.flyTo(new Vector3(0, this.rig.target.y, 0), this.rig.limits.maxDistance * 0.78, {
+            azimuth: this.hooks.homeAzimuth ?? this.rig.azimuth + 0.35,
+            polar: 0.62,
+            duration: 6,
+          })
+          this.current = null
+        }
       }
     }
   }

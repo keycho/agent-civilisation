@@ -158,6 +158,24 @@ export const ENVIRONMENT = {
 } as const
 
 /**
+ * §47.1: the void around the plate, in the chrome's own palette family. The
+ * pale sky-grey backdrop read as a gis viewport; the diorama floats in the
+ * terminal's darkness instead — near-black warm greys anchored on the
+ * chrome's #0d0c0a, a slight lift overhead so the dark reads as air, the
+ * horizon sinking into the page itself. These colour the SURROUND only:
+ * backdrop, fog tint and vignette. Nothing here touches the world's lighting
+ * or materials (§35.1).
+ */
+export const VOID = {
+  /** faint warm lift straight up — air, not a ceiling */
+  skyTop: '#1a1712',
+  /** the chrome's own near-black at the horizon, so the plate sits on the page */
+  skyBottom: '#0d0c0a',
+  /** distance fog sinks into the same dark rather than into white */
+  fog: '#131110',
+} as const
+
+/**
  * The one place the palette crosses into GLSL. Emitting it rather than
  * duplicating it by hand is what keeps §16.4's "one palette" true.
  */

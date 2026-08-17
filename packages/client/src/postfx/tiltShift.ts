@@ -55,6 +55,7 @@ export class TiltShiftPass {
         uRange: { value: this.focusRange },
         uMaxBlur: { value: this.maxBlurPx },
         uStrength: { value: 1 },
+        uVignette: { value: 0.42 },
       },
       vertexShader: /* glsl */ `
         varying vec2 vUv;
@@ -68,7 +69,15 @@ export class TiltShiftPass {
         uniform sampler2D tColor;
         uniform sampler2D tDepth;
         uniform vec2 uTexel;
-        uniform float uNear, uFar, uFocus, uRange, uMaxBlur, uStrength;
+        uniform float uNear, uFar, uFocus, uRange, uMaxBlur, uStrength, uVignette;
+
+        // §47.1: subtle radial falloff toward the void, so the plate edge
+        // reads as an object sitting in darkness rather than a viewport crop
+        vec4 vignetted(vec4 c) {
+          float r = length(vUv * 2.0 - 1.0);
+          float v = 1.0 - uVignette * smoothstep(0.62, 1.42, r);
+          return vec4(c.rgb * v, c.a);
+        }
 
         float viewZ(vec2 uv) {
           float d = texture2D(tDepth, uv).x;
@@ -82,7 +91,7 @@ export class TiltShiftPass {
           coc = pow(coc, 1.35) * uMaxBlur * uStrength;
 
           if (coc < 0.35) {
-            gl_FragColor = texture2D(tColor, vUv);
+            gl_FragColor = vignetted(texture2D(tColor, vUv));
             return;
           }
 
@@ -101,7 +110,7 @@ export class TiltShiftPass {
             sum += texture2D(tColor, uv) * w;
             total += w;
           }
-          gl_FragColor = sum / total;
+          gl_FragColor = vignetted(sum / total);
         }
       `,
       depthTest: false,

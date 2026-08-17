@@ -200,12 +200,39 @@ export interface BuildingDetail {
   history: Array<{ label: string; text: string }>
 }
 
+/**
+ * §47.2: the agent as a character sheet — all fields the sim already holds,
+ * read on request the way `inspect` reads a building. Holdings carry their
+ * own coordinates so clicking one can fly without a second query.
+ */
+export interface AgentDetail {
+  t: 'agent'
+  id: string
+  found: boolean
+  name?: string
+  strategy?: string
+  generation?: number
+  capital?: number
+  debt?: number
+  /** the facility's terms (ECONOMY.loanToValue), for the balance line */
+  ltv?: number
+  /** §20.5: the lifespan made visible */
+  effortBudget?: number
+  effortSpent?: number
+  /** §23.1: the trait vector, rendered as words client-side */
+  traits?: { risk: number; horizon: number; intensity: number }
+  /** §29.2: the active plan through this agent, with its ground secured */
+  plan?: { text: string; done: number; total: number }
+  holdings?: Array<{ id: string; label: string; value: number; x: number; y: number }>
+  parcelCount?: number
+}
+
 export interface ServerError {
   t: 'error'
   message: string
 }
 
-export type ServerMessage = Hello | Frame | ScrubResult | BuildingDetail | ServerError
+export type ServerMessage = Hello | Frame | ScrubResult | BuildingDetail | AgentDetail | ServerError
 
 // ---------------------------------------------------------------------------
 // client -> server
@@ -220,6 +247,7 @@ export type ServerMessage = Hello | Frame | ScrubResult | BuildingDetail | Serve
 export type ClientMessage =
   | { t: 'scrub'; ordinal: number }
   | { t: 'inspect'; buildingId: string }
+  | { t: 'inspectAgent'; agentId: string }
   | { t: 'ping' }
 
 export function encode(m: ServerMessage | ClientMessage): string {

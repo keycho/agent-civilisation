@@ -190,6 +190,7 @@ export class Observer {
       const shape = this.shapeBySlot.get(slot)
       if (!shape) continue
       yield {
+        slot,
         footprint: shape.footprint,
         groundM: shape.groundM,
         heightM: shape.heightM,

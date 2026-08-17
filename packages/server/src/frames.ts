@@ -1,8 +1,15 @@
-import { BUILDING_SLOT_SPARE, PURPOSE_INDEX, type Building, clamp01 } from '@civ/core'
+import { BUILDING_SLOT_SPARE, PURPOSE_INDEX, type Building, centroid, clamp01 } from '@civ/core'
 import type { WorldEvent } from '@civ/persistence'
-import type { AgentIdentity, AgentWire, EventWire, MaterialiseSpec, RoadEdgeWire } from '@civ/protocol'
+import type {
+  AgentDetail,
+  AgentIdentity,
+  AgentWire,
+  EventWire,
+  MaterialiseSpec,
+  RoadEdgeWire,
+} from '@civ/protocol'
 import type { Simulation } from '@civ/sim'
-import { buildingValue } from '@civ/sim'
+import { ECONOMY, buildingValue } from '@civ/sim'
 
 /**
  * The authoritative world, reduced to what a spectator needs.
@@ -275,6 +282,75 @@ function describeIntent(i: {
       return `assembling ${i.parcelIds?.length ?? 0} lots`
     default:
       return i.kind
+  }
+}
+
+/**
+ * §47.2: the agent as a character sheet, read the way `inspect` reads a
+ * building — every field something the sim already holds. The plan line
+ * prefers the active plan (ground fully secured) and otherwise reports the
+ * securing itself, lots owned of lots needed.
+ */
+export function agentDetail(sim: Simulation, id: string): Omit<AgentDetail, 't'> | null {
+  const w = sim.world
+  const a = w.agents.get(id)
+  if (!a || a.diedTick) return null
+
+  let plan: AgentDetail['plan']
+  const active = w.activePlan(a)
+  if (active) {
+    plan = {
+      text: describeIntent(active),
+      done: active.parcelIds.length,
+      total: active.parcelIds.length,
+    }
+  } else {
+    for (const pid of a.parcels) {
+      const planId = w.planByParcel.get(pid)
+      const p = planId ? w.sitePlans.get(planId) : undefined
+      if (!p) continue
+      const owned = p.parcelIds.filter((x) => w.parcels.get(x)?.ownerId === a.id).length
+      if (owned > 0 && owned < p.parcelIds.length) {
+        plan = { text: `securing ground: ${describeIntent(p)}`, done: owned, total: p.parcelIds.length }
+        break
+      }
+    }
+  }
+
+  const holdings: NonNullable<AgentDetail['holdings']> = []
+  for (const bid of a.holdings) {
+    const b = w.buildings.get(bid)
+    if (!b || b.state === 'demolished') continue
+    const c = centroid(b.footprint)
+    holdings.push({
+      id: bid,
+      label: `${b.purpose}${b.landmark ? ' · landmark' : ''}`,
+      value: Math.round(buildingValue(w, b)),
+      x: c[0],
+      y: c[1],
+    })
+  }
+  holdings.sort((x, y) => y.value - x.value)
+
+  return {
+    id,
+    found: true,
+    name: a.name,
+    strategy: a.strategy,
+    generation: a.generation,
+    capital: Math.round(a.capital),
+    debt: Math.round(a.debt),
+    ltv: ECONOMY.loanToValue,
+    effortBudget: a.effortBudget,
+    effortSpent: a.effortSpent,
+    traits: {
+      risk: +a.traits.risk.toFixed(2),
+      horizon: +a.traits.horizon.toFixed(2),
+      intensity: +a.traits.intensity.toFixed(2),
+    },
+    plan,
+    holdings: holdings.slice(0, 8),
+    parcelCount: a.parcels.size,
   }
 }
 

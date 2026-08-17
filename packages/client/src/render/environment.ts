@@ -1,4 +1,4 @@
-import { ENVIRONMENT } from '@civ/core'
+import { ENVIRONMENT, VOID } from '@civ/core'
 import {
   NoToneMapping,
   AmbientLight,
@@ -36,8 +36,15 @@ export function createEnvironment(scene: Scene, opts: EnvironmentOptions): {
   sun: DirectionalLight
   sky: Mesh
 } {
-  scene.background = new Color(ENVIRONMENT.sky)
-  scene.fog = new Fog(new Color(ENVIRONMENT.fog).getHex(), opts.radius * 1.5, opts.radius * 5.2)
+  /**
+   * §47.1: the void goes dark. The surround is the terminal's own darkness —
+   * background, fog tint and sky dome all in the chrome family — while every
+   * LIGHT below keeps its authored colour, so the world's palette is
+   * untouched (§35.1) and simply pops against the dark instead of washing
+   * into a pale viewport.
+   */
+  scene.background = new Color(VOID.skyBottom)
+  scene.fog = new Fog(new Color(VOID.fog).getHex(), opts.radius * 1.5, opts.radius * 5.2)
 
   // Strong sky-to-ground ambient is what keeps a stylised world readable in
   // shadow without needing bounce lighting.
@@ -97,8 +104,11 @@ function createSkyDome(radius: number): Mesh {
     depthWrite: false,
     fog: false,
     uniforms: {
-      uTop: { value: new Color(ENVIRONMENT.sky) },
-      uBottom: { value: new Color(ENVIRONMENT.horizon) },
+      // §47.1: a two-stop DARK gradient — a faint lift overhead reads as air,
+      // the horizon sinks into the page. ENVIRONMENT.sky stays what the
+      // lights believe in; only the backdrop changed its mind.
+      uTop: { value: new Color(VOID.skyTop) },
+      uBottom: { value: new Color(VOID.skyBottom) },
     },
     vertexShader: /* glsl */ `
       varying float vH;
