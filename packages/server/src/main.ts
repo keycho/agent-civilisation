@@ -153,32 +153,57 @@ function turnSeason(id: string, next: number): void {
     .catch((e) => console.error('[retention]', e))
 }
 
-for (const id of await resolveChunkIds()) {
-  const seedPath =
-    hosts.size === 0 && process.env.SEED_PATH && !process.env.CHUNKS
-      ? process.env.SEED_PATH
-      : join(WORLD_DIR, `${id}.json`)
-  let raw: string
-  try {
-    raw = await readFile(seedPath, 'utf8')
-  } catch {
-    // a typo'd chunk id should fail with the roster in hand, not a raw ENOENT
-    throw new Error(
-      `no seed for chunk '${id}' at ${seedPath}. ` +
-        `CHUNKS=all (any case) hosts the full roster; known ids: ${(await rosterIds()).join(', ')}`,
+/**
+ * §44.5, hardened after the first production attempt: eight worlds take
+ * longer to construct than a 30-second healthcheck, and the listener used to
+ * bind only after the last one — so the deploy was killed while the boot was
+ * healthy. The roster is resolved up front, the http server binds FIRST, and
+ * /health answers 200 throughout with per-chunk boot status; chunks then
+ * construct one at a time with an event-loop yield between them so the
+ * healthcheck (and a human) can watch the boot instead of inferring it.
+ */
+const ROSTER = await resolveChunkIds()
+const boot = { constructing: null as string | null, done: false }
+
+async function constructHosts(): Promise<void> {
+  for (const id of ROSTER) {
+    boot.constructing = id
+    const t0 = Date.now()
+    const seedPath =
+      hosts.size === 0 && process.env.SEED_PATH && !process.env.CHUNKS
+        ? process.env.SEED_PATH
+        : join(WORLD_DIR, `${id}.json`)
+    let raw: string
+    try {
+      raw = await readFile(seedPath, 'utf8')
+    } catch {
+      // a typo'd chunk id should fail with the roster in hand, not a raw ENOENT
+      throw new Error(
+        `no seed for chunk '${id}' at ${seedPath}. ` +
+          `CHUNKS=all (any case) hosts the full roster; known ids: ${(await rosterIds()).join(', ')}`,
+      )
+    }
+    const seed = JSON.parse(raw) as WorldSeed
+    const host: ChunkHost = { id, seed, world: null as unknown as WorldService, sockets: new Set() }
+    host.world = newSeason(host, 1)
+    hosts.set(id, host)
+    console.log(
+      `# ${seed.chunk.name}: ${seed.buildings.length} baseline buildings (${((Date.now() - t0) / 1000).toFixed(1)}s)`,
     )
+    // let queued /health requests answer between constructions
+    await new Promise((r) => setImmediate(r))
   }
-  const seed = JSON.parse(raw) as WorldSeed
-  const host: ChunkHost = { id, seed, world: null as unknown as WorldService, sockets: new Set() }
-  host.world = newSeason(host, 1)
-  hosts.set(id, host)
-  console.log(`# ${seed.chunk.name}: ${seed.buildings.length} baseline buildings`)
+  boot.constructing = null
+  boot.done = true
+  console.log(
+    `boot complete: ${hosts.size} chunk${hosts.size === 1 ? '' : 's'} in ${((Date.now() - STARTED) / 1000).toFixed(1)}s`,
+  )
+  console.log(`  store:      ${store.durability}${DATABASE_URL ? '' : ' (set DATABASE_URL for durability)'}`)
+  console.log(`  throughput: ${THROUGHPUT[THROUGHPUT_INDEX].label}`)
+  console.log(`  frames:     every ${FRAME_INTERVAL_MS} ms`)
+  console.log(`  flush:      every ${store.flushMs} ms (write-behind; see README)`)
+  console.log(`  retention:  ${RETAIN_SEASONS} seasons of events`)
 }
-console.log(`  store:      ${store.durability}${DATABASE_URL ? '' : ' (set DATABASE_URL for durability)'}`)
-console.log(`  throughput: ${THROUGHPUT[THROUGHPUT_INDEX].label}`)
-console.log(`  frames:     every ${FRAME_INTERVAL_MS} ms`)
-console.log(`  flush:      every ${store.flushMs} ms (write-behind; see README)`)
-console.log(`  retention:  ${RETAIN_SEASONS} seasons of events`)
 
 /**
  * §35.6-1's durable fix, house-prediction style: the dutch-names-on-deptford
@@ -253,7 +278,6 @@ const http = createServer((req, res) => {
   // mode keeps the flat shape every existing probe reads; multi-chunk nests
   // one block per hosted chunk under the shared process facts.
   if (path === '/health' || path === '/') {
-    const one = single()
     const shared = {
       ok: true,
       protocol: PROTOCOL_VERSION,
@@ -265,6 +289,22 @@ const http = createServer((req, res) => {
       uptimeSeconds: Math.round((Date.now() - STARTED) / 1000),
     }
     res.writeHead(200, JSON_HEAD)
+    if (!boot.done) {
+      // 200 while booting on purpose: the deploy is healthy, just not done —
+      // and the status shows exactly where the boot is
+      res.end(
+        JSON.stringify({
+          ...shared,
+          booting: {
+            constructing: boot.constructing,
+            ready: [...hosts.keys()],
+            pending: ROSTER.filter((id) => !hosts.has(id) && id !== boot.constructing),
+          },
+        }),
+      )
+      return
+    }
+    const one = single()
     res.end(
       JSON.stringify(
         one
@@ -295,9 +335,11 @@ const http = createServer((req, res) => {
     return
   }
   if (path.startsWith('/summary/')) {
-    const host = hosts.get(path.slice('/summary/'.length))
+    const id = path.slice('/summary/'.length)
+    const host = hosts.get(id)
     if (!host) {
-      res.writeHead(404).end()
+      // still constructing = try again shortly; unknown = not a chunk here
+      res.writeHead(!boot.done && ROSTER.includes(id) ? 503 : 404).end()
       return
     }
     res.writeHead(200, JSON_HEAD)
@@ -318,11 +360,14 @@ const wss = new WebSocketServer({ noServer: true })
 
 http.on('upgrade', (req, socket, head) => {
   const path = (req.url ?? '/').split('?')[0]
-  let host: ChunkHost | null = null
-  if (path.startsWith('/ws/')) host = hosts.get(path.slice('/ws/'.length)) ?? null
-  else if (path === '/' || path === '') host = single()
+  let requested: string | null = null
+  if (path.startsWith('/ws/')) requested = path.slice('/ws/'.length)
+  else if (path === '/' || path === '') requested = ROSTER.length === 1 ? ROSTER[0] : null
+  const host = requested ? hosts.get(requested) ?? null : null
   if (!host) {
-    socket.write('HTTP/1.1 404 Not Found\r\n\r\n')
+    // a chunk still constructing gets "try again later", not "not found"
+    const pending = !boot.done && requested !== null && ROSTER.includes(requested)
+    socket.write(pending ? 'HTTP/1.1 503 Service Unavailable\r\nRetry-After: 10\r\n\r\n' : 'HTTP/1.1 404 Not Found\r\n\r\n')
     socket.destroy()
     return
   }
@@ -477,16 +522,21 @@ setInterval(() => {
   }
 }, FRAME_INTERVAL_MS)
 
+// bind before constructing anything: the healthcheck must be able to watch
+// the boot rather than time out behind it
 http.listen(PORT, () =>
   console.log(
-    `\nlistening on :${PORT}  (${hosts.size} chunk${hosts.size === 1 ? '' : 's'}: ` +
-      `${[...hosts.keys()].join(', ')}; ws on /ws/<chunk>${single() ? ' and /' : ''}, GET /health, /summary)`,
+    `listening on :${PORT}  (${ROSTER.length} chunk${ROSTER.length === 1 ? '' : 's'} booting: ` +
+      `${ROSTER.join(', ')}; ws on /ws/<chunk>${ROSTER.length === 1 ? ' and /' : ''}, GET /health, /summary)`,
   ),
 )
 
+// registered before the boot loop so a mid-boot SIGTERM still drains
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.on(sig, () => {
     console.log(`\n${sig}: draining the write-behind journal…`)
     void store.close().then(() => process.exit(0))
   })
 }
+
+await constructHosts()

@@ -4,7 +4,7 @@
   "deploy": {
     "startCommand": "npm run start -w @civ/server",
     "healthcheckPath": "/health",
-    "healthcheckTimeout": 30,
+    "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE"
   }
 }

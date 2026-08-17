@@ -40,6 +40,16 @@ array — the global view's poll. Single-chunk mode keeps the flat `/health`
 and bare-`/` ws every existing local url uses; `/summary` is an array in
 both modes.
 
+**Boot is progressive.** The listener binds before any world is
+constructed, so `/health` answers 200 within a couple of seconds of
+process start; while chunks construct it carries a `booting` block
+(`constructing` / `ready` / `pending`) instead of the per-chunk stats, and
+a ws upgrade or `/summary/<id>` for a chunk still constructing returns 503
+with `Retry-After` rather than 404. `railway.json` sets
+`healthcheckTimeout: 300` — generous headroom over the worst boot, but the
+check actually passes on the first probe because of the early bind, and
+the boot is watchable through it rather than inferred from a timeout.
+
 `PORT` is set by Railway. Everything else has a default; `packages/server/README.md`
 lists them.
 
