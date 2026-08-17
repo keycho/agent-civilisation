@@ -75,6 +75,7 @@ export function createBuildingMaterial(data: BuildingDataTexture): BuildingMater
         varying float vRole;
         varying float vLocalY;
         varying float vHighlight;
+        varying float vPitch;
 
         vec2 civDataUv(float index) {
           float x = mod(index, uDataSize.x);
@@ -94,6 +95,9 @@ export function createBuildingMaterial(data: BuildingDataTexture): BuildingMater
         vRole = aRole;
         vLocalY = aLocalY;
         vHighlight = (abs(uHighlight - aBuildingIndex) < 0.5) ? 1.0 : 0.0;
+        // §48.3: how pitched this face is, for the ridge highlight — a flat
+        // slab top (|ny| ~ 1) reads 0 and takes no line
+        vPitch = smoothstep(0.98, 0.80, abs(objectNormal.y));
 
         // §16.5: the mass rises out of the ground between massStart and
         // facadeStart. Sinking the whole building and letting the opaque
@@ -115,6 +119,7 @@ export function createBuildingMaterial(data: BuildingDataTexture): BuildingMater
         varying float vRole;
         varying float vLocalY;
         varying float vHighlight;
+        varying float vPitch;
 
         uniform float uDivergenceMode;
         uniform vec3 uHighlightColor;
@@ -157,13 +162,29 @@ export function createBuildingMaterial(data: BuildingDataTexture): BuildingMater
           base *= uCityWall;
         }
 
-        // per-building variation, and an era tint so the real age of the stock
-        // is visible before anything has changed (§14's t+0 target)
+        // §48.3: per-building variation within the material family — the
+        // value jitter that was here, plus a small stable warm/cool hue tilt
+        // hashed off the same channel, so no two adjacent facades match
         base *= 0.93 + 0.14 * jitter;
-        base = mix(base, base * vec3(1.06, 0.99, 0.90), era);
+        float hueT = fract(jitter * 7.31);
+        base *= mix(vec3(1.025, 0.995, 0.955), vec3(0.965, 1.0, 1.045), hueT);
 
-        // condition: dulls and darkens as a building decays (§4)
+        // §48.3: age shows — older stock (era toward 1) warms and weathers
+        // down a step beyond the old tint
+        base = mix(base, base * vec3(1.06, 0.99, 0.90), era);
+        base *= 1.0 - 0.06 * era;
+
+        // condition: dulls and darkens as a building decays (§4); §48.3 also
+        // greys a poor roof toward slate-neutral
         base *= 0.76 + 0.24 * condition;
+        if (vRole > 0.5 && vRole < 1.5) {
+          float roofGrey = (1.0 - condition) * 0.45;
+          float rlum = dot(base, vec3(0.299, 0.587, 0.114));
+          base = mix(base, vec3(rlum), roofGrey);
+          // §48.3: the ridge highlight — one lighter line where a pitched
+          // face meets the top of its mass; reads as form at city zoom
+          base *= 1.0 + 0.17 * vPitch * smoothstep(0.955, 0.995, vLocalY);
+        }
 
         // §16.4: divergence is a lerp, not a second palette. Untouched stock
         // desaturates toward neutral as agent work saturates.
@@ -202,6 +223,6 @@ export function createBuildingMaterial(data: BuildingDataTexture): BuildingMater
   }
 
   // force a recompile if the material is reused across chunks
-  material.customProgramCacheKey = () => 'civ-building-v1'
+  material.customProgramCacheKey = () => 'civ-building-v2'
   return material
 }
