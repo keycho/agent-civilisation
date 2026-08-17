@@ -55,6 +55,19 @@ export const MAX_ACTIVE_ABANDONED_FLIPS = 2
 export const CHAIN_FLOW_BAR_PER_10K = 4
 
 /**
+ * §43.2, joined before the first region run: the chain bars held at
+ * single-chunk scale and both went to WATCH; the region is the world §29.1's
+ * prediction was made for. Migration concentrates capital, gradients steepen
+ * in hot chunks, and the most-contested chunk's chain rate must rise above
+ * the single-chunk floor — completions per 34k-decision-equivalent, the same
+ * unit the §41.1 bar speaks. If it does not, the chain economy is
+ * structurally marginal and gets a mechanism look, not a constant retune. If
+ * it concentrates as predicted, the single-chunk decline was gradient
+ * starvation and the bars were right to hold.
+ */
+export const CHAIN_SINGLE_CHUNK_FLOOR_PER_34K = 7
+
+/**
  * §32.1/§33.1: the region world's rules, pre-registered. minOwnableShare
  * mirrors the importer's floor — a chunk whose ownable/imported ratio sits
  * below it is not ready to join the region world regardless of how good it
@@ -109,6 +122,12 @@ export interface RegionRunSummary {
   >
   /** §30.2 */
   chainCompletionFlow: number
+  /** §43.2: median competition where agents concentrate, per materialised chunk */
+  contestBySettlement: Record<string, number>
+  /** §43.2: completed chains per materialised chunk */
+  chainCompletionsBySettlement: Record<string, number>
+  /** §43.2: decisions attributed per materialised chunk, the rate denominator */
+  decisionsBySettlement: Record<string, number>
 }
 
 // ---------------------------------------------------------------------------
@@ -306,6 +325,35 @@ export function assertContract(runs: RegionRunSummary[]): ContractResult[] {
     flow >= CHAIN_FLOW_BAR_PER_10K,
     `chain completion flow >= ${CHAIN_FLOW_BAR_PER_10K} per 10k decisions, region-wide`,
     flow.toFixed(1),
+  )
+
+  // -- §43.2: chains concentrate where migration concentrates capital -------
+  const hotRates = runs.map((r) => {
+    const hot = Object.entries(r.contestBySettlement).sort((a, b) => b[1] - a[1])[0]?.[0]
+    if (!hot) return 0
+    const chains = r.chainCompletionsBySettlement[hot] ?? 0
+    const dec = r.decisionsBySettlement[hot] ?? 0
+    return dec > 0 ? (chains / dec) * 34_000 : 0
+  })
+  assert(
+    medianOf(hotRates) >= CHAIN_SINGLE_CHUNK_FLOOR_PER_34K,
+    `most-contested chunk's chain rate >= single-chunk floor (${CHAIN_SINGLE_CHUNK_FLOOR_PER_34K}/34k)`,
+    `median ${medianOf(hotRates).toFixed(1)} per 34k-equivalent`,
+  )
+  report(
+    'chain rate vs chunk contest rank (per 34k-equivalent, hottest first)',
+    runs
+      .map((r) =>
+        Object.entries(r.contestBySettlement)
+          .sort((a, b) => b[1] - a[1])
+          .map(([id]) => {
+            const dec = r.decisionsBySettlement[id] ?? 0
+            const c = r.chainCompletionsBySettlement[id] ?? 0
+            return `${id.split('-')[0]}:${dec > 0 ? ((c / dec) * 34_000).toFixed(0) : '·'}`
+          })
+          .join(' '),
+      )
+      .join(' | '),
   )
 
   return out

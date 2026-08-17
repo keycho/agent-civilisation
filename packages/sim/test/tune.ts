@@ -361,16 +361,28 @@ console.log(
  * pre-§29.2 structural zero. Deliberately not set at the observed value.
  * Pre-registered here before the first 20-seed suite run under it.
  */
+/**
+ * §43.2 measurement note, applied: a median of 7 that moves on one parcel is
+ * knife-edge, so the bar evaluates on p25 of the full seed distribution —
+ * it takes a quarter of the seeds moving to move the statistic. The floor
+ * carries the §41.1 provenance to the new statistic: the composition arm's
+ * p25 sat at 7, the same 0.75 slack the median bar carried gives 5.25,
+ * floored to 5. The bars HOLD (§43.2: no downward restatement) — this is the
+ * same claim on a sturdier statistic, both chain bars in WATCH.
+ */
+const chainDist = g.map((x) => x.chainCompleted).sort((a, b) => a - b)
+const chainsP25 = chainDist[Math.floor(0.25 * (chainDist.length - 1))] ?? 0
 const chainsPerRun = med2((x) => x.chainCompleted)
 const flow = medOf((x) => x.chainCompletionFlow)
 console.log(
-  `  chain completions per run: ${chainsPerRun} (flow context: ${flow.toFixed(1)} per 10k decisions, ` +
+  `  chain completions per run: median ${chainsPerRun}, p25 ${chainsP25} ` +
+    `(dist ${chainDist.join(',')}; flow ${flow.toFixed(1)} per 10k, ` +
     `${(chainRate * 100).toFixed(0)}% of assemblies within the window)`,
 )
 assert(
-  chainsPerRun >= 7,
-  'completed chains per run >= 7 (§41.1 equilibrium bar)',
-  String(chainsPerRun),
+  chainsP25 >= 5,
+  'completed chains per run, p25 >= 5 (§41.1 bar on the §43.2 statistic)',
+  `p25 ${chainsP25}, median ${chainsPerRun}`,
 )
 known(
   multiShare >= 0.1,
