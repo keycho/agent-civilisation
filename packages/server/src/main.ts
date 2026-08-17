@@ -32,6 +32,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer, type WebSocket } from 'ws'
 import { NAME_POOLS } from '@civ/sim/names.ts'
+import { fineSummaryOf } from '@civ/sim/region.ts'
 import { buildingDetail } from './frames.ts'
 import { WorldService } from './world.ts'
 
@@ -181,6 +182,26 @@ const http = createServer((req, res) => {
         decisionsPerSecond: +(
           r.decisions / Math.max(1, (Date.now() - STARTED) / 1000)
         ).toFixed(1),
+      }),
+    )
+    return
+  }
+  /**
+   * §27.3: the settlement summary, served from the same computation the
+   * region harness reads (fineSummaryOf — "one dataset, computed once").
+   * Identity and fine body only: population and value tier live in the
+   * coarse layer the client already has, joined there, so this endpoint
+   * cannot drift from the artifact that owns those fields.
+   */
+  if (req.url === '/summary') {
+    res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' })
+    res.end(
+      JSON.stringify({
+        id: world.chunkId,
+        country: seed.chunk.country ?? 'NL',
+        materialised: true,
+        tick: world.sim.world.tick,
+        ...fineSummaryOf(world.sim.world),
       }),
     )
     return

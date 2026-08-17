@@ -63,6 +63,31 @@ baseline view rather than painting another city's mutations onto this one.
 `?server=wss://…` overrides it at runtime, which is the quickest way to point a
 deployed client at a different world.
 
+## 4. What the region world adds (§31.6-5)
+
+**Chunk index.** `packages/client/public/world/index.json` is the roster the
+client's switcher reads; the importer maintains it. Eight chunks as of §31.6-5:
+the five cities plus the NL constellation (vlaardingen-westwijk, maasland-dorp,
+maassluis-haven). All of `world/` — seeds, `index.json`, `servers.json`, and
+the `coarse/` layer (`global.json`, `nl.json`) — is static and ships with the
+client build; nothing serves it but the CDN.
+
+**Summary endpoint.** Each chunk server exposes `GET /summary`: the §27.3
+settlement summary's fine-side body (agent count, median land value, vacancy,
+activity rate, capital density, realised yield, contest) computed by the same
+`fineSummaryOf` the region harness reads — one dataset, computed once. The
+endpoint carries identity (`id`, `country`) and `tick` only; population and
+value tier are joined from the coarse layer the client already has, so the
+endpoint cannot drift from the artifact that owns those fields.
+
+**One server, one chunk — still.** The region SIMULATION (migration, gated
+materialisation, the §28.3 transit economics) lives in the harness
+(`packages/sim/test/region-run.ts`) against the pre-registered contract; the
+deployed topology stays one process per chunk, `CHUNK` selecting which. A
+deployed "region" is therefore N services plus `servers.json` naming them —
+there is no region master process to deploy, and the global view is a client
+concern fed by `/summary` polls plus the static coarse layer.
+
 ## What is not built
 
 **Resume.** A restart begins a new season rather than continuing the old one.
@@ -71,4 +96,7 @@ texture, not ownership, capital or parcels. Redeploys are therefore season
 boundaries, which is coherent with §22.3 but worth knowing before you push on a
 Friday.
 
-**Multi-chunk.** `CHUNK` selects which world to run and one server runs one.
+**Cross-server migration.** Live servers do not move agents between processes;
+migration exists in the region harness only. The §30.3 per-chunk-pair boundary
+rule and any live migration transport are future mechanism decisions, not
+half-shipped here.

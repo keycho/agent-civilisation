@@ -118,7 +118,12 @@ export const AREAS: Record<string, AreaDef> = {
     name: 'Vlaardingen — Westwijk',
     lat: 51.9048,
     lon: 4.3268,
-    radiusM: 300,
+    /**
+     * §2: 300 m caught 142 buildings — postwar slab fabric is sparse by
+     * design, the same failure mode as tokyo's first cut in reverse. 520 m
+     * projects to ~425 at measured density, inside the 400–1500 band.
+     */
+    radiusM: 520,
     adminCode: 'GM0622',
     country: 'NL',
     note: 'Postwar expansion district: 1950s-60s slab blocks, rowhouses, green courts.',

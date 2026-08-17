@@ -302,6 +302,51 @@ the record.
 **Expect**: Brooklyn has a real grid (likely above threshold); Tokyo
 shitamachi is likely multi-axial like Deptford.
 
+## 9. The region's constants come from the economy's own scales (§31.6-5)
+
+Three dimensional faults were caught by measurement before the first region
+run, none of them visible in the code alone:
+
+- **The §28.1 estimate was anchored on day-0 stock yield** (~0.02/yr), which
+  sits 8x below what a live market realises (~0.15/yr at the frozen budget,
+  measured across the five adapters). Every gap read negative and migration
+  was structurally impossible — not lossy, wrong in scale. The advertisement
+  now anchors on the mature market's achievable (ESTIMATE_REF_YIELD 0.15,
+  provenance in region.ts); the §28.1 loss stays in the value-index
+  distortion, the blindness to fine reality, and the lag blend.
+- **Liquid capital cannot fund anything here.** Mid-run capital median is 0
+  and the bottom third is in debt — wealth is holdings; cash is a
+  through-flow. So "the bottom third of local realised yield" selects
+  holdings-empty agents (own realised yield exactly 0), and the move is paid
+  through the economy's own affordability primitive: availableFunds admits
+  it, spend() draws cash then credit, and the loan rides the migrant's own
+  ledger to the destination. seedCredit (1200) is what makes an NL hop
+  (~510 with the gate) affordable and Tokyo (~22k) prohibitive — §28.3's
+  cheap-inside-the-constellation, expensive-intercontinentally, priced by
+  the facility rather than asserted.
+- **An annual rate and a one-off cost are incommensurable without a
+  horizon.** The test is now est x HORIZON_YEARS x funds >= cost x margin,
+  with the horizon (10y) read off the measured run: 34k decisions span ~22
+  years and ~2 generations, so a life is ~10-11 years.
+
+Also §28.3's warm slot: warming CONSTRUCTS the sim and nothing more — a
+warmed chunk does not tick, its residents are frozen, and only a migrant
+paying the gate opens the world. The first draft woke 58 native agents off
+a cache hint; the contract's own wording ("materialised, ticking") is what
+caught it.
+
+**Pre-registered for the first region suite** (alongside the contract's
+schiedam-first-origin and winner-not-leader bets): the warm slot goes to
+maasland-dorp in most seeds (highest NL valueIndex, 1.244 via the
+Midden-Delfland WOZ join); migrations stay intra-European with
+schiedam->london the modal long hop; reversals land above zero through the
+fresh-chunk disappointment path (day-0 realised undershoots the
+advertisement until a gated chunk matures). Honest doubt, stated: the
+within-country activity winner rides CUMULATIVE applied actions, which
+favours the mature control — if no NL challenger ever out-activates
+schiedam in 2 of 8 seeds, that assert fails and the finding is that the
+§43.2 world needs activity RATE, not that the bar was wrong.
+
 ## Carried, not fixed
 
 - ~~UK tier-1 valuations~~ — done (build 10, §33.4): HM Land Registry UK HPI

@@ -4,5 +4,8 @@
   "london-deptford": "ws://127.0.0.1:8793",
   "brooklyn-redhook": "ws://127.0.0.1:8796",
   "paris-ourcq": "ws://127.0.0.1:8799",
-  "tokyo-kyojima": "ws://127.0.0.1:8802"
+  "tokyo-kyojima": "ws://127.0.0.1:8802",
+  "vlaardingen-westwijk": "ws://127.0.0.1:8805",
+  "maasland-dorp": "ws://127.0.0.1:8808",
+  "maassluis-haven": "ws://127.0.0.1:8811"
 }

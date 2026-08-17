@@ -176,6 +176,81 @@ export class Simulation {
     return Math.round(lo + this.rng() * (hi - lo))
   }
 
+  /**
+   * §31.6-5: an agent departs for another chunk. Ownership persists (§28.4 —
+   * an absent owner still holds title, which gives returning agents something
+   * to buy); the agent leaves the active set carrying its cash AND its debt —
+   * migration is funded through the credit facility, and the loan does not
+   * stay behind when the borrower boards the boat.
+   */
+  departAgent(
+    id: string,
+  ): { name: string; strategy: Strategy; capital: number; debt: number; peakDebt: number } | null {
+    const a = this.world.agents.get(id)
+    if (!a || a.diedTick) return null
+    const out = {
+      name: a.name,
+      strategy: a.strategy,
+      capital: Math.max(0, a.capital),
+      debt: a.debt,
+      peakDebt: a.peakDebt,
+    }
+    this.world.agents.delete(id)
+    return out
+  }
+
+  /**
+   * §31.6-5: a migrant arrives. Same birth pathway as a spawn — anchor on a
+   * developable parcel, fresh effort budget, traits rolled for the strategy it
+   * brings — but carrying the ledger it left with: cash after transit, and
+   * whatever the move was borrowed against.
+   */
+  arriveMigrant(
+    name: string,
+    strategy: Strategy,
+    capital: number,
+    debt = 0,
+    peakDebt = 0,
+  ): string {
+    const w = this.world
+    const anchors = [...w.parcels.values()].filter((p) => p.developable && p.accessScore > 0.3)
+    const anchor = anchors.length ? anchors[Math.floor(this.rng() * anchors.length)] : null
+    const id = `migrant-${this.nextHeirSerial++}-${w.tick}`
+    w.agents.set(id, {
+      id,
+      name,
+      capital,
+      debt,
+      peakDebt: Math.max(debt, peakDebt),
+      strategy,
+      traits: rollTraits(this.rng, strategy),
+      bornTick: w.tick,
+      generation: w.generation,
+      colourIndex: this.nextHeirSerial % 12,
+      holdings: new Set(),
+      parcels: new Set(),
+      memory: [],
+      effortBudget: this.rollBudget(),
+      effortSpent: 0,
+      decisionsMade: 0,
+      nextDecisionTick: w.tick + Math.floor(this.rng() * this.decisionInterval),
+      x: anchor?.centroid[0] ?? 0,
+      y: anchor?.centroid[1] ?? 0,
+      targetX: anchor?.centroid[0] ?? 0,
+      targetY: anchor?.centroid[1] ?? 0,
+      activity: 'idle',
+    })
+    w.store.appendEvent({
+      chunkId: w.chunkId,
+      tick: w.tick,
+      type: 'agent_born',
+      agentId: id,
+      cinematicWeight: BASE_CINEMATIC_WEIGHT.agent_born,
+      payload: { name, strategy, generation: w.generation, migrant: true },
+    })
+    return id
+  }
+
   /** One internal step. Returns how many decisions were issued during it. */
   async step(): Promise<number> {
     const w = this.world
