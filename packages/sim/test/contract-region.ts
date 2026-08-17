@@ -260,12 +260,20 @@ export function assertContract(runs: RegionRunSummary[]): ContractResult[] {
     'emergence-grade migrations per seed (destination value not proxy-only, §32.2)',
     emergenceGrade.join(', '),
   )
-  // §31.6's stated prediction, recorded to be falsified: the first migration
-  // in the multi-chunk world originates in schiedam, the only chunk with a
-  // mature, compressed offered surface at start.
-  const firstOrigins = runs
-    .map((r) => [...r.migrations].sort((a, b) => a.departedTick - b.departedTick)[0]?.fromChunk)
-    .filter(Boolean)
+  /**
+   * §31.6's stated prediction, recorded to be falsified: the first migration
+   * in the multi-chunk world originates in schiedam, the only chunk with a
+   * mature, compressed offered surface at start.
+   *
+   * RE-REGISTRATION (§43 block, after run 1, instrument only): this line
+   * originally sorted by departedTick, but ticks are chunk-local clocks — a
+   * late-gated village's tick 300 sorted before schiedam's tick 2000, and
+   * the report named an origin that was dormant when the region started,
+   * which is impossible. The region's own event order (array order, the
+   * order the harness recorded them) is the comparable ordering. The
+   * prediction itself is unchanged.
+   */
+  const firstOrigins = runs.map((r) => r.migrations[0]?.fromChunk).filter(Boolean)
   report('first migration origin per seed (predicted: schiedam-havens)', firstOrigins.join(', '))
 
   // -- spectacle (§30.4, sharpened by §31.5 to a world map) -----------------

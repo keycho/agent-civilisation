@@ -112,6 +112,19 @@ for (const r of runs) {
       `${String(r.migrations.length).padStart(4)} ${String(rev).padStart(3)}  ` +
       `${r.chainCompletionFlow.toFixed(1).padStart(4)}  ${hottest.split('-')[0]}`,
   )
+  // the raw record behind the §43.2 statistic: contest, absolute chains and
+  // the decision denominator per settlement, so a rate can never be read
+  // without the numbers under it
+  console.log(
+    `                 ${Object.entries(r.contestBySettlement)
+      .sort((a, b) => b[1] - a[1])
+      .map(([id, c]) => {
+        const chains = r.chainCompletionsBySettlement[id] ?? 0
+        const dec = r.decisionsBySettlement[id] ?? 0
+        return `${id.split('-')[0]} c${c.toFixed(2)} ${chains}ch/${(dec / 1000).toFixed(0)}k`
+      })
+      .join('  ')}`,
+  )
 }
 
 // ---------------------------------------------------------------------------
