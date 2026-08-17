@@ -16,6 +16,7 @@ import {
   Mesh,
   MeshLambertMaterial,
   PlaneGeometry,
+  ShaderMaterial,
 } from 'three'
 
 /**
@@ -66,6 +67,95 @@ export interface SubstrateView {
   /** mean ground level, the datum everything else is placed against */
   groundY: number
   heightAt(x: number, y: number): number
+  /** §48.4: advances the water's moving glint; called once per frame */
+  tick(time: number): void
+}
+
+/**
+ * §48.4: water works for its keep — darker, slightly glossy, a moving
+ * specular glint, all in one flat-surface shader. The glint is a grazing
+ * highlight toward the camera modulated by two drifting waves; nothing here
+ * simulates water, it just stops the canal being the flattest thing in the
+ * frame.
+ */
+function waterMaterial(): ShaderMaterial {
+  return new ShaderMaterial({
+    side: DoubleSide,
+    transparent: false,
+    depthWrite: false,
+    uniforms: {
+      uShallow: { value: new Color(ENVIRONMENT.water) },
+      uDeep: { value: new Color(ENVIRONMENT.waterDeep) },
+      uTime: { value: 0 },
+    },
+    vertexShader: /* glsl */ `
+      varying vec3 vWorld;
+      void main() {
+        vec4 world = modelMatrix * vec4(position, 1.0);
+        vWorld = world.xyz;
+        gl_Position = projectionMatrix * viewMatrix * world;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uShallow;
+      uniform vec3 uDeep;
+      uniform float uTime;
+      varying vec3 vWorld;
+      void main() {
+        vec3 toCam = normalize(cameraPosition - vWorld);
+        // grazing angles read shallow-bright, steep looks read deep
+        float grazing = 1.0 - abs(toCam.y);
+        vec3 base = mix(uDeep, uShallow, 0.25 + 0.45 * grazing);
+        // the moving glint: three incommensurate drifting waves gate a soft
+        // sparkle — the third breaks the grid the first two make alone
+        float w1 = sin(vWorld.x * 0.53 + uTime * 0.9 + sin(vWorld.z * 0.21));
+        float w2 = sin(vWorld.z * 0.47 - uTime * 0.7 + vWorld.x * 0.13);
+        float w3 = sin((vWorld.x + vWorld.z) * 0.29 + uTime * 0.35);
+        float glint = pow(max(0.0, w1 * w2 * w3), 10.0) * (0.35 + 0.65 * grazing);
+        base += vec3(1.0, 0.92, 0.75) * glint * 0.38;
+        gl_FragColor = vec4(base, 1.0);
+      }
+    `,
+  })
+}
+
+/**
+ * §48.4: soft edge-darkening along the quays — a thin inset band at each
+ * water ring's boundary. Every earcut vertex lies on the ring, so the band
+ * is real geometry: the ring edge and a copy pushed inward.
+ */
+function quayBands(water: Array<{ ring: Ring; level: number }>): BufferGeometry | null {
+  const positions: number[] = []
+  const BAND = 1.7
+  for (const { ring, level } of water) {
+    if (ring.length < 3) continue
+    // signed area decides which perpendicular points inward
+    let area2 = 0
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      area2 += (ring[j][0] - ring[i][0]) * (ring[j][1] + ring[i][1])
+    }
+    const sign = area2 > 0 ? 1 : -1
+    const n = ring.length
+    const y = level + 0.015
+    for (let i = 0; i < n; i++) {
+      const p0 = ring[i]
+      const p1 = ring[(i + 1) % n]
+      const dx = p1[0] - p0[0]
+      const dy = p1[1] - p0[1]
+      const len = Math.hypot(dx, dy)
+      if (len < 0.05) continue
+      const nx = (-dy / len) * sign * BAND
+      const ny = (dx / len) * sign * BAND
+      positions.push(p0[0], y, -p0[1], p1[0], y, -p1[1], p1[0] + nx, y, -(p1[1] + ny))
+      positions.push(p0[0], y, -p0[1], p1[0] + nx, y, -(p1[1] + ny), p0[0] + nx, y, -(p0[1] + ny))
+    }
+  }
+  if (!positions.length) return null
+  const geo = new BufferGeometry()
+  geo.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3))
+  geo.computeVertexNormals()
+  geo.computeBoundingSphere()
+  return geo
 }
 
 /**
@@ -135,6 +225,7 @@ export function createSubstrateView(substrate: Substrate, halfExtentM: number): 
   base.renderOrder = -4
   group.add(base)
 
+  let waterMat: ShaderMaterial | null = null
   for (const [kind, rings] of byKind) {
     // Overlapping polygons of the same kind — a river drawn over its harbours —
     // are exactly coplanar and z-fight into stripes. A per-ring micro-stagger
@@ -147,25 +238,44 @@ export function createSubstrateView(substrate: Substrate, halfExtentM: number): 
             return () => level
           }
         : () => (x: number, y: number) => sampleElevation(substrate, x, y) + LAYER[kind]
-    const geo = triangulateRings(rings, heightFor, 0.03)
+    // §48.4: per-ring value jitter keyed off the ring itself — yards, lots
+    // and greens stop matching their neighbours exactly
+    const geo = triangulateRings(rings, heightFor, 0.03, kind !== 'water')
     if (!geo) continue
-    const mesh = new Mesh(
-      geo,
-      new MeshLambertMaterial({
-        color: new Color(COLOR[kind]),
-        side: DoubleSide,
-        // water sits below the datum; letting it take shadow makes canals read
-        // as solid, so only land receives
-        ...(kind === 'water' ? { emissive: new Color(ENVIRONMENT.waterDeep), emissiveIntensity: 0.18 } : {}),
-      }),
-    )
+    const mesh =
+      kind === 'water'
+        ? new Mesh(geo, (waterMat = waterMaterial()))
+        : new Mesh(
+            geo,
+            new MeshLambertMaterial({
+              color: new Color(COLOR[kind]),
+              side: DoubleSide,
+              vertexColors: true,
+            }),
+          )
     mesh.receiveShadow = kind !== 'water'
     // A river polygon drawn over its own harbours is coplanar with itself. The
     // stagger separates them, and dropping depth writes for water makes the
     // remaining overlaps resolve by paint order instead of by a coin flip.
-    if (kind === 'water') mesh.material.depthWrite = false
     mesh.renderOrder = kind === 'water' ? -3 : -2
     group.add(mesh)
+
+    if (kind === 'water') {
+      const bands = quayBands(water)
+      if (bands) {
+        const band = new Mesh(
+          bands,
+          new MeshLambertMaterial({
+            color: new Color('#31434d'),
+            transparent: true,
+            opacity: 0.45,
+            depthWrite: false,
+          }),
+        )
+        band.renderOrder = -2
+        group.add(band)
+      }
+    }
   }
 
   return {
@@ -173,6 +283,9 @@ export function createSubstrateView(substrate: Substrate, halfExtentM: number): 
     groundY,
     heightAt(x, y) {
       return sampleElevation(substrate, x, y)
+    },
+    tick(time) {
+      if (waterMat) waterMat.uniforms.uTime.value = time
     },
   }
 }
@@ -182,13 +295,22 @@ function triangulateRings(
   rings: Ring[],
   heightFor: (ring: Ring) => (x: number, y: number) => number,
   stagger = 0,
+  jitterColors = false,
 ): BufferGeometry | null {
   const positions: number[] = []
+  const colors: number[] = []
   let n = 0
   for (const ring of rings) {
     if (ring.length < 3) continue
     const height = heightFor(ring)
     const lift = n++ * stagger
+    // §48.4: a stable per-ring value shift — hashed off the ring's own first
+    // vertex, so it never flickers between loads
+    let v = 1
+    if (jitterColors) {
+      const h = Math.sin(ring[0][0] * 12.9898 + ring[0][1] * 78.233) * 43758.5453
+      v = 0.93 + (h - Math.floor(h)) * 0.13
+    }
     const flat: number[] = []
     for (const p of ring) flat.push(p[0], p[1])
     const tris = earcut(flat)
@@ -196,12 +318,14 @@ function triangulateRings(
       for (const k of [tris[i], tris[i + 1], tris[i + 2]]) {
         const [x, y] = ring[k]
         positions.push(x, height(x, y) + lift, -y)
+        if (jitterColors) colors.push(v, v, v)
       }
     }
   }
   if (positions.length === 0) return null
   const geo = new BufferGeometry()
   geo.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3))
+  if (jitterColors) geo.setAttribute('color', new BufferAttribute(new Float32Array(colors), 3))
   geo.computeVertexNormals()
   geo.computeBoundingSphere()
   return geo

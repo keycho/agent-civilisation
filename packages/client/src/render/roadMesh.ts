@@ -110,6 +110,7 @@ function buildRibbons(
   const positions: number[] = []
   const colors: number[] = []
   const tmp = new Color()
+  const pavementTmp = new Color()
 
   // junction discs, sized to the widest incident edge, keep corners from gapping
   const junction = new Map<string, number>()
@@ -146,6 +147,28 @@ function buildRibbons(
     // its width, which is why the two corners at each end share one sample.
     const ya = ground(a.x, a.y) + lift
     const yb = ground(ex, ey) + lift
+
+    /**
+     * §48.4: the pavement band. A lighter frontage ribbon under and past the
+     * carriageway — the kerb is the value step where the dark asphalt cuts
+     * through it. Footpaths ARE pavement and carry no band of their own.
+     */
+    if (e.class !== 'footpath' && e.class !== 'pedestrian') {
+      const pw = hw + 1.9
+      const pa = ya - 0.05
+      const pb = yb - 0.05
+      pavementTmp.set(ENVIRONMENT.pavement)
+      quad(
+        positions,
+        colors,
+        pavementTmp,
+        [a.x - uy * pw, pa, -(a.y + ux * pw)],
+        [a.x + uy * pw, pa, -(a.y - ux * pw)],
+        [ex + uy * pw, pb, -(ey - ux * pw)],
+        [ex - uy * pw, pb, -(ey + ux * pw)],
+      )
+    }
+
     quad(
       positions,
       colors,

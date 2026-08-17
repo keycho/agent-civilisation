@@ -136,23 +136,31 @@ export const CITY_MATERIAL_DEFAULT: CityMaterial = {
   roofW: 0,
 }
 
+/**
+ * §48.4: the ground stops being carpet. Roads drop to a dark asphalt ribbon
+ * against a lighter pavement band (the kerb is the value step between them);
+ * landcover deepens and varies; water goes darker and works for its keep.
+ * The pale pre-§48 values washed the frame out under the golden key.
+ */
 export const ENVIRONMENT = {
   sky: '#c9d3d8',
   horizon: '#dfe2e0',
   fog: '#cfd6d8',
-  ground: '#bcbdb1',
-  water: '#7f97a3',
-  waterDeep: '#5d7683',
-  grass: '#a8b394',
-  park: '#9db088',
-  parking: '#a5a49f',
-  paving: '#bab7b0',
-  roadPrimary: '#a09c95',
-  roadSecondary: '#a5a19a',
-  roadResidential: '#aaa69f',
-  roadService: '#aeaaa3',
-  roadPedestrian: '#b6b2ab',
-  roadAgent: '#b9b2a4',
+  ground: '#b2b1a3',
+  water: '#5d7a8b',
+  waterDeep: '#465f6d',
+  grass: '#9daa82',
+  park: '#90a375',
+  parking: '#9c9b94',
+  paving: '#aeaba1',
+  /** §48.4: the lighter frontage band carriageways cut through */
+  pavement: '#b4afa5',
+  roadPrimary: '#7e7a72',
+  roadSecondary: '#847f77',
+  roadResidential: '#8b867e',
+  roadService: '#928d85',
+  roadPedestrian: '#a09b93',
+  roadAgent: '#9a9184',
   sunWarm: '#fff2dd',
   shadowCool: '#5c6a78',
 } as const

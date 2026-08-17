@@ -1384,6 +1384,7 @@ renderer.setAnimationLoop(() => {
     scene.fog.far = rig.distance * 2.1
   }
   env.sky.position.copy(rig.camera.position)
+  substrate.tick(clock)
 
   /**
    * §24.1: "widen the tilt-shift sharp band so it covers the plate rather than
