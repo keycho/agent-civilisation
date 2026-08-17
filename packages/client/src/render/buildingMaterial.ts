@@ -179,10 +179,12 @@ export function createBuildingMaterial(data: BuildingDataTexture): BuildingMater
         vec3 raw = mix(vec3(lum), vec3(0.62, 0.60, 0.57), 0.5);
         base = mix(raw, base, facade);
 
-        // §16.3 asks for exaggerated ambient occlusion. A vertical gradient is
-        // not SSAO, but at city scale it is what reads: it grounds every mass
-        // and costs nothing.
-        float ao = mix(0.66, 1.0, smoothstep(0.0, 0.30, vLocalY));
+        // §16.3 asks for exaggerated ambient occlusion; §48.1 pushes it
+        // further. A vertical gradient is not SSAO, but at city scale it is
+        // what reads: it grounds every mass and costs nothing. Deeper at the
+        // base, and a touch of it returning under the eave line.
+        float ao = mix(0.55, 1.0, smoothstep(0.0, 0.26, vLocalY));
+        ao *= 1.0 - 0.08 * smoothstep(0.88, 1.0, vLocalY) * step(vRole, 0.5);
         base *= ao;
 
         base = mix(base, uHighlightColor, vHighlight * 0.45);

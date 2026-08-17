@@ -70,7 +70,7 @@ const radius =
 const HALF_EXTENT = radius + 22
 const substrate = createSubstrateView(seed.substrate, HALF_EXTENT)
 scene.add(substrate.group)
-const env = createEnvironment(scene, { radius, groundY: substrate.groundY })
+const env = createEnvironment(scene, { radius, groundY: substrate.groundY, chunkId: entry.id })
 
 const buildings = new BuildingRenderer(items, seed.buildings.length + BUILDING_SLOT_SPARE)
 seed.buildings.forEach((b, i) => {

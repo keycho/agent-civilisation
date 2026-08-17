@@ -1,11 +1,11 @@
 {
   "_": "§36.1: the switcher needs a ws url per chunk id. precedence: ?server= override, then this file, then VITE_SERVER_URL, then the default port. an https page cannot open ws:// so these local entries are ignored in production; deployment replaces them with wss:// urls — under the §44.5 one-service shape, wss://<app>/ws/<chunkId> per chunk, same origin throughout. local dev can use per-port processes (below) or one supervisor (CHUNKS=all PORT=8820 -> ws://127.0.0.1:8820/ws/<chunkId>).",
-  "schiedam-havens": "ws://127.0.0.1:8790",
-  "london-deptford": "ws://127.0.0.1:8793",
-  "brooklyn-redhook": "ws://127.0.0.1:8796",
-  "paris-ourcq": "ws://127.0.0.1:8799",
-  "tokyo-kyojima": "ws://127.0.0.1:8802",
-  "vlaardingen-westwijk": "ws://127.0.0.1:8805",
-  "maasland-dorp": "ws://127.0.0.1:8808",
-  "maassluis-haven": "ws://127.0.0.1:8811"
+  "schiedam-havens": "ws://127.0.0.1:8820/ws/schiedam-havens",
+  "london-deptford": "ws://127.0.0.1:8820/ws/london-deptford",
+  "brooklyn-redhook": "ws://127.0.0.1:8820/ws/brooklyn-redhook",
+  "paris-ourcq": "ws://127.0.0.1:8820/ws/paris-ourcq",
+  "tokyo-kyojima": "ws://127.0.0.1:8820/ws/tokyo-kyojima",
+  "vlaardingen-westwijk": "ws://127.0.0.1:8820/ws/vlaardingen-westwijk",
+  "maasland-dorp": "ws://127.0.0.1:8820/ws/maasland-dorp",
+  "maassluis-haven": "ws://127.0.0.1:8820/ws/maassluis-haven"
 }

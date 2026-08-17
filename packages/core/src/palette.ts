@@ -176,6 +176,47 @@ export const VOID = {
 } as const
 
 /**
+ * §48.1: light is the identity. One fixed golden hour, forever — a low warm
+ * sun against a dusk-blue fill, so lit faces go golden and shade goes cool.
+ * That two-temperature read is most of "painterly" on its own, and a fixed
+ * beautiful hour beats a cycling mediocre one. Intensities re-balanced for
+ * the low angle: the sun brighter (roofs catch less of a low sun), the fill
+ * slightly down so the shade genuinely cools instead of washing grey.
+ */
+export const GOLDEN_HOUR = {
+  /** ~3500K feel */
+  sun: '#ffd9a3',
+  sunIntensity: 4.6,
+  /** dusk blue-grey fill from above, warm-neutral bounce from the ground */
+  fillSky: '#8fa2bd',
+  fillGround: '#8b877b',
+  fillIntensity: 2.05,
+  coolAmbient: '#4d5d74',
+  coolAmbientIntensity: 0.5,
+  /** low sun: long raking shadows are the point */
+  elevationDeg: 26,
+  bearingDefaultDeg: 205,
+} as const
+
+/**
+ * §48.1: the bearing the light comes FROM, per chunk, in the chunk's own
+ * local frame (degrees from +x toward +z in render space) — chosen so the
+ * canal or the main street catches the rake. Rotated chunks (§24.2) carry
+ * their fabric on the axes, so a near-axial bearing rakes down the primary
+ * street; north-cut chunks get a value picked off their dominant frontage.
+ */
+export const SUN_BEARING_DEG: Record<string, number> = {
+  'schiedam-havens': 197,
+  'london-deptford': 218,
+  'brooklyn-redhook': 205,
+  'paris-ourcq': 212,
+  'tokyo-kyojima': 222,
+  'vlaardingen-westwijk': 205,
+  'maasland-dorp': 205,
+  'maassluis-haven': 200,
+}
+
+/**
  * The one place the palette crosses into GLSL. Emitting it rather than
  * duplicating it by hand is what keeps §16.4's "one palette" true.
  */

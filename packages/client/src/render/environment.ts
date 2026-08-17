@@ -1,4 +1,4 @@
-import { ENVIRONMENT, VOID } from '@civ/core'
+import { ENVIRONMENT, GOLDEN_HOUR, SUN_BEARING_DEG, VOID } from '@civ/core'
 import {
   NoToneMapping,
   AmbientLight,
@@ -30,6 +30,8 @@ import {
 export interface EnvironmentOptions {
   radius: number
   groundY: number
+  /** §48.1: selects the chunk's own sun bearing from the authored table */
+  chunkId?: string
 }
 
 export function createEnvironment(scene: Scene, opts: EnvironmentOptions): {
@@ -46,22 +48,34 @@ export function createEnvironment(scene: Scene, opts: EnvironmentOptions): {
   scene.background = new Color(VOID.skyBottom)
   scene.fog = new Fog(new Color(VOID.fog).getHex(), opts.radius * 1.5, opts.radius * 5.2)
 
-  // Strong sky-to-ground ambient is what keeps a stylised world readable in
-  // shadow without needing bounce lighting.
+  /**
+   * §48.1: the two-temperature rig. A cool dusk fill keeps the stylised world
+   * readable in shadow; the golden key does the modelling. Three divides
+   * irradiance by PI, so intensities are balanced for the LOW sun: the key
+   * up so raked faces land near their authored albedo, the fill down so the
+   * shade genuinely cools instead of washing grey.
+   */
   const hemi = new HemisphereLight(
-    new Color(ENVIRONMENT.sky).getHex(),
-    new Color(ENVIRONMENT.ground).getHex(),
-    2.0,
+    new Color(GOLDEN_HOUR.fillSky).getHex(),
+    new Color(GOLDEN_HOUR.fillGround).getHex(),
+    GOLDEN_HOUR.fillIntensity,
   )
   scene.add(hemi)
-  scene.add(new AmbientLight(new Color(ENVIRONMENT.shadowCool).getHex(), 0.3))
+  scene.add(
+    new AmbientLight(new Color(GOLDEN_HOUR.coolAmbient).getHex(), GOLDEN_HOUR.coolAmbientIntensity),
+  )
 
-  // Three divides irradiance by PI, so intensities are tuned so that a sunlit
-  // up-facing surface lands at roughly its authored albedo and a shadowed one
-  // at roughly half. Without that the whole palette renders a stop dark and no
-  // amount of colour-picking fixes it.
-  const sun = new DirectionalLight(new Color(ENVIRONMENT.sunWarm).getHex(), 3.4)
-  sun.position.set(-0.55, 0.72, 0.42).multiplyScalar(opts.radius * 2.2)
+  // one fixed golden hour, forever (§48.1): elevation from the constant, the
+  // bearing per chunk so the canal or main street catches the rake
+  const el = (GOLDEN_HOUR.elevationDeg * Math.PI) / 180
+  const az =
+    (((opts.chunkId ? SUN_BEARING_DEG[opts.chunkId] : undefined) ?? GOLDEN_HOUR.bearingDefaultDeg) *
+      Math.PI) /
+    180
+  const sun = new DirectionalLight(new Color(GOLDEN_HOUR.sun).getHex(), GOLDEN_HOUR.sunIntensity)
+  sun.position
+    .set(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az))
+    .multiplyScalar(opts.radius * 2.2)
   sun.target.position.set(0, opts.groundY, 0)
   sun.castShadow = true
   sun.shadow.mapSize.set(2048, 2048)
@@ -72,10 +86,11 @@ export function createEnvironment(scene: Scene, opts: EnvironmentOptions): {
   sun.shadow.camera.bottom = -s
   sun.shadow.camera.near = 1
   sun.shadow.camera.far = opts.radius * 6
-  // long soft contact shadows rather than hard architectural ones (§16.3)
+  // long soft-edged raking shadows rather than hard architectural ones
+  // (§16.3, pushed by §48.1); normalBias up for the low incidence angle
   sun.shadow.bias = -0.0008
-  sun.shadow.normalBias = 0.5
-  sun.shadow.radius = 3.5
+  sun.shadow.normalBias = 0.7
+  sun.shadow.radius = 5.5
   scene.add(sun)
   scene.add(sun.target)
 
