@@ -90,7 +90,9 @@ for (const [id, sim] of region.sims) {
   activityBySettlement[id] = w.appliedActions
   decisionsBySettlement[id] = sim.decisionsIssued
   decisions += sim.decisionsIssued
-  contestBySettlement[id] = region.summaries.get(id)?.contest ?? 0
+  // §44.2: the half-budget sample, not the terminal (saturated) surface.
+  // 0 = the chunk never crossed its half-budget point before region end.
+  contestBySettlement[id] = region.midContest.get(id) ?? 0
   const done = w.assemblies.filter((x) => x.clearedAfter && x.developedAfter).length
   chainCompletionsBySettlement[id] = done
   chains += done
@@ -112,6 +114,7 @@ const migrations: MigrationEvent[] = region.migrations.map((m) => ({
   offeredGap: m.offeredGap,
   destinationValueTier: m.destinationValueTier as MigrationEvent['destinationValueTier'],
   reversed: m.reversed,
+  belowOriginAtGrace: m.belowOriginAtGrace,
 }))
 
 const summary: RegionRunSummary = {

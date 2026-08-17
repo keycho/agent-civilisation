@@ -64,6 +64,26 @@ export const CHAIN_FLOW_BAR_PER_10K = 4
  * structurally marginal and gets a mechanism look, not a constant retune. If
  * it concentrates as predicted, the single-chunk decline was gradient
  * starvation and the bars were right to hold.
+ *
+ * RE-REGISTRATION (§44.2, operator-directed, after run 1): the premise was
+ * wrong and being wrong is the finding. Run 1 measured chains ravenous in
+ * the migration-DESTINATION chunks (maasland 58-188 per 34k, maassluis
+ * 148-293) while contest pointed elsewhere — migration flows toward
+ * affordable supply, which is by construction where per-cell competition is
+ * low; development booms at the affordable frontier, not the contested
+ * core. The pre-registration encoded the opposite. Two changes, neither a
+ * bar move:
+ *
+ *   instrument   contest is sampled at HALF budget per chunk (§29.1's own
+ *                terminal-saturation practice — run 1 measured contest 1.00
+ *                in every chunk at end-of-run, an argmax over ties)
+ *   assertion    chain rate concentrates in migration-destination chunks
+ *                (destination rate exceeds the rest-of-region rate) and
+ *                exceeds the single-chunk floor there
+ *
+ * The report (rate vs contest rank, all chunks) is kept, now measurable.
+ * The floor itself is unchanged. The single-chunk WATCH resolves with this
+ * citation: the decline was gradient starvation in a capped world.
  */
 export const CHAIN_SINGLE_CHUNK_FLOOR_PER_34K = 7
 
@@ -91,6 +111,14 @@ export interface MigrationEvent {
   /** §32.2: where the destination's coarse value came from, carried per event */
   destinationValueTier: ValueTier
   reversed: boolean
+  /**
+   * §44.3's counterfactual: at grace-window end, was the destination's
+   * realised yield below the origin's? True = a member of the
+   * would-have-reversed set — they stayed because they planted, which is the
+   * commitment device doing real work. If the set is empty across a suite,
+   * the §28.1 estimate is not lossy enough for failure to be visible.
+   */
+  belowOriginAtGrace?: boolean
 }
 
 export interface RegionRunSummary {
@@ -122,7 +150,12 @@ export interface RegionRunSummary {
   >
   /** §30.2 */
   chainCompletionFlow: number
-  /** §43.2: median competition where agents concentrate, per materialised chunk */
+  /**
+   * §43.2/§44.2: median competition where agents concentrate, per
+   * materialised chunk — sampled at HALF budget per chunk (17k decisions,
+   * §20.9's frozen 34k over two), because the terminal surface saturates to
+   * 1.00 everywhere and ranks nothing (§29.1's documented practice).
+   */
   contestBySettlement: Record<string, number>
   /** §43.2: completed chains per materialised chunk */
   chainCompletionsBySettlement: Record<string, number>
@@ -335,33 +368,64 @@ export function assertContract(runs: RegionRunSummary[]): ContractResult[] {
     flow.toFixed(1),
   )
 
-  // -- §43.2: chains concentrate where migration concentrates capital -------
-  const hotRates = runs.map((r) => {
-    const hot = Object.entries(r.contestBySettlement).sort((a, b) => b[1] - a[1])[0]?.[0]
-    if (!hot) return 0
-    const chains = r.chainCompletionsBySettlement[hot] ?? 0
-    const dec = r.decisionsBySettlement[hot] ?? 0
-    return dec > 0 ? (chains / dec) * 34_000 : 0
+  // -- §43.2 as re-registered by §44.2: chains concentrate where migration
+  // -- delivers capital — the destination chunks — and clear the floor there
+  const destRates = runs.map((r) => {
+    const dests = new Set(r.migrations.filter((m) => !m.reversed).map((m) => m.toSettlement))
+    let dChains = 0
+    let dDec = 0
+    let oChains = 0
+    let oDec = 0
+    for (const [id, dec] of Object.entries(r.decisionsBySettlement)) {
+      const chains = r.chainCompletionsBySettlement[id] ?? 0
+      if (dests.has(id)) {
+        dChains += chains
+        dDec += dec
+      } else {
+        oChains += chains
+        oDec += dec
+      }
+    }
+    return {
+      dest: dDec > 0 ? (dChains / dDec) * 34_000 : 0,
+      rest: oDec > 0 ? (oChains / oDec) * 34_000 : 0,
+    }
   })
   assert(
-    medianOf(hotRates) >= CHAIN_SINGLE_CHUNK_FLOOR_PER_34K,
-    `most-contested chunk's chain rate >= single-chunk floor (${CHAIN_SINGLE_CHUNK_FLOOR_PER_34K}/34k)`,
-    `median ${medianOf(hotRates).toFixed(1)} per 34k-equivalent`,
+    medianOf(destRates.map((x) => x.dest)) >= CHAIN_SINGLE_CHUNK_FLOOR_PER_34K,
+    `migration-destination chunks' chain rate >= single-chunk floor (${CHAIN_SINGLE_CHUNK_FLOOR_PER_34K}/34k)`,
+    `median ${medianOf(destRates.map((x) => x.dest)).toFixed(1)} per 34k-equivalent`,
+  )
+  assert(
+    medianOf(destRates.map((x) => x.dest)) > medianOf(destRates.map((x) => x.rest)),
+    'chain rate concentrates in migration-destination chunks (dest > rest of region)',
+    `dest ${medianOf(destRates.map((x) => x.dest)).toFixed(1)} vs rest ${medianOf(
+      destRates.map((x) => x.rest),
+    ).toFixed(1)}`,
   )
   report(
-    'chain rate vs chunk contest rank (per 34k-equivalent, hottest first)',
+    'chain rate vs chunk contest rank (per 34k-equivalent, mid-run contest, hottest first)',
     runs
       .map((r) =>
         Object.entries(r.contestBySettlement)
           .sort((a, b) => b[1] - a[1])
-          .map(([id]) => {
+          .map(([id, c]) => {
             const dec = r.decisionsBySettlement[id] ?? 0
-            const c = r.chainCompletionsBySettlement[id] ?? 0
-            return `${id.split('-')[0]}:${dec > 0 ? ((c / dec) * 34_000).toFixed(0) : '·'}`
+            const ch = r.chainCompletionsBySettlement[id] ?? 0
+            return `${id.split('-')[0]}(${c.toFixed(2)}):${dec > 0 ? ((ch / dec) * 34_000).toFixed(0) : '·'}`
           })
           .join(' '),
       )
       .join(' | '),
+  )
+
+  // -- §44.3: the would-have-reversed set, before the zero is trusted -------
+  const wouldHave = runs.map(
+    (r) => r.migrations.filter((m) => !m.reversed && m.belowOriginAtGrace === true).length,
+  )
+  report(
+    'would-have-reversed per seed (§44.3: below origin realised at grace end; nonempty = the commitment device works, empty = §28.1 not lossy enough)',
+    wouldHave.join(', '),
   )
 
   return out

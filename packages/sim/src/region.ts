@@ -78,6 +78,11 @@ export interface RegionMigration {
   reversed: boolean
   /** what the §28.3 gate collected; forfeit when the migration reverses */
   commitment: number
+  /**
+   * §44.3: at grace-window end, destination realised < origin realised —
+   * the would-have-reversed marker, evaluated once per migration
+   */
+  belowOriginAtGrace?: boolean
 }
 
 export interface RegionOptions {
@@ -144,6 +149,14 @@ const MIGRATION_EVERY_SLICES = 4
 const MAX_MIGRATIONS_PER_PASS = 2
 const REVERSAL_WINDOW_TICKS = 2200
 const GAP_MARGIN = 1.35
+
+/**
+ * §44.2: contest is sampled when a chunk crosses HALF the frozen
+ * single-chunk budget (§20.9: 34k over two), per §29.1's documented
+ * terminal-saturation practice — at end-of-run the competition median reads
+ * 1.00 in every chunk and ranks nothing. Run 1 measured exactly that.
+ */
+const CONTEST_SAMPLE_DECISIONS = 17_000
 
 function haversineKm(aLat: number, aLon: number, bLat: number, bLon: number): number {
   const R = 6371
@@ -224,6 +237,8 @@ export class RegionWorld {
   readonly materialisedEver = new Set<string>()
   readonly decisionsBy = new Map<string, number>()
   readonly drains = new Map<string, number>()
+  /** §44.2: per-chunk contest at its half-budget crossing, sampled once */
+  readonly midContest = new Map<string, number>()
   private readonly lastAlive = new Map<string, number>()
   /**
    * §28.3: a warmed chunk is CONSTRUCTED but not TICKING — the pre-load is
@@ -453,6 +468,15 @@ export class RegionWorld {
         // window must pass before disappointment is allowed to decide
         const graceOver =
           target.world.tick >= watch.deadlineTick - Math.floor(REVERSAL_WINDOW_TICKS * 0.75)
+        // §44.3: the counterfactual, evaluated once at grace-window end —
+        // would this migrant have been better off staying? Recorded whether
+        // or not reversal fires, so zero reversals can be told apart from
+        // "failure is invisible".
+        if (graceOver && watch.migration.belowOriginAtGrace === undefined) {
+          const origin = this.summaries.get(watch.migration.fromChunk)
+          watch.migration.belowOriginAtGrace =
+            origin !== undefined && summary.realisedYield < origin.realisedYield
+        }
         const disappointment = watch.estimateAtCommit - summary.realisedYield
         if (
           graceOver &&
@@ -506,6 +530,9 @@ export class RegionWorld {
         const before = sim.decisionsIssued
         await sim.runToDecisionBudget(before + SLICE_DECISIONS)
         this.decisionsBy.set(id, sim.decisionsIssued)
+        // §44.2: sample contest as the chunk crosses its half-budget point
+        if (!this.midContest.has(id) && sim.decisionsIssued >= CONTEST_SAMPLE_DECISIONS)
+          this.midContest.set(id, fineSummaryOf(sim.world).contest)
       }
       for (const [id] of this.opts.seeds) this.refreshSummary(id)
       this.slice++

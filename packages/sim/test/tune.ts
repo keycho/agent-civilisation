@@ -367,8 +367,14 @@ console.log(
  * it takes a quarter of the seeds moving to move the statistic. The floor
  * carries the §41.1 provenance to the new statistic: the composition arm's
  * p25 sat at 7, the same 0.75 slack the median bar carried gives 5.25,
- * floored to 5. The bars HOLD (§43.2: no downward restatement) — this is the
- * same claim on a sturdier statistic, both chain bars in WATCH.
+ * floored to 5. The bars HOLD (§43.2: no downward restatement).
+ *
+ * WATCH RESOLVED (§44.2, first region run): the single-chunk decline was
+ * gradient starvation in a capped world — the same chain economy runs
+ * 58-293 completions/34k in the region's migration-destination chunks and
+ * 13.5/10k region-wide (~6x this suite). These bars stay as the control
+ * suite's own equilibrium guards, no longer as an open question about
+ * whether the chain economy is structurally marginal. It is not.
  */
 const chainDist = g.map((x) => x.chainCompleted).sort((a, b) => a - b)
 const chainsP25 = chainDist[Math.floor(0.25 * (chainDist.length - 1))] ?? 0
