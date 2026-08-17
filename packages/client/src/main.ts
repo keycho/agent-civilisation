@@ -273,9 +273,24 @@ function serverUrl(): string {
   const mapped = servers[entry.id]
   if (mapped && (location.protocol !== 'https:' || mapped.startsWith('wss'))) return mapped
   const configured = (import.meta as { env?: Record<string, string> }).env?.VITE_SERVER_URL
-  if (configured) return configured
+  if (configured) return withChunkPath(configured)
   const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
-  return `${scheme}://${location.hostname}:8787`
+  return withChunkPath(`${scheme}://${location.hostname}:8787`)
+}
+
+/**
+ * §44.5: one service hosts every chunk behind `/ws/<chunkId>`, and a bare
+ * origin only upgrades on a server hosting exactly one chunk. An operator
+ * naturally sets VITE_SERVER_URL to the bare origin — production did, and
+ * every upgrade came back 404, which the client showed as a permanent
+ * `reconnecting…`. The client knows the path shape, so it completes the url
+ * itself. Both server shapes accept `/ws/<chunkId>`, so this is safe for a
+ * single-chunk deployment too; an url that already names a path is left
+ * exactly as given.
+ */
+function withChunkPath(base: string): string {
+  const trimmed = base.replace(/\/+$/, '')
+  return trimmed.includes('/ws/') ? trimmed : `${trimmed}/ws/${entry.id}`
 }
 
 let lastGen = 0
