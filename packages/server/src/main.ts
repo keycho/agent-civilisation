@@ -65,14 +65,19 @@ const STARTED = Date.now()
 
 /** §44.5: which chunks this process hosts. CHUNKS wins; CHUNK is the
  * single-chunk shape every existing invocation uses. */
-async function resolveChunkIds(): Promise<string[]> {
-  const many = process.env.CHUNKS
-  if (many === 'all') {
-    const index = JSON.parse(await readFile(join(WORLD_DIR, 'index.json'), 'utf8')) as {
-      chunks: Array<{ id: string }>
-    }
-    return index.chunks.map((c) => c.id)
+async function rosterIds(): Promise<string[]> {
+  const index = JSON.parse(await readFile(join(WORLD_DIR, 'index.json'), 'utf8')) as {
+    chunks: Array<{ id: string }>
   }
+  return index.chunks.map((c) => c.id)
+}
+
+async function resolveChunkIds(): Promise<string[]> {
+  const many = process.env.CHUNKS?.trim()
+  // case-insensitive: the first production deploy set CHUNKS=ALL and the
+  // strict comparison sent the literal down the comma-list path, so the
+  // process tried to host a chunk named "ALL" and died on ALL.json
+  if (many && many.toLowerCase() === 'all') return rosterIds()
   if (many) return many.split(',').map((s) => s.trim()).filter(Boolean)
   return [process.env.CHUNK ?? 'schiedam-havens']
 }
@@ -153,7 +158,17 @@ for (const id of await resolveChunkIds()) {
     hosts.size === 0 && process.env.SEED_PATH && !process.env.CHUNKS
       ? process.env.SEED_PATH
       : join(WORLD_DIR, `${id}.json`)
-  const seed = JSON.parse(await readFile(seedPath, 'utf8')) as WorldSeed
+  let raw: string
+  try {
+    raw = await readFile(seedPath, 'utf8')
+  } catch {
+    // a typo'd chunk id should fail with the roster in hand, not a raw ENOENT
+    throw new Error(
+      `no seed for chunk '${id}' at ${seedPath}. ` +
+        `CHUNKS=all (any case) hosts the full roster; known ids: ${(await rosterIds()).join(', ')}`,
+    )
+  }
+  const seed = JSON.parse(raw) as WorldSeed
   const host: ChunkHost = { id, seed, world: null as unknown as WorldService, sockets: new Set() }
   host.world = newSeason(host, 1)
   hosts.set(id, host)
