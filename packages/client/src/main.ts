@@ -45,6 +45,7 @@ import { createLandmarkLines } from './render/landmarkLines.ts'
 import { createRoadMeshes } from './render/roadMesh.ts'
 import { ConstructionOverlay } from './render/scaffold.ts'
 import { createSubstrateView } from './render/substrateMesh.ts'
+import { createTrees } from './render/trees.ts'
 import { PunctuationLayer } from './render/punctuation.ts'
 import { AgentInterpolator, Connection, fromBase64 } from './world/connection.ts'
 import { loadChunk } from './world/load.ts'
@@ -92,6 +93,16 @@ scene.add(roads.agent)
 if (seed.landmarkLines?.length) {
   scene.add(createLandmarkLines(seed.landmarkLines, substrate.heightAt))
 }
+
+// §48.4: stylized canopy over green landcover, chunk-palette tinted
+scene.add(
+  createTrees(
+    seed.substrate.surfaces,
+    substrate.heightAt,
+    HALF_EXTENT,
+    CITY_MATERIALS[seed.chunk.id] ?? CITY_MATERIAL_DEFAULT,
+  ),
+)
 
 const construction = new ConstructionOverlay()
 scene.add(construction.scaffold)
