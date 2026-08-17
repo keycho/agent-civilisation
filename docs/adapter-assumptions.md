@@ -347,6 +347,21 @@ favours the mature control — if no NL challenger ever out-activates
 schiedam in 2 of 8 seeds, that assert fails and the finding is that the
 §43.2 world needs activity RATE, not that the bar was wrong.
 
+## 10. The NL constellation through §41.2 — and the ceiling's deepest fabric
+
+All three joined at 100% ownable. maasland-dorp ADMITTED (stable dark 5.1%,
+gap 5.1 pts); maassluis-haven ADMITTED (5.0%, gap 5.0). vlaardingen-westwijk
+is a FINDING: stable dark 25.7% against predicted-unviable 0.0% — a 25.7 pt
+gap, deeper than paris's 15.6. Dark-rank names it the KNOWN capital-ceiling
+mechanism, sixth fabric: dark stock sits mid-rank (cap percentile 0.54 vs
+touched 0.49, 22% in the bottom quartile — not rank-tail), dark median area
+311 m2 against touched 48 m2, zero split pieces. Postwar slab modernism is
+the ceiling maximised — the fabric is MADE of large-area stock that is
+rate-viable and never affordable within a life. The arc now reads: fine
+grain (tokyo) no ceiling, perimeter blocks (paris) deep, slabs
+(vlaardingen) deepest. Per §41.3 the ceiling stays logged, not built;
+the finding holds for operator accept, as paris's did.
+
 ## Carried, not fixed
 
 - ~~UK tier-1 valuations~~ — done (build 10, §33.4): HM Land Registry UK HPI
