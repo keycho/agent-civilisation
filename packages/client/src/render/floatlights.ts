@@ -13,7 +13,7 @@
  * for names, §36.2 occupation colours for identity. Nothing here casts a
  * shadow or occludes the world.
  */
-import { OCCUPATION_COLOR } from './agents.ts'
+import { agentColourHex } from './agents.ts'
 import {
   CanvasTexture,
   Group,
@@ -66,8 +66,15 @@ export interface FloatAgent {
   y: number
   activity: string
   strategy: string
+  colourIndex: number
   name: string
   followed: boolean
+}
+
+/** where a glyph currently floats — §51.3 hit-tests these for the mini-card */
+export interface FloatMark {
+  id: string
+  position: Vector3
 }
 
 interface Arc {
@@ -82,6 +89,8 @@ interface Arc {
 
 export class FloatLights {
   readonly group = new Group()
+  /** this frame's glyph positions, for the §51.3 hover hit-test */
+  readonly marks: FloatMark[] = []
   private pool: Sprite[] = []
   private used = 0
   private arcs: Arc[] = []
@@ -109,6 +118,7 @@ export class FloatLights {
    */
   setAgents(agents: Iterable<FloatAgent>, groundY: number, cameraDistance: number): void {
     this.used = this.arcs.length // arc sprites occupy the pool head
+    this.marks.length = 0
     const near = cameraDistance < NAME_DISTANCE
     for (const a of agents) {
       const working = a.activity === 'building' || a.activity === 'demolishing'
@@ -116,7 +126,9 @@ export class FloatLights {
       if (!working && !travelling && !a.followed) continue
       const s = this.take()
       const withName = near || a.followed
-      const colour = OCCUPATION_COLOR[a.strategy] ?? '#c8c8c8'
+      // §51.3: the identity colour, the same value the ground marker, tether,
+      // crew chip and log line carry
+      const colour = agentColourHex(a.strategy, a.colourIndex)
       const mat = s.material as SpriteMaterial
       mat.map = glyphTexture(colour, withName ? a.name.split(' ')[0] : undefined)
       mat.opacity = working || a.followed ? 0.95 : 0.7
@@ -125,6 +137,7 @@ export class FloatLights {
       s.scale.set(withName ? scale * 4 : scale, scale, 1)
       s.center.set(withName ? 0.125 : 0.5, 0.5)
       s.position.set(a.x, groundY + (working ? 16 : 11), -a.y)
+      this.marks.push({ id: a.id, position: s.position })
     }
     for (let i = this.used; i < this.pool.length; i++) this.pool[i].visible = false
   }

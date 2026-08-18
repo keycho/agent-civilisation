@@ -31,6 +31,31 @@ export const OCCUPATION_COLOR: Record<string, string> = {
   converter: '#b57ad0',
 }
 
+/**
+ * Identity colour: the occupation gives the hue family, the agent's own index
+ * gives a stable accent inside it. One value, computed one way, used
+ * everywhere the agent appears — ground marker, floating glyph, tether, crew
+ * chip, log line, character sheet — so a recurring character is recognisable
+ * before its name is readable, and two developers on the same street are
+ * still two people.
+ *
+ * The offsets are small and mutually incommensurate (periods 11, 7, 9 over a
+ * shared index): the family survives, the individual separates.
+ */
+export function agentColour(strategy: string, colourIndex: number): Color {
+  const c = new Color(OCCUPATION_COLOR[strategy] ?? '#c8c8c8')
+  const h = ((colourIndex * 7) % 11) / 11 - 0.5
+  const s = ((colourIndex * 5) % 7) / 7 - 0.5
+  const l = ((colourIndex * 3) % 9) / 9 - 0.5
+  c.offsetHSL(h * 0.07, s * 0.13, l * 0.15)
+  return c
+}
+
+/** the same accent as chrome ink */
+export function agentColourHex(strategy: string, colourIndex: number): string {
+  return `#${agentColour(strategy, colourIndex).getHexString()}`
+}
+
 const MARKER_HEIGHT = 5.2
 
 export class AgentMarkers {
@@ -84,9 +109,8 @@ export class AgentMarkers {
       this.dummy.updateMatrix()
       this.mesh.setMatrixAt(i, this.dummy.matrix)
 
-      this.colour.set(OCCUPATION_COLOR[a.strategy] ?? '#c8c8c8')
-      // a stable per-agent value shift so recurring characters stay recognisable
-      this.colour.offsetHSL(0, 0, ((a.colourIndex % 6) - 3) * 0.028)
+      // one identity colour, shared with the glyph, tether, crew and log
+      this.colour.copy(agentColour(a.strategy, a.colourIndex))
       if (working) this.colour.offsetHSL(0, 0.06, 0.1)
       else if (idle) this.colour.multiplyScalar(0.55)
       this.mesh.setColorAt(i, this.colour)

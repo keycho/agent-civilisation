@@ -39,7 +39,12 @@ import {
 import { CameraDirector } from './camera/director.ts'
 import { CameraRig, attachRigControls } from './camera/rig.ts'
 import { TiltShiftPass } from './postfx/tiltShift.ts'
-import { AgentMarkers, OCCUPATION_COLOR, type AgentPresence } from './render/agents.ts'
+import {
+  AgentMarkers,
+  agentColour,
+  agentColourHex,
+  type AgentPresence,
+} from './render/agents.ts'
 import { BuildingRenderer } from './render/buildingRenderer.ts'
 import { configureRenderer, createEnvironment } from './render/environment.ts'
 import { createLandmarkLines } from './render/landmarkLines.ts'
@@ -251,6 +256,9 @@ const connection = new Connection(serverUrl(), {
     showInspector(b)
   },
   onAgent(a) {
+    // §51.3: every read is cached — the sheet asked for it, or a hover did
+    if (a.found) agentCache.set(a.id, a)
+    if (hoverId === a.id) renderMiniCard(a.id, lastPointer[0], lastPointer[1])
     showAgentSheet(a)
   },
   onStatus(state) {
@@ -310,6 +318,7 @@ function acceptReadouts(r: Readouts): void {
     actionsThisGen = archive.reduce((n, e) => n + (e.generation === r.generation ? 1 : 0), 0)
   }
   el('actionsGen').textContent = `${actionsThisGen} actions this gen`
+  el('agentsBtn').textContent = `agents ${roster.size}`
   el('logMeta').textContent = `${r.eventCount} events`
   if (scrubbing) return
   setReadouts(r.divergenceIndex, r.generation, false)
@@ -819,8 +828,9 @@ function ingest(e: EventWire): void {
     if (e.x !== undefined && e.y !== undefined) punctuation.demolitionDust(e.x, e.y)
   }
   renderWatched()
-  // §36.2: while following, the log reads as that agent's log
-  if (!followId || e.agentId === followId) queueFeedRow(e)
+  // world.log stays the world's; the followed agent narrates in its own pane
+  queueFeedRow(e)
+  if (followId && e.agentId === followId) queueAgentRow(e)
 }
 
 /**
@@ -888,12 +898,12 @@ function feedKey(e: EventWire): string {
 const feedHeld = (): boolean => feedHovered || feedPausedByKey
 
 /**
- * §51.2 intake. Routine lines are counted rather than queued — except while
- * following, where a single agent's routine work is the entire subject and
- * suppressing it would empty the pane the viewer opened on purpose.
+ * §51.2 intake. Routine lines are counted rather than queued; the detail a
+ * viewer follows an agent for now lives in that agent's own pane, which is
+ * unfiltered, so world.log stays the world's at every zoom.
  */
 function queueFeedRow(e: EventWire): void {
-  if (!verboseFeed && !followId && severity(e.cinematicWeight) === '') {
+  if (!verboseFeed && severity(e.cinematicWeight) === '') {
     if (e.generation !== routineGen) {
       routineGen = e.generation
       routineCount = 0
@@ -1007,10 +1017,16 @@ function pushFeedRow(e: EventWire, times = 1, instant = false): void {
     row.dataset.x = String(at[0])
     row.dataset.y = String(at[1])
   }
+  // §51.3 identity colour: the name in the line is the agent's own accent, the
+  // same value its marker, tether, chip and sheet carry
+  const who = e.agentId ? roster.get(e.agentId) : undefined
+  const tone = who ? agentColourHex(who.strategy, who.colourIndex) : ''
   row.innerHTML =
     `<span class="ord">${e.id}</span>` +
     `<span class="t">${
-      e.agentName ? `<b>${escapeHtml(e.agentName.split(' ')[0])}</b> ` : ''
+      e.agentName
+        ? `<b${tone ? ` style="color:${tone}"` : ''}>${escapeHtml(e.agentName.split(' ')[0])}</b> `
+        : ''
     }<span class="tx"></span><span class="n">${times > 1 ? ` ×${times}` : ''}</span></span>`
   const tx = row.querySelector('.tx') as HTMLElement
   feedList.insertAdjacentElement('afterbegin', row)
@@ -1276,6 +1292,8 @@ function showAgentCard(id: string): void {
   const first = who.name.split(' ')[0]
   inspector.classList.add('on')
   el('insName').textContent = `agent ${first.toLowerCase()}`
+  // §51.3: the sheet wears the identity colour too
+  el('insName').style.color = agentColourHex(who.strategy, who.colourIndex)
   el('insMeta').textContent = who.strategy
   el('insTitle').textContent = who.name
   el('insSub').textContent = `gen ${who.generation} · ${who.strategy}`
@@ -1372,6 +1390,7 @@ el('insLineage').addEventListener('click', (ev) => {
 function follow(id: string | null): void {
   followId = id
   followRefit = 0
+  openAgentLog(id)
   if (id) {
     // following suspends the director and surfaces the chrome; release
     // re-arms the director, whose idle-resume rules take it from there
@@ -1414,6 +1433,30 @@ function updateFollow(dt: number): void {
 const crewPane = el('crew')
 let crewTimer = 0
 
+/** §51.3: status at a glance, in one glyph */
+const STATUS_GLYPH: Record<string, string> = { working: '▲', travelling: '→', idle: '·' }
+
+function agentStatus(activity: string | undefined): 'working' | 'travelling' | 'idle' {
+  if (activity === 'building' || activity === 'demolishing') return 'working'
+  if (activity === 'acquiring' || activity === 'moving') return 'travelling'
+  return 'idle'
+}
+
+/** the plan the crew and the mini-card both read: the agent's own last line */
+function lastPlanOf(id: string): string {
+  for (let i = archive.length - 1; i >= 0; i--) {
+    const e = archive[i]
+    if (e.agentId === id) return e.rationale ?? e.type.replace(/_/g, ' ')
+  }
+  return ''
+}
+
+/**
+ * §51.3: the crew pane lists everyone, not a top-8 — a stranger opening it is
+ * looking for the roster, not a leaderboard. Working agents sort first, then
+ * travelling, then idle; within a band, by what they have done this
+ * generation. The chip carries the §51.3 identity colour.
+ */
 function renderCrew(): void {
   const gen = readouts?.generation ?? 0
   const counts = new Map<string, number>()
@@ -1421,27 +1464,33 @@ function renderCrew(): void {
     if (e.generation !== gen || !e.agentId) continue
     counts.set(e.agentId, (counts.get(e.agentId) ?? 0) + 1)
   }
-  const top = [...counts.entries()]
-    .filter(([id]) => roster.has(id))
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 8)
-  el('crewList').innerHTML =
-    top.length === 0
-      ? '<span class="dim">nobody has acted yet this generation</span>'
-      : top
-          .map(([id, n]) => {
-            const who = roster.get(id)
-            if (!who) return ''
-            const last = [...archive].reverse().find((e) => e.agentId === id)
-            const plan = last?.rationale ?? last?.type.replace(/_/g, ' ') ?? ''
-            const tone = OCCUPATION_COLOR[who.strategy] ?? '#8a8069'
-            return (
-              `<div class="a" data-id="${id}"><span class="chip" style="background:${tone}"></span>` +
-              `<span class="nm">${escapeHtml(who.name.split(' ')[0])}</span>` +
-              `<span class="plan">${escapeHtml(plan)}</span><span class="ct">${n}</span></div>`
-            )
-          })
-          .join('')
+  const live = new Map<string, string>()
+  for (const p of presence.positions()) live.set(p.id, p.activity)
+  const RANK = { working: 0, travelling: 1, idle: 2 }
+  const rows = [...roster.entries()]
+    .map(([id, who]) => ({ id, who, status: agentStatus(live.get(id)), n: counts.get(id) ?? 0 }))
+    .sort((a, b) => RANK[a.status] - RANK[b.status] || b.n - a.n || a.who.name.localeCompare(b.who.name))
+  el('crewMeta').textContent = `${rows.length} · gen ${gen}`
+  if (rows.length === 0) {
+    el('crewList').innerHTML = '<span class="dim">no agents yet</span>'
+    return
+  }
+  let band = ''
+  el('crewList').innerHTML = rows
+    .map((r) => {
+      const head = r.status === band ? '' : `<div class="grp">${r.status}</div>`
+      band = r.status
+      const tone = agentColourHex(r.who.strategy, r.who.colourIndex)
+      return (
+        head +
+        `<div class="a ${r.status}" data-id="${r.id}"><span class="chip" style="background:${tone}"></span>` +
+        `<span class="st">${STATUS_GLYPH[r.status]}</span>` +
+        `<span class="nm" style="color:${tone}">${escapeHtml(r.who.name.split(' ')[0])}</span>` +
+        `<span class="plan">${escapeHtml(lastPlanOf(r.id) || `gen ${r.who.generation} · ${r.who.strategy}`)}</span>` +
+        `<span class="ct">${r.n || ''}</span></div>`
+      )
+    })
+    .join('')
 }
 
 el('crewList').addEventListener('click', (e) => {
@@ -1458,6 +1507,127 @@ function toggleCrew(force?: boolean): void {
   if (on) renderCrew()
 }
 el('crewClose').addEventListener('click', () => toggleCrew(false))
+// §51.3: the same pane the `r` key opens, reachable by anyone who never
+// learned there was an `r` key
+el('agentsBtn').addEventListener('click', () => toggleCrew())
+
+/**
+ * §51.3: the mini-card. Hovering a floating marker names the agent, its plan
+ * and its balance, without the commitment of a follow. The balance is a
+ * server read like the sheet's — asked once per agent and cached, so sweeping
+ * the cursor across a working street costs one question per character.
+ */
+const agentCache = new Map<string, import('@civ/protocol').AgentDetail>()
+const asked = new Set<string>()
+let hoverId: string | null = null
+const lastPointer: [number, number] = [0, 0]
+
+function markAt(px: number, py: number): string | null {
+  if (mode !== 'city') return null
+  const v = new Vector3()
+  let best: { id: string; d: number } | null = null
+  for (const m of floatLights.marks) {
+    v.copy(m.position).project(rig.camera)
+    if (v.z > 1) continue
+    const sx = ((v.x + 1) / 2) * innerWidth
+    const sy = (1 - (v.y + 1) / 2) * innerHeight
+    const d = Math.hypot(sx - px, sy - py)
+    if (d < 26 && (!best || d < best.d)) best = { id: m.id, d }
+  }
+  return best?.id ?? null
+}
+
+function renderMiniCard(id: string, px: number, py: number): void {
+  const who = roster.get(id)
+  if (!who) return
+  const card = el('miniCard')
+  const detail = agentCache.get(id)
+  const tone = agentColourHex(who.strategy, who.colourIndex)
+  const plan = detail?.plan?.text ?? lastPlanOf(id) ?? ''
+  const balance = detail
+    ? `${(detail.capital ?? 0).toLocaleString()} · debt ${(detail.debt ?? 0).toLocaleString()}`
+    : 'reading the ledger…'
+  card.innerHTML =
+    `<span class="nm" style="color:${tone}">${escapeHtml(who.name.split(' ')[0])}</span> ` +
+    `<span class="dim">${escapeHtml(who.strategy)}</span>` +
+    (plan ? `<div class="ln">${escapeHtml(plan)}</div>` : '') +
+    `<div class="ln">${escapeHtml(balance)}</div>`
+  card.classList.add('on')
+  // keep the card on screen: flip it left/up near the edges
+  const w = card.offsetWidth
+  const h = card.offsetHeight
+  card.style.left = `${Math.min(px + 14, innerWidth - w - 8)}px`
+  card.style.top = `${Math.min(Math.max(8, py - h - 12), innerHeight - h - 8)}px`
+}
+
+canvas.addEventListener('pointermove', (e) => {
+  lastPointer[0] = e.clientX
+  lastPointer[1] = e.clientY
+  const id = markAt(e.clientX, e.clientY)
+  if (!id) {
+    hoverId = null
+    el('miniCard').classList.remove('on')
+    return
+  }
+  hoverId = id
+  if (!asked.has(id)) {
+    asked.add(id)
+    connection.send({ t: 'inspectAgent', agentId: id })
+  }
+  renderMiniCard(id, e.clientX, e.clientY)
+})
+canvas.addEventListener('pointerleave', () => {
+  hoverId = null
+  el('miniCard').classList.remove('on')
+})
+
+// ---------------------------------------------------------------------------
+// <name>.log — while following, the agent narrates its own work
+// ---------------------------------------------------------------------------
+
+const agentFeed = el('agentFeed')
+const agentQueue: EventWire[] = []
+
+function queueAgentRow(e: EventWire): void {
+  agentQueue.push(e)
+  if (agentQueue.length > 60) agentQueue.shift()
+}
+
+setInterval(() => {
+  const e = agentQueue.shift()
+  if (!e || !followId) return
+  const row = document.createElement('div')
+  row.className = `e ${severity(e.cinematicWeight)}`
+  row.innerHTML =
+    `<span class="ord">${e.id}</span><span class="t"><span class="tx"></span></span>`
+  agentFeed.insertAdjacentElement('afterbegin', row)
+  typeInto(row.querySelector('.tx') as HTMLElement, e.rationale ?? e.type.replace(/_/g, ' '), false)
+  while (agentFeed.childElementCount > 9) agentFeed.lastElementChild?.remove()
+}, 420)
+
+/** the pane belongs to one agent: opening it on another starts it empty */
+function openAgentLog(id: string | null): void {
+  agentQueue.length = 0
+  agentFeed.innerHTML = ''
+  document.body.classList.toggle('following', !!id)
+  if (!id) return
+  const who = roster.get(id)
+  const first = (who?.name.split(' ')[0] ?? 'agent').toLowerCase()
+  el('agentLogName').textContent = `${first}.log`
+  el('agentLogName').style.color = who ? agentColourHex(who.strategy, who.colourIndex) : ''
+  el('agentLogMeta').textContent = who ? `gen ${who.generation} · ${who.strategy}` : ''
+  // seed with what this session already watched them do
+  for (const e of archive.filter((x) => x.agentId === id).slice(-9)) {
+    const row = document.createElement('div')
+    row.className = `e ${severity(e.cinematicWeight)}`
+    row.innerHTML =
+      `<span class="ord">${e.id}</span><span class="t">${escapeHtml(
+        e.rationale ?? e.type.replace(/_/g, ' '),
+      )}</span>`
+    agentFeed.insertAdjacentElement('afterbegin', row)
+  }
+}
+el('agentLogClose').addEventListener('click', () => follow(null))
 
 // ---------------------------------------------------------------------------
 // §36.1: the city switcher, over the chunk index the loader already reads
@@ -1865,7 +2035,9 @@ function updateTethers(): void {
     tetherPos[i + 4] = substrate.groundY + 0.6
     tetherPos[i + 5] = -site[1]
     const who = roster.get(a.id)
-    tetherColour.set(OCCUPATION_COLOR[who?.strategy ?? ''] ?? '#8a8069')
+    // §51.3: the tether is the agent's own colour, so which worker owns which
+    // site reads without reading a name
+    tetherColour.copy(agentColour(who?.strategy ?? '', who?.colourIndex ?? 0))
     tetherCol[i] = tetherColour.r
     tetherCol[i + 1] = tetherColour.g
     tetherCol[i + 2] = tetherColour.b
@@ -2027,6 +2199,7 @@ function* floatAgents(): Generator<import('./render/floatlights.ts').FloatAgent>
       y: a.y,
       activity: a.activity,
       strategy: who.strategy,
+      colourIndex: who.colourIndex,
       name: who.name,
       followed: followId === a.id,
     }
@@ -2065,6 +2238,10 @@ function civHome(): void {
   get roster() {
     return roster
   },
+  /** §51.3 hooks for the capture rigs: what floats, who is followed, what colour */
+  floatMarks: () => floatLights.marks,
+  followedId: () => followId,
+  colourOf: (strategy: string, colourIndex: number) => agentColourHex(strategy, colourIndex),
   setMode(v: number) {
     modeInput.value = String(v)
     modeInput.dispatchEvent(new Event('input'))
