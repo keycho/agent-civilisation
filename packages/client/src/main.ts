@@ -16,6 +16,7 @@
 import {
   AGENT_MOTION_MAX_THROUGHPUT,
   BUILDING_SLOT_SPARE,
+  CITY_HOUR,
   CITY_MATERIALS,
   CITY_MATERIAL_DEFAULT,
   DIVERGENCE_LABEL,
@@ -46,7 +47,7 @@ import {
   type AgentPresence,
 } from './render/agents.ts'
 import { BuildingRenderer } from './render/buildingRenderer.ts'
-import { configureRenderer, createEnvironment } from './render/environment.ts'
+import { configureRenderer, createEnvironment, dimGround } from './render/environment.ts'
 import { createLandmarkLines } from './render/landmarkLines.ts'
 import { createRoadMeshes } from './render/roadMesh.ts'
 import { ConstructionOverlay } from './render/scaffold.ts'
@@ -94,6 +95,9 @@ buildings.flush()
 // §42.1: the chunk wears its own material base — schiedam's identity row
 // keeps it exactly as built
 buildings.setCityMaterial(CITY_MATERIALS[seed.chunk.id] ?? CITY_MATERIAL_DEFAULT)
+// §50.3: the authored hour decides how much of the frame the windows carry
+const cityHour = CITY_HOUR[seed.chunk.id]
+buildings.setNight(cityHour?.night ?? 0.1, cityHour?.windowWarm ?? '#ffc27a')
 cityRoot.add(buildings.group)
 
 const roads = createRoadMeshes(seed.roads.nodes, seed.roads.edges, substrate.heightAt, HALF_EXTENT)
@@ -114,6 +118,12 @@ cityRoot.add(
     CITY_MATERIALS[seed.chunk.id] ?? CITY_MATERIAL_DEFAULT,
   ),
 )
+
+// §50.2: at a dark hour the pale substrate out-albedos the city standing on
+// it. Applied once, after the ground is built and before anything animated
+// joins the root, so only the plate, its landcover, the roads and the canopy
+// are touched.
+dimGround(cityRoot, cityHour?.groundScale ?? 1)
 
 const construction = new ConstructionOverlay()
 cityRoot.add(construction.scaffold)
@@ -735,6 +745,8 @@ function inputWinsCamera(): void {
 attachRigControls(rig, canvas, inputWinsCamera)
 
 const tiltShift = new TiltShiftPass(innerWidth, innerHeight)
+// §50.2: the grade stands down where the authored hour is night
+tiltShift.night = cityHour?.night ?? 0
 
 // ---------------------------------------------------------------------------
 // chrome (§35): status line, bars, panes
@@ -2104,6 +2116,9 @@ renderer.setAnimationLoop(() => {
   rig.update(dt)
   director.update(dt, liveTick)
 
+  // §50.3: relights run down before the upload, so a converted building's
+  // windows climb it in the same frame the texel change landed
+  buildings.tickLights(dt, clock)
   // §21.6: one upload per rendered frame, however many arrived since the last
   observer.flush()
   agentMarkers.update(withIdentity(), substrate.groundY, dt, clock)

@@ -109,6 +109,7 @@ export class Observer {
       const o = slot * 4
       if (o + 3 >= data.length) continue
       const before = data[o]
+      const divBefore = data[o + 1]
       data[o] = f.texels[i + 1]
       data[o + 1] = f.texels[i + 2]
       data[o + 2] = f.texels[i + 3]
@@ -122,6 +123,10 @@ export class Observer {
         else if (now >= 0.999) this.fallingSlots.delete(slot)
         this.progressBySlot.set(slot, now)
       }
+      // §50.3: a standing building whose class rose was converted, renovated
+      // or expanded in place — instantaneous in the sim, so the client owns
+      // the animation of its windows coming back on.
+      if (data[o + 1] > divBefore && now >= 0.999) this.renderer.data.relight(slot)
     }
     this.renderer.data.markDirty()
 
@@ -202,6 +207,11 @@ export class Observer {
 
   idAt(index: number): string | undefined {
     return this.renderer.idAt(index)
+  }
+
+  /** Where a slot stands, in chunk metres — the shape table already knows. */
+  footprintAt(slot: number): ReadonlyArray<readonly [number, number]> | undefined {
+    return this.shapeBySlot.get(slot)?.footprint
   }
 
   private materialise(spec: MaterialiseSpec): void {

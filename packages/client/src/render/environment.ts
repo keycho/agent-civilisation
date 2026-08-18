@@ -1,4 +1,4 @@
-import { ENVIRONMENT, GOLDEN_HOUR, SUN_BEARING_DEG, VOID } from '@civ/core'
+import { CITY_HOUR, ENVIRONMENT, GOLDEN_HOUR, SUN_BEARING_DEG, VOID } from '@civ/core'
 import {
   NoToneMapping,
   AmbientLight,
@@ -7,8 +7,10 @@ import {
   DirectionalLight,
   Fog,
   HemisphereLight,
+  Material,
   Mesh,
   MeshLambertMaterial,
+  Object3D,
   PCFSoftShadowMap,
   PlaneGeometry,
   Scene,
@@ -39,6 +41,18 @@ export function createEnvironment(scene: Scene, opts: EnvironmentOptions): {
   sky: Mesh
 } {
   /**
+   * §50.2: the hour is per city now. schiedam keeps §48.1's golden reference
+   * exactly; london, paris, tokyo and brooklyn have their own authored rigs.
+   * A chunk with no entry falls back to the global golden hour, so a newly
+   * imported city looks like schiedam until someone authors its hour.
+   */
+  const hour = (opts.chunkId ? CITY_HOUR[opts.chunkId] : undefined) ?? {
+    ...GOLDEN_HOUR,
+    night: 0,
+    windowWarm: '#ffc27a',
+  }
+
+  /**
    * §47.1: the void goes dark. The surround is the terminal's own darkness —
    * background, fog tint and sky dome all in the chrome family — while every
    * LIGHT below keeps its authored colour, so the world's palette is
@@ -56,23 +70,22 @@ export function createEnvironment(scene: Scene, opts: EnvironmentOptions): {
    * shade genuinely cools instead of washing grey.
    */
   const hemi = new HemisphereLight(
-    new Color(GOLDEN_HOUR.fillSky).getHex(),
-    new Color(GOLDEN_HOUR.fillGround).getHex(),
-    GOLDEN_HOUR.fillIntensity,
+    new Color(hour.fillSky).getHex(),
+    new Color(hour.fillGround).getHex(),
+    hour.fillIntensity,
   )
   scene.add(hemi)
-  scene.add(
-    new AmbientLight(new Color(GOLDEN_HOUR.coolAmbient).getHex(), GOLDEN_HOUR.coolAmbientIntensity),
-  )
+  scene.add(new AmbientLight(new Color(hour.coolAmbient).getHex(), hour.coolAmbientIntensity))
 
-  // one fixed golden hour, forever (§48.1): elevation from the constant, the
-  // bearing per chunk so the canal or main street catches the rake
-  const el = (GOLDEN_HOUR.elevationDeg * Math.PI) / 180
+  // one fixed hour per city, forever (§48.1/§50.2): elevation from the
+  // authored rig, the bearing per chunk so the canal or main street catches
+  // whatever rake that hour has to give
+  const el = (hour.elevationDeg * Math.PI) / 180
   const az =
     (((opts.chunkId ? SUN_BEARING_DEG[opts.chunkId] : undefined) ?? GOLDEN_HOUR.bearingDefaultDeg) *
       Math.PI) /
     180
-  const sun = new DirectionalLight(new Color(GOLDEN_HOUR.sun).getHex(), GOLDEN_HOUR.sunIntensity)
+  const sun = new DirectionalLight(new Color(hour.sun).getHex(), hour.sunIntensity)
   sun.position
     .set(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az))
     .multiplyScalar(opts.radius * 2.2)
@@ -90,7 +103,9 @@ export function createEnvironment(scene: Scene, opts: EnvironmentOptions): {
   // (§16.3, pushed by §48.1); normalBias up for the low incidence angle
   sun.shadow.bias = -0.0008
   sun.shadow.normalBias = 0.7
-  sun.shadow.radius = 5.5
+  // §50.2: an overcast or after-sunset key throws no hard shadow — the
+  // penumbra widens and the bias relaxes with the sun's elevation
+  sun.shadow.radius = hour.elevationDeg > 30 ? 8.5 : 5.5
   scene.add(sun)
   scene.add(sun.target)
 
@@ -98,6 +113,38 @@ export function createEnvironment(scene: Scene, opts: EnvironmentOptions): {
   scene.add(sky)
 
   return { sun, sky }
+}
+
+/**
+ * §50.2: dim the ground to the authored hour. Walks whatever was added to the
+ * city root and scales the albedo of everything that is not a building — the
+ * substrate plate, its landcover, the road ribbons, the canopy — plus the
+ * water shader's own two colours. The building material is left alone: the
+ * point of the move is that the city stops losing to the table it sits on.
+ */
+export function dimGround(root: Object3D, scale: number): void {
+  if (scale >= 0.999) return
+  const seen = new Set<Material>()
+  root.traverse((o) => {
+    const mesh = o as Mesh
+    const mat = mesh.material as Material | Material[] | undefined
+    if (!mat) return
+    for (const m of Array.isArray(mat) ? mat : [mat]) {
+      if (seen.has(m)) continue
+      seen.add(m)
+      // the building material carries the city itself, and its own §50.3
+      // night term; the water shader keeps its colours in uniforms
+      if ('civ' in m) continue
+      const sm = m as ShaderMaterial
+      if (sm.uniforms?.uShallow) {
+        ;(sm.uniforms.uShallow.value as Color).multiplyScalar(scale)
+        ;(sm.uniforms.uDeep.value as Color).multiplyScalar(scale)
+        continue
+      }
+      const colour = (m as unknown as { color?: Color }).color
+      if (colour) colour.multiplyScalar(scale)
+    }
+  })
 }
 
 export function configureRenderer(renderer: WebGLRenderer): void {

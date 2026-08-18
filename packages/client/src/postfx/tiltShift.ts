@@ -30,6 +30,9 @@ export class TiltShiftPass {
   private camera = new OrthographicCamera(-1, 1, 1, -1, 0, 1)
   private material: ShaderMaterial
 
+  /** §50.2: how much of this city's authored hour is night */
+  night = 0
+
   /** metres either side of the focal plane that stay sharp */
   focusRange = 130
   maxBlurPx = 9
@@ -59,6 +62,7 @@ export class TiltShiftPass {
         uExposure: { value: 1.06 },
         uContrast: { value: 0.32 },
         uDesat: { value: 0.18 },
+        uNight: { value: 0 },
       },
       vertexShader: /* glsl */ `
         varying vec2 vUv;
@@ -74,6 +78,7 @@ export class TiltShiftPass {
         uniform vec2 uTexel;
         uniform float uNear, uFar, uFocus, uRange, uMaxBlur, uStrength, uVignette;
         uniform float uExposure, uContrast, uDesat;
+        uniform float uNight;
 
         /**
          * §48.2: the one post chain — filmic tonemap (ACES approximation),
@@ -86,7 +91,12 @@ export class TiltShiftPass {
         vec3 grade(vec3 c) {
           vec3 x = c * uExposure;
           vec3 tm = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
-          vec3 sc = mix(tm, tm * tm * (3.0 - 2.0 * tm), uContrast);
+          // §50.2: the s-curve was authored against a daylight plate, where it
+          // buys snap. On an authored night hour it is pure crush — the fabric
+          // is already living in the bottom of the curve, and a contrast pull
+          // there does not deepen the mass, it deletes it. Contrast and the
+          // §47.1 vignette both stand down as the hour goes dark.
+          vec3 sc = mix(tm, tm * tm * (3.0 - 2.0 * tm), uContrast * (1.0 - 0.85 * uNight));
           float lum = dot(sc, vec3(0.299, 0.587, 0.114));
           float mids = smoothstep(0.10, 0.34, lum) * (1.0 - smoothstep(0.62, 0.92, lum));
           float warm = clamp((sc.r - max(sc.g, sc.b)) * 4.0, 0.0, 1.0);
@@ -97,7 +107,7 @@ export class TiltShiftPass {
         // reads as an object sitting in darkness rather than a viewport crop
         vec4 vignetted(vec4 c) {
           float r = length(vUv * 2.0 - 1.0);
-          float v = 1.0 - uVignette * smoothstep(0.62, 1.42, r);
+          float v = 1.0 - uVignette * (1.0 - 0.65 * uNight) * smoothstep(0.62, 1.42, r);
           return vec4(grade(c.rgb) * v, c.a);
         }
 
@@ -163,6 +173,7 @@ export class TiltShiftPass {
     u.uRange.value = this.focusRange
     u.uMaxBlur.value = this.maxBlurPx
     u.uStrength.value = strength
+    u.uNight.value = this.night
 
     renderer.setRenderTarget(this.target)
     renderer.clear()

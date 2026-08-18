@@ -163,6 +163,18 @@ export class BuildingRenderer {
     this.material.civ.uHighlight.value = index
   }
 
+  /** §50.3: how much of the authored hour is night, and what colour the rooms are */
+  setNight(night: number, warm: string): void {
+    this.material.civ.uNight.value = night
+    this.material.civ.uWindowWarm.value.set(warm)
+  }
+
+  /** §50.3: advance the window breath and run the relight pulses down */
+  tickLights(dt: number, time: number): void {
+    this.material.civ.uTime.value = time
+    this.data.decayPulses(dt)
+  }
+
   /** Which building the pointer is over, as a texture index. */
   pick(raycaster: Raycaster): number | null {
     const hits = raycaster.intersectObjects([this.staticMesh, this.dynamicMesh], false)

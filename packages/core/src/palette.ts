@@ -213,6 +213,142 @@ export const GOLDEN_HOUR = {
  * their fabric on the axes, so a near-axial bearing rakes down the primary
  * street; north-cut chunks get a value picked off their dominant frontage.
  */
+/**
+ * §50.2/§50.3: the authored hour, per city. §48.1 fixed one golden hour
+ * globally; character wants five. Each entry is a complete light rig — the
+ * §48.1 fields, plus how much of the hour is night.
+ *
+ * `night` is the weight on §50.3's window light: at schiedam's golden hour it
+ * is nearly nothing (lit windows at 5pm are a mistake), at tokyo's blue
+ * evening and brooklyn's dusk it is the identity of the frame. `windowWarm`
+ * is the colour of the rooms behind the glass.
+ *
+ * Authored once and fixed forever: these are brand frames, not a day cycle
+ * (§15). A chunk with no entry gets GOLDEN_HOUR and no night.
+ */
+export interface CityHour {
+  sun: string
+  sunIntensity: number
+  fillSky: string
+  fillGround: string
+  fillIntensity: number
+  coolAmbient: string
+  coolAmbientIntensity: number
+  elevationDeg: number
+  /** 0 = full daylight, 1 = the window grid carries the frame */
+  night: number
+  windowWarm: string
+  /**
+   * §50.2: how much light the ground still gets at this hour, as a
+   * multiplier on substrate, road and canopy albedo. At golden hour the
+   * raking key models the buildings and they hold their own against a pale
+   * plate; after sunset there is no key, ambient light hits everything
+   * equally, and the pale ground simply out-albedos the city standing on it —
+   * the plate reads as a lit table with dark models on it, the exact inverse
+   * of the reference. Dimming the ground at dark hours puts the buildings
+   * back on top of their own frame.
+   */
+  groundScale?: number
+  /** the void behind the plate, if this hour wants its own */
+  sky?: string
+}
+
+export const CITY_HOUR: Record<string, CityHour> = {
+  // the reference look, as shipped by §48.1 — unchanged, and the control
+  'schiedam-havens': {
+    sun: GOLDEN_HOUR.sun,
+    sunIntensity: GOLDEN_HOUR.sunIntensity,
+    fillSky: GOLDEN_HOUR.fillSky,
+    fillGround: GOLDEN_HOUR.fillGround,
+    fillIntensity: GOLDEN_HOUR.fillIntensity,
+    coolAmbient: GOLDEN_HOUR.coolAmbient,
+    coolAmbientIntensity: GOLDEN_HOUR.coolAmbientIntensity,
+    elevationDeg: GOLDEN_HOUR.elevationDeg,
+    night: 0.1,
+    windowWarm: '#ffc27a',
+  },
+
+  /**
+   * London: overcast silver-grey. The key comes down and cools toward
+   * daylight-through-cloud, the fill comes up until shadows are direction
+   * without contrast, and the sun sits higher because an overcast sky has no
+   * rake to give. Windows carry a little more than schiedam's — a grey
+   * afternoon is when the lights are already on inside.
+   */
+  'london-deptford': {
+    sun: '#d8dee4',
+    sunIntensity: 2.35,
+    fillSky: '#b9c4cd',
+    fillGround: '#8e8d88',
+    fillIntensity: 3.5,
+    coolAmbient: '#6a7684',
+    coolAmbientIntensity: 0.75,
+    elevationDeg: 42,
+    groundScale: 0.92,
+    night: 0.26,
+    windowWarm: '#ffcb8c',
+  },
+
+  /**
+   * Paris: late golden, lower and warmer than schiedam so the mansards throw
+   * their length across the courtyard rings — the roofscape is the subject and
+   * the shadow is what shows it.
+   */
+  'paris-ourcq': {
+    sun: '#ffc98a',
+    sunIntensity: 4.9,
+    fillSky: '#8b9cb8',
+    fillGround: '#94836f',
+    fillIntensity: 1.85,
+    coolAmbient: '#4a5570',
+    coolAmbientIntensity: 0.55,
+    elevationDeg: 16,
+    groundScale: 0.96,
+    night: 0.22,
+    windowWarm: '#ffbf78',
+  },
+
+  /**
+   * Tokyo: blue evening with warm interior spill. The sun is under the
+   * horizon — what is left is sky, so the key is a weak blue wash and the
+   * frame is carried by the windows. This is the hour the shitamachi grain was
+   * imported for: thousands of small lit boxes, close together.
+   */
+  'tokyo-kyojima': {
+    sun: '#8fa8cc',
+    sunIntensity: 2.2,
+    fillSky: '#54709c',
+    fillGround: '#3b4658',
+    fillIntensity: 4.2,
+    coolAmbient: '#3b4c6b',
+    coolAmbientIntensity: 1.8,
+    elevationDeg: 8,
+    groundScale: 0.34,
+    night: 0.92,
+    windowWarm: '#ffb765',
+  },
+
+  /**
+   * Brooklyn: dusk into night. Darker than tokyo's blue hour and warmer in the
+   * glass — the reference frame's dark mass with lit windows. Red hook is low
+   * fabric, so the light that reads is the water reflecting the last of the
+   * sky and the windows against it.
+   */
+  'brooklyn-redhook': {
+    sun: '#b08fa8',
+    sunIntensity: 1.9,
+    fillSky: '#5a6486',
+    fillGround: '#413b38',
+    fillIntensity: 3.6,
+    coolAmbient: '#3a415c',
+    coolAmbientIntensity: 1.7,
+    elevationDeg: 5,
+    groundScale: 0.3,
+    night: 1.0,
+    windowWarm: '#ffc07d',
+  },
+}
+
 export const SUN_BEARING_DEG: Record<string, number> = {
   'schiedam-havens': 197,
   'london-deptford': 218,

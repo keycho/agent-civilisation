@@ -24,10 +24,25 @@ export class BuildingDataTexture {
   readonly height: number
   readonly data: Uint8Array<ArrayBuffer>
   readonly staticData: Uint8Array<ArrayBuffer>
+  /**
+   * §50.3: a third, client-owned texture — nothing on the wire writes it.
+   *
+   *   r  relight    255 -> 0 as a changed building's windows come on, floor
+   *                 by floor. Conversions and renovations are instantaneous
+   *                 in the sim (one tick, no progress ramp), so the lighting
+   *                 animation cannot be read off `progress` the way a new
+   *                 build's can. The client sees the divergence class rise on
+   *                 a standing building and drives the pulse itself.
+   *   gba spare
+   */
+  readonly pulseData: Uint8Array<ArrayBuffer>
   readonly texture: DataTexture
   readonly staticTexture: DataTexture
+  readonly pulseTexture: DataTexture
   private dirty = true
   private staticDirty = true
+  private pulseDirty = true
+  private pulsing = new Set<number>()
 
   constructor(count: number) {
     this.count = count
@@ -36,9 +51,11 @@ export class BuildingDataTexture {
     const n = this.width * this.height * 4
     this.data = new Uint8Array(n)
     this.staticData = new Uint8Array(n)
+    this.pulseData = new Uint8Array(n)
 
     this.texture = makeTexture(this.data, this.width, this.height)
     this.staticTexture = makeTexture(this.staticData, this.width, this.height)
+    this.pulseTexture = makeTexture(this.pulseData, this.width, this.height)
 
     // Every slot starts at progress 0 — "does not exist" — and the caller sets
     // the baseline stock to 1. That default is what makes the year scrub honest:
@@ -95,6 +112,30 @@ export class BuildingDataTexture {
     this.dirty = true
   }
 
+  /** §50.3: this building just changed and should light back up */
+  relight(i: number): void {
+    if (i < 0 || i >= this.count) return
+    this.pulseData[i * 4] = 255
+    this.pulsing.add(i)
+    this.pulseDirty = true
+  }
+
+  /** §50.3: run the relights down. Only touched slots are walked. */
+  decayPulses(dt: number): void {
+    if (this.pulsing.size === 0) return
+    const step = Math.max(1, Math.round((dt / RELIGHT_SECONDS) * 255))
+    for (const i of this.pulsing) {
+      const v = this.pulseData[i * 4] - step
+      if (v <= 0) {
+        this.pulseData[i * 4] = 0
+        this.pulsing.delete(i)
+      } else {
+        this.pulseData[i * 4] = v
+      }
+    }
+    this.pulseDirty = true
+  }
+
   /** Bulk replace for the event scrub — a snapshot is just the mutable half. */
   loadFrame(frame: Uint8Array): void {
     this.data.set(frame.subarray(0, this.data.length))
@@ -114,8 +155,15 @@ export class BuildingDataTexture {
       this.staticTexture.needsUpdate = true
       this.staticDirty = false
     }
+    if (this.pulseDirty) {
+      this.pulseTexture.needsUpdate = true
+      this.pulseDirty = false
+    }
   }
 }
+
+/** how long a changed building takes to come back on, floor by floor */
+const RELIGHT_SECONDS = 2.4
 
 function makeTexture(data: Uint8Array<ArrayBuffer>, w: number, h: number): DataTexture {
   const t = new DataTexture(data, w, h, RGBAFormat, UnsignedByteType)
