@@ -645,6 +645,23 @@ and is the same rule §57.3 gives the map.
   seed 11, 6 sequences   before: 1/6 sequences violate, worst coverage 3.55%
                          after:  0/6, worst 8.88%
 
+Swept, after the fix — six seeds, 42 randomised drag/scroll/rotate sequences,
+about 2,000 frames each asserted for fabric coverage and for target, pitch and
+distance inside the rig's own limits:
+
+| seed | sequences | frames | worst coverage | violating |
+|------|-----------|--------|----------------|-----------|
+| 3  | 8 | 487 | 7.10%  | 0 |
+| 5  | 10 | 562 | 11.83% | 0 |
+| 11 | 6 | 354 | 8.88%  | 0 |
+| 17 | 6 | 270 | 7.10%  | 0 |
+| 23 | 6 | 415 | 7.69%  | 0 |
+| 29 | 6 | 299 | 13.02% | 0 |
+
+Worst instant across all six is 7.10%, comfortably above the 4% floor, and the
+floor itself was set against the older plate-mesh metric — the fabric metric it
+now runs against is the stricter one.
+
 The centre and extent now come from the measured fabric anyway, and the
 §62 clamp carries a centre rather than assuming the origin. It buys a 12-17 m
 correction that nothing visibly depended on — kept because a constant that
