@@ -313,6 +313,16 @@
       }
       #modeFlip.on { opacity: 1; }
 
+      /* §40.2/§40.4: the title card — the world's own caption */
+      #titleCard {
+        position: fixed; z-index: 6; left: 50%; bottom: 84px; transform: translateX(-50%);
+        padding: 4px 14px; border: 1px solid var(--edge); background: var(--pane);
+        color: var(--cream); opacity: 0; transition: opacity 620ms ease;
+        pointer-events: none; white-space: nowrap;
+      }
+      #titleCard.on { opacity: 1; }
+      body.ambient #titleCard.on { opacity: 1; }
+
       /*
        * §35.2 boot: over the world fading in. Two seconds, skippable, once per
        * session.
@@ -373,11 +383,12 @@
         <input id="scrub" type="range" min="0" max="1" step="1" value="1" />
         <output id="scrubOut">live</output>
       </div>
+      <button id="soundBtn" aria-pressed="false" title="the log as sound (§40.5)">sound off</button>
       <button id="focusBtn" aria-pressed="true" title="depth of field: soft or off">focus soft</button>
       <span id="actionsGen" class="dim"></span>
       <span id="watched" class="dim"></span>
       <span class="push"></span>
-      <span id="keys"><b>d</b> diff · <b>f</b> follow · <b>r</b> crew · <b>p</b> pause log · <b>0</b> home · <b>[ ]</b> city · <b>a</b> ambient · <b>?</b> help</span>
+      <span id="keys"><b>d</b> diff · <b>b</b> ghost · <b>t</b> timelapse · <b>f</b> follow · <b>r</b> crew · <b>p</b> pause · <b>0</b> home · <b>[ ]</b> city · <b>a</b> ambient · <b>?</b> help</span>
     </div>
 
     <div class="pane" id="log">
@@ -437,7 +448,8 @@
              they buy, build, demolish and remake it. nobody controls them.</p>
           <p>grey is the world as we left it. colour is theirs.</p>
           <p>click a building for its history. click an agent to follow.<br />
-             press d for the diff against reality.</p>
+             press d for the diff against reality.<br />
+             hold b to see what was here. press t to watch it happen.</p>
           <button id="watchBtn">[watch]</button>
         </div>
       </div>
@@ -450,6 +462,8 @@
             <dt>diff</dt><dd>what the agents changed against upstream. d toggles it.</dd>
             <dt>log</dt><dd>every event since the fork. scrub travels it.</dd>
             <dt>generation</dt><dd>agents retire, heirs continue. the world's clock.</dd>
+            <dt>ghost</dt><dd>hold b: the real city, as we left it, inside the fork.</dd>
+            <dt>timelapse</dt><dd>t: the whole history replayed from here, then back to live.</dd>
           </dl>
           <div class="credits" id="credits"></div>
         </div>
@@ -458,6 +472,10 @@
 
     <div id="chip"><span class="who" id="chipWho"></span><span id="chipWhat"></span></div>
     <div id="modeFlip"></div>
+
+    <!-- §40.2/§40.4: the title card. One line, pane grammar, centred low over
+         the world; it never takes the pointer and never blocks a click. -->
+    <div id="titleCard"><span id="titleCardText"></span></div>
     <div id="miniCard"></div>
 
     <!-- §49: the globe's chrome — crisp screen-space labels, the hover card,

@@ -40,6 +40,8 @@ import {
 import { CameraDirector } from './camera/director.ts'
 import { CameraRig, attachRigControls } from './camera/rig.ts'
 import { TiltShiftPass } from './postfx/tiltShift.ts'
+import { RealityGhost } from './render/ghost.ts'
+import { WorldSound } from './audio/worldSound.ts'
 import {
   AgentMarkers,
   agentColour,
@@ -261,6 +263,10 @@ const connection = new Connection(serverUrl(), {
     scrubbing = true
     scrubOut.value = `gen ${s.generation}`
     setReadouts(s.divergenceIndex, s.generation, true)
+    // §40.2: the answer says how far back the store still goes; the probe
+    // that opened a timelapse turns that into the replay's own range
+    availableOrdinals = s.available
+    timelapseBegin()
   },
   onBuilding(b: BuildingDetail) {
     showInspector(b)
@@ -704,6 +710,166 @@ canvas.addEventListener('click', (e) => {
   if (best) diveTo(best.id)
 })
 
+// ---------------------------------------------------------------------------
+// §40: the spectacle set — ghost, timelapse, milestone cinematics, sound
+// ---------------------------------------------------------------------------
+
+// §40.1: built once from the immutable baseline, held on `b`
+const ghost = new RealityGhost(seed.buildings, substrate.heightAt)
+cityRoot.add(ghost.lines)
+
+const sound = new WorldSound()
+el('soundBtn').addEventListener('click', () => {
+  const on = sound.setEnabled(!sound.on)
+  el('soundBtn').setAttribute('aria-pressed', String(on))
+  el('soundBtn').textContent = on ? 'sound on' : 'sound off'
+})
+
+/** §40.2/§40.4: one line of caption over the world, in the pane grammar */
+let cardTimer: ReturnType<typeof setTimeout> | null = null
+function titleCard(text: string | null, holdMs = 5000): void {
+  const card = el('titleCard')
+  if (cardTimer) clearTimeout(cardTimer)
+  if (!text) {
+    card.classList.remove('on')
+    return
+  }
+  el('titleCardText').textContent = text
+  card.classList.add('on')
+  cardTimer = setTimeout(() => card.classList.remove('on'), holdMs)
+}
+
+/**
+ * Wishlist: where an event fired, relative to what the camera is looking at,
+ * so the ear can place it. Distance is normalised on the orbit radius — an
+ * event at the target is close, one a plate away is far — and the pan is
+ * which side of frame centre it projects to.
+ */
+const soundV = new Vector3()
+function placementOf(x: number, y: number): { distance: number; pan: number } {
+  soundV.copy(pointAt(x, y))
+  const d = soundV.distanceTo(rig.camera.position) / Math.max(1, rig.distance)
+  soundV.project(rig.camera)
+  return { distance: Math.max(0, d - 0.7), pan: Math.max(-1, Math.min(1, soundV.x)) }
+}
+
+/**
+ * §40.4: milestone cinematics. A high-weight event earns an ambient viewer a
+ * slow pullback and a one-line title card; a viewer who is following,
+ * inspecting or driving the camera is never interrupted, which is the whole
+ * rule — the cinematic is what the world does when nobody is asking it for
+ * anything.
+ */
+const CINEMATIC_WEIGHT = 70
+const CINEMATIC_COOLDOWN_S = 45
+let cinematicCooldown = 0
+
+function maybeCinematic(e: EventWire): void {
+  if (e.cinematicWeight < CINEMATIC_WEIGHT) return
+  if (cinematicCooldown > 0 || timelapse) return
+  // active viewers are exempt: following, a sheet open, or hands on the camera
+  if (followId || selectedAgentId !== null || selectedIndex !== null) return
+  if (!document.body.classList.contains('ambient')) return
+  if (mode !== 'city') return
+  cinematicCooldown = CINEMATIC_COOLDOWN_S
+  const line = e.rationale ?? e.type.replace(/_/g, ' ')
+  titleCard(`${line} · gen ${e.generation}`, 5000)
+  sound.swell()
+  // the pullback: hold whatever is on screen and rise off it for five seconds
+  director.takeControl()
+  const at = e.x !== undefined && e.y !== undefined ? pointAt(e.x, e.y) : rig.target.clone()
+  rig.flyTo(at, Math.min(rig.limits.maxDistance, rig.distance * 1.9), {
+    polar: Math.max(rig.limits.minPolar + 0.1, rig.polar - 0.18),
+    duration: 5,
+  })
+  setTimeout(() => {
+    // release: the director resumes its own idle beats from here
+    if (!followId && document.body.classList.contains('ambient')) director.enabled = true
+  }, 5200)
+}
+
+/**
+ * §40.2: timelapse. `t` holds the camera, rewinds as far back as the world
+ * still remembers, and replays from there in about twenty seconds by walking
+ * the scrub the server already answers — then an end card, then live.
+ *
+ * FINDING, and the reason this does not say "rewinds to gen 0": snapshots are
+ * retained for a bounded number of seasons (civ.retention, four by default),
+ * so a world that has run past that no longer has an early snapshot to show.
+ * Asking for one gets `no snapshot at or before that ordinal`. Rather than
+ * replay a span the server cannot answer and call the gaps a style, the walk
+ * is over the ordinals the server SAYS it holds: one scrub is issued first,
+ * its answer carries the available set, and the replay samples that. On a
+ * young world that is the whole history; on an old one it is the retained
+ * window, and the end card says which it was. Replaying from the true fork
+ * needs retention or an oldest-ordinal readout, both server-side, and this
+ * block is client-only.
+ *
+ * The walk is coarse on purpose: sixty steps, not sixty thousand. Each step
+ * is one snapshot question, and the jump between two snapshots is exactly
+ * what a viewer reads as time passing.
+ */
+const TIMELAPSE_S = 20
+const TIMELAPSE_STEPS = 60
+let timelapse: {
+  ordinals: number[]
+  step: number
+  timer: ReturnType<typeof setInterval> | null
+} | null = null
+
+/** the scrub answer hands back every ordinal the store still holds */
+let availableOrdinals: number[] = []
+
+function startTimelapse(): void {
+  if (timelapse || !readouts || readouts.eventCount < 2) return
+  director.takeControl()
+  titleCard(`${placeName(entry.name)} · rewinding`, 2400)
+  // ask once at the newest ordinal — that snapshot certainly exists, and its
+  // answer is what tells us how far back the world goes
+  timelapse = { ordinals: [], step: 0, timer: null }
+  connection.send({ t: 'scrub', ordinal: readouts.eventCount })
+}
+
+/** called from onScrub once the probe lands, with the available set in hand */
+function timelapseBegin(): void {
+  if (!timelapse || timelapse.timer) return
+  const all = availableOrdinals.filter((o) => o > 0).sort((a, b) => a - b)
+  if (all.length < 2) {
+    titleCard(`${placeName(entry.name)} · no history retained to replay`, 3600)
+    timelapse = null
+    setTimeout(() => exitScrub(), 3600)
+    return
+  }
+  // sample the retained set evenly rather than taking its first sixty
+  const pick: number[] = []
+  for (let i = 0; i < TIMELAPSE_STEPS; i++) {
+    pick.push(all[Math.min(all.length - 1, Math.round((i * (all.length - 1)) / (TIMELAPSE_STEPS - 1)))])
+  }
+  timelapse.ordinals = pick
+  timelapse.timer = setInterval(() => {
+    if (!timelapse) return
+    const o = timelapse.ordinals[timelapse.step++]
+    if (o === undefined) {
+      endTimelapse(all[0], all[all.length - 1])
+      return
+    }
+    connection.send({ t: 'scrub', ordinal: o })
+  }, (TIMELAPSE_S * 1000) / TIMELAPSE_STEPS)
+}
+
+function endTimelapse(from: number, to: number): void {
+  if (!timelapse) return
+  if (timelapse.timer) clearInterval(timelapse.timer)
+  timelapse = null
+  const gens = readouts?.generation ?? lastGen
+  const diff = ((readouts?.divergenceIndex ?? 0) * 100).toFixed(0)
+  const span = from <= 1 ? 'from the fork' : `events ${from}–${to}`
+  titleCard(`${placeName(entry.name)} · ${gens} generations · ${diff}% diverged · ${span}`, 4600)
+  sound.swell()
+  // rejoining live is the scrub's own exit: the world is re-asked from scratch
+  setTimeout(() => exitScrub(), 4600)
+}
+
 /**
  * §51.1, absolute rule: any pointer input exits ambient instantly and hands
  * the camera over, with the mode flip announced. Ambient only resumes after
@@ -836,13 +1002,21 @@ function ingest(e: EventWire): void {
   }
   // §46.2/§46.3: the staging endpoints get one frame of punctuation, and the
   // session's own tally advances
+  const placed =
+    e.x !== undefined && e.y !== undefined && mode === 'city' ? placementOf(e.x, e.y) : undefined
   if (e.type === 'construction_completed') {
     watched.built++
     if (e.x !== undefined && e.y !== undefined) punctuation.constructionFlash(e.x, e.y)
+    // §40.5: the only figure in the vocabulary that lifts
+    sound.rise(placed)
   } else if (e.type === 'demolition_completed') {
     watched.demolished++
     if (e.x !== undefined && e.y !== undefined) punctuation.demolitionDust(e.x, e.y)
+    sound.thud(placed)
+  } else {
+    sound.tick(placed)
   }
+  maybeCinematic(e)
   renderWatched()
   // world.log stays the world's; the followed agent narrates in its own pane
   queueFeedRow(e)
@@ -1967,6 +2141,15 @@ function toggleAmbient(): void {
 }
 el('ambient').addEventListener('click', toggleAmbient)
 
+// §40.1: the ghost is a HOLD, so it needs the release too — and a blur, or a
+// tab switch mid-hold would leave the world wearing its own past forever
+addEventListener('keyup', (e) => {
+  if (e.key === 'b') ghost.held = false
+})
+addEventListener('blur', () => {
+  ghost.held = false
+})
+
 addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return
   // the boot's own once-listener consumes the first key as a skip
@@ -1990,6 +2173,13 @@ addEventListener('keydown', (e) => {
       // §51.2: a sticky hold on the stream, for reading rather than watching
       feedPausedByKey = !feedPausedByKey
       renderFeedTail()
+      break
+    case 'b':
+      // §40.1: hold to see what was here
+      if (mode === 'city') ghost.held = true
+      break
+    case 't':
+      if (mode === 'city') startTimelapse()
       break
     case 'v':
       setVerbose(!verboseFeed)
@@ -2131,6 +2321,9 @@ renderer.setAnimationLoop(() => {
   // §50.3: relights run down before the upload, so a converted building's
   // windows climb it in the same frame the texel change landed
   buildings.tickLights(dt, clock)
+  ghost.update(dt)
+  sound.update(dt, readouts?.pace.decisionsPerSecond ?? 0)
+  if (cinematicCooldown > 0) cinematicCooldown -= dt
   // §21.6: one upload per rendered frame, however many arrived since the last
   observer.flush()
   agentMarkers.update(withIdentity(), substrate.groundY, dt, clock)
@@ -2290,6 +2483,10 @@ function civHome(): void {
   get roster() {
     return roster
   },
+  /** §40 hooks for the capture rigs */
+  ghost: () => ({ held: ghost.held, visible: ghost.lines.visible }),
+  timelapseRunning: () => timelapse !== null,
+  retainedOrdinals: () => availableOrdinals.length,
   /** DOF r2: what the focal band is doing right now, for the capture rigs */
   dof: () => ({
     range: tiltShift.focusRange,
