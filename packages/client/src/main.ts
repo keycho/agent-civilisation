@@ -53,6 +53,7 @@ import { configureRenderer, createEnvironment, dimGround } from './render/enviro
 import { createLandmarkLines } from './render/landmarkLines.ts'
 import { createRoadMeshes } from './render/roadMesh.ts'
 import { StreetLights } from './render/streetLights.ts'
+import { Traffic } from './render/traffic.ts'
 import { ConstructionOverlay } from './render/scaffold.ts'
 import { createSubstrateView } from './render/substrateMesh.ts'
 import { createTrees } from './render/trees.ts'
@@ -144,6 +145,20 @@ const streetLights = new StreetLights(
   },
 )
 cityRoot.add(streetLights.group)
+
+/**
+ * §56.3: traffic as light — the same reasoning about dimGround applies, and
+ * the same authored hour decides whether headlights belong in the frame.
+ */
+const traffic = new Traffic(
+  seed.roads.nodes,
+  seed.roads.edges,
+  seed.substrate.surfaces,
+  substrate.heightAt,
+  HALF_EXTENT,
+  { night: cityHour?.night ?? 0 },
+)
+cityRoot.add(traffic.group)
 
 const construction = new ConstructionOverlay()
 cityRoot.add(construction.scaffold)
@@ -2371,6 +2386,7 @@ renderer.setAnimationLoop(() => {
   agentMarkers.update(withIdentity(), substrate.groundY, dt, t)
   construction.update(observer.sites(), t)
   streetLights.update(rig.distance)
+  traffic.update(t, readouts?.pace.decisionsPerSecond ?? 0)
   punctuation.update(dt)
   updateTethers()
   updateChip()
@@ -2621,6 +2637,11 @@ function civHome(): void {
   /** §56.2 capture switch: isolate the lamps from everything else in frame */
   setLamps(on: boolean) {
     streetLights.on = on
+  },
+  /** §56.3: how many travelling lights this chunk runs, and how many are boats */
+  trafficCount: () => ({ total: traffic.count, boats: traffic.boatCount }),
+  setTraffic(on: boolean) {
+    traffic.on = on
   },
 }
 

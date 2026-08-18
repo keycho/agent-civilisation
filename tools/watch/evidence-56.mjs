@@ -102,12 +102,14 @@ for (const chunk of CHUNKS) {
   await page.evaluate((off) => {
     if (off.includes('lamps')) window.civ.setLamps(false)
     if (off.includes('bloom')) window.civ.bloom.override(0)
+    if (off.includes('traffic')) window.civ.setTraffic(false)
     window.civ.freezeClock(120)
     window.civ.rig.settle()
   }, [...OFF])
   await page.waitForTimeout(1400)
   await page.screenshot({ path: `${OUT}/${chunk}.png` })
-  console.log(`${chunk}: ${n} owned -> ${OUT}/${chunk}.png`)
+  const tc = await page.evaluate(() => window.civ.trafficCount())
+  console.log(`${chunk}: ${n} owned, traffic ${tc.total} (${tc.boats} boats) -> ${OUT}/${chunk}.png`)
   await page.close()
 }
 await browser.close()
