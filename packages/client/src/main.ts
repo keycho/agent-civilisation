@@ -439,13 +439,40 @@ rig.limits.panRadius = radius * 1.1
  * spread term stays general for any azimuth a shot lands on.
  */
 const CITY_AZIMUTH = 0
-function frameThePlate(aspect: number, azimuth = CITY_AZIMUTH): number {
+/** the pitch every framed shot lands on; the framing must be derived AT it */
+const CITY_POLAR = 0.66
+/** §57.4: the plate is an object in a frame, not a texture bled to the edges */
+const FRAME_MARGIN = 1.22
+
+/**
+ * §57.4: the plate is a SQUARE SEEN AT AN ANGLE, and the old derivation only
+ * accounted for its width.
+ *
+ * `widthM / aspect` frames the plate's width across the frame's width, which
+ * is right for a top-down view and wrong for every view we actually use. At
+ * the framed pitch the camera sits 52 degrees above the horizon, so the
+ * plate's DEPTH — the same 604 m, running away from the camera — projects to
+ * 604 * cos(polar) = 477 m of vertical screen extent, while the old framing
+ * only ever supplied 604 / 1.6 = 377 m of it. The plate overflowed the frame
+ * vertically by 27% at the very distance meant to frame it, and the maximum
+ * zoom-out sat only 25% beyond that: which is why every production frame shows
+ * the plate cropped or shoved into a corner with void where the city should be.
+ *
+ * Framing now takes whichever of the two extents needs more room, at the pitch
+ * the shot will actually use, plus a margin so the plate reads as an object
+ * sitting in the frame.
+ */
+function frameThePlate(aspect: number, azimuth = CITY_AZIMUTH, polar = CITY_POLAR): number {
   const spread = Math.abs(Math.cos(azimuth)) + Math.abs(Math.sin(azimuth))
   const widthM = 2 * HALF_EXTENT * spread
-  return rig.distanceToFrame(widthM / aspect)
+  const depthOnScreenM = widthM * Math.cos(polar)
+  const needVertical = Math.max(depthOnScreenM, widthM / aspect) * FRAME_MARGIN
+  return rig.distanceToFrame(needVertical)
 }
 const CITY_FRAMING = frameThePlate(innerWidth / innerHeight)
-rig.limits.maxDistance = CITY_FRAMING * 1.25
+// §57.4: free zoom-out has to REACH the home framing and keep going a little,
+// or the last thing a viewer can do before the map takes over is still a crop
+rig.limits.maxDistance = CITY_FRAMING * 1.35
 rig.distance = CITY_FRAMING
 rig.target.set(0, substrate.groundY, 0)
 
@@ -465,13 +492,13 @@ if (arriving) {
   rig.update(0.05)
   rig.flyTo(new Vector3(0, substrate.groundY, 0), CITY_FRAMING, {
     azimuth: CITY_AZIMUTH,
-    polar: 0.66,
+    polar: CITY_POLAR,
     duration: 2.8,
   })
 } else {
   rig.flyTo(new Vector3(0, substrate.groundY, 0), CITY_FRAMING, {
     azimuth: CITY_AZIMUTH,
-    polar: 0.66,
+    polar: CITY_POLAR,
     duration: 0.01,
   })
 }
@@ -588,7 +615,7 @@ function toCity(): void {
   globe.group.visible = false
   cityRoot.visible = true
   rig.limits.minDistance = 40
-  rig.limits.maxDistance = frameThePlate(innerWidth / innerHeight) * 1.25
+  rig.limits.maxDistance = frameThePlate(innerWidth / innerHeight) * 1.35
   rig.limits.panRadius = radius * 1.1
   rig.flyTo(new Vector3(0, substrate.groundY, 0), CITY_FRAMING * 1.55, {
     azimuth: CITY_AZIMUTH + 0.7,
@@ -598,7 +625,7 @@ function toCity(): void {
   rig.update(0.05)
   rig.flyTo(new Vector3(0, substrate.groundY, 0), CITY_FRAMING, {
     azimuth: CITY_AZIMUTH,
-    polar: 0.66,
+    polar: CITY_POLAR,
     duration: 2.6,
   })
   setTimeout(() => {
@@ -943,6 +970,23 @@ function endTimelapse(from: number, to: number): void {
 let ambientWasOn = false
 let ambientResumeTimer: ReturnType<typeof setTimeout> | null = null
 
+/**
+ * §57.4: the ambient button states which mode the camera is IN, not what
+ * pressing it would do.
+ *
+ * The operator read "ambient" in the corner of every production frame as
+ * "ambient is active" and concluded the camera was being stolen. The label
+ * said "ambient" whether ambient was on or off — the only difference was the
+ * amber tint aria-pressed gives it, which is not something a stranger decodes
+ * mid-drag. The bottom bar's own buttons already state their state ("sound
+ * off", "focus soft"); this one now matches them.
+ */
+function setAmbientButton(on: boolean): void {
+  const b = el('ambient')
+  b.setAttribute('aria-pressed', String(on))
+  b.textContent = on ? 'ambient on' : 'ambient off'
+}
+
 function announceMode(text: string): void {
   const m = el('modeFlip')
   m.textContent = text
@@ -955,14 +999,14 @@ function inputWinsCamera(): void {
   if (document.body.classList.contains('ambient')) {
     ambientWasOn = true
     document.body.classList.remove('ambient')
-    el('ambient').setAttribute('aria-pressed', 'false')
+    setAmbientButton(false)
     announceMode('manual')
   }
   if (ambientResumeTimer) clearTimeout(ambientResumeTimer)
   ambientResumeTimer = setTimeout(() => {
     if (ambientWasOn && !followId && !document.body.classList.contains('ambient')) {
       document.body.classList.add('ambient')
-      el('ambient').setAttribute('aria-pressed', 'true')
+      setAmbientButton(true)
       director.enabled = true
       announceMode('ambient')
     }
@@ -1814,7 +1858,7 @@ function follow(id: string | null): void {
     // re-arms the director, whose idle-resume rules take it from there
     director.enabled = false
     document.body.classList.remove('ambient')
-    el('ambient').setAttribute('aria-pressed', 'false')
+    setAmbientButton(false)
   } else {
     director.enabled = true
   }
@@ -2352,14 +2396,14 @@ function toggleAmbient(): void {
   // button itself reachable, so it is exempt — leaving it running must not mean
   // leaving it with no way out.
   document.body.classList.toggle('ambient', on)
-  el('ambient').setAttribute('aria-pressed', String(on))
+  setAmbientButton(on)
   if (on) {
     // §46.4: an ambient return presents the framed view before the director
     // resumes its cuts — the same rule as first load
     director.enabled = false
     rig.flyTo(new Vector3(0, substrate.groundY, 0), frameThePlate(innerWidth / innerHeight), {
       azimuth: CITY_AZIMUTH,
-      polar: 0.66,
+      polar: CITY_POLAR,
       duration: 1.6,
     })
     setTimeout(() => {
@@ -2451,7 +2495,7 @@ function resize(): void {
   // Clamping into the new limit is enough on its own: a viewer who has zoomed
   // in is already below the maximum and is left alone, and one sitting at city
   // framing lands on the new city framing.
-  rig.limits.maxDistance = frameThePlate(aspect) * 1.25
+  rig.limits.maxDistance = frameThePlate(aspect) * 1.35
   rig.distance = Math.min(rig.distance, rig.limits.maxDistance)
   const pr = renderer.getPixelRatio()
   tiltShift.setSize(Math.floor(innerWidth * pr), Math.floor(innerHeight * pr))
@@ -2764,7 +2808,7 @@ function civHome(): void {
   director.takeControl()
   rig.flyTo(new Vector3(0, substrate.groundY, 0), frameThePlate(innerWidth / innerHeight), {
     azimuth: CITY_AZIMUTH,
-    polar: 0.66,
+    polar: CITY_POLAR,
     duration: 1.2,
   })
 }
@@ -2870,6 +2914,10 @@ function civHome(): void {
       })
     },
   },
+  /** §57.4: the plate's own extent, so a framing check can project its corners */
+  halfExtent: HALF_EXTENT,
+  groundY: substrate.groundY,
+  Vector3,
   /** §57: the scene root, for locating a stray object by switching it off */
   cityRoot,
   /** §57: presence and the site index, for measuring what the tethers connect */
