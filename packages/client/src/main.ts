@@ -54,6 +54,7 @@ import { createLandmarkLines } from './render/landmarkLines.ts'
 import { createRoadMeshes } from './render/roadMesh.ts'
 import { StreetLights } from './render/streetLights.ts'
 import { Traffic } from './render/traffic.ts'
+import { createStreetTrees } from './render/streetTrees.ts'
 import { ConstructionOverlay } from './render/scaffold.ts'
 import { createSubstrateView } from './render/substrateMesh.ts'
 import { createTrees } from './render/trees.ts'
@@ -159,6 +160,22 @@ const traffic = new Traffic(
   { night: cityHour?.night ?? 0 },
 )
 cityRoot.add(traffic.group)
+
+/**
+ * §56.3: street trees. After dimGround like the lights, for the same reason —
+ * they carry their own authored dusk value rather than being multiplied to
+ * black beside a lamp.
+ */
+const streetTrees = createStreetTrees(
+  seed.roads.nodes,
+  seed.roads.edges,
+  seed.buildings,
+  substrate.heightAt,
+  HALF_EXTENT,
+  CITY_MATERIALS[seed.chunk.id] ?? CITY_MATERIAL_DEFAULT,
+  cityHour?.night ?? 0,
+)
+cityRoot.add(streetTrees)
 
 const construction = new ConstructionOverlay()
 cityRoot.add(construction.scaffold)
@@ -2637,6 +2654,11 @@ function civHome(): void {
   /** §56.2 capture switch: isolate the lamps from everything else in frame */
   setLamps(on: boolean) {
     streetLights.on = on
+  },
+  /** §56.3: how many street trees this chunk's frontages earned */
+  streetTreeCount: () => (streetTrees.userData.count as number) ?? 0,
+  setStreetTrees(on: boolean) {
+    streetTrees.visible = on
   },
   /** §56.3: how many travelling lights this chunk runs, and how many are boats */
   trafficCount: () => ({ total: traffic.count, boats: traffic.boatCount }),
