@@ -1,0 +1,40 @@
+{
+  "queued": "empty",
+  "landedOnTop": true,
+  "row": {
+    "text": "the gasholder comes down",
+    "cls": "e high place monument"
+  },
+  "state": {
+    "card": "the pumping station is coming down · gen 2",
+    "ghost": {
+      "held": true,
+      "visible": true
+    }
+  },
+  "camA": {
+    "azimuth": 0,
+    "polar": 0.66,
+    "distance": 2366
+  },
+  "camC0": {
+    "azimuth": 0,
+    "polar": 0.66,
+    "distance": 2366
+  },
+  "camC1": {
+    "azimuth": 0,
+    "polar": 0.48,
+    "distance": 1301
+  },
+  "camD0": {
+    "azimuth": 0,
+    "polar": 0.48,
+    "distance": 260
+  },
+  "camD1": {
+    "azimuth": 0,
+    "polar": 0.48,
+    "distance": 260
+  }
+}
