@@ -451,6 +451,61 @@ watch: if accumulation ever reaches vlaardingen's slabs, the ceiling has
 closed everywhere free; until then syndication stays a live later
 mechanism decision, still unbuilt.
 
+## §13 — §57.1 pace, measured on production before setting it
+
+The block premise: "a demolition that takes 200 ticks completes in under a
+second of wall time... measure first, then set it. If it is under ~20 seconds,
+the pace is the product bug."
+
+Measured against live production (`tools/watch/pace-measure.mjs`, THROUGHPUT
+index 2 = `normal`, 14 decisions/s target), 240 s per chunk and a 90 s repeat:
+
+| chunk    | construction start→complete | demolition start→complete | events/s | notable/s (w>=20) |
+|----------|-----------------------------|---------------------------|----------|-------------------|
+| tokyo    | n=59 median 40.9s (p10 30.5, p90 55.8) | n=252 median 12.9s | 16.22 | 11.97 |
+| schiedam | n=7  median 36.7s (p10 28.7, p90 51.2) | n=42  median 12.1s |  11.85 |  9.37 |
+| maasland | —                            | n=7 median 10.6s          |  0.69 |  0.51 |
+| brooklyn | —                            | n=2 median 16.0s          |  1.61 |  1.10 |
+
+Against §57.1's four targets:
+
+- construction 30-60 s wall clock — **already in target** (36.7-40.9 s median)
+- demolition 10-20 s — **already in target** (10.6-16.0 s median)
+- notable events 1-3/s chunk-wide — **3.5-5x over** in the two busy chunks
+- a generation in minutes — generations 1-3 after 6.5 h uptime, so in *hours*
+
+So the premise is not what the world is doing. The visual events a human is
+meant to watch are already paced for watching; a demolition takes twelve to
+sixteen seconds, not under one. **THROUGHPUT is not changed.**
+
+The finding that matters is that the four targets are **jointly unsatisfiable
+by THROUGHPUT alone**, and the arithmetic says so directly: bringing 10.4
+notable/s down to 3/s is a 3.5x slowdown, which drags the 39 s construction to
+~136 s — more than double the 60 s ceiling the same section sets. One dial
+cannot land both. Pace governs how long an event takes; it cannot govern what
+fraction of events are worth showing.
+
+That second quantity is measurable too, and it is the actual defect. Weight
+distribution over 1166 tokyo events:
+
+    >=10  100%    >=20  80%    >=30  43%    >=50  26%    >=70  18%    >=90  8%    max 96
+
+"Notable at weight >= 20" therefore selects **80% of all traffic**, which is not
+a selection. The mix explains it: building_expanded 28%, building_converted
+22%, parcels_assembled 11%, building_renovated 9%, district_formed 8%. Six in
+ten events are the routine tidying §60(d) names.
+
+§60(d)'s own list — assemblies, demolitions, developments, landmark actions,
+deaths, migrations, ignitions — is about 22-25% of this mix, which puts the
+default feed at **~3.1 notable/s**, landing on the 1-3/s target almost exactly.
+The spec already contains the correct mechanism for the one target that is
+missed; it is a selection change, not a pace change.
+
+Caveats stated: this is a 6.5-hour-old world at generations 1-3, and the pace
+varies 23x across chunks (tokyo 16.2 events/s against maasland 0.69), so some
+chunks have gone quiet while others churn. The construction estimate rests on
+n=59 for tokyo; the schiedam construction sample is thin (n=7) and agrees.
+
 ## Carried, not fixed
 
 - ~~UK tier-1 valuations~~ — done (build 10, §33.4): HM Land Registry UK HPI
