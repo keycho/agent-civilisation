@@ -282,6 +282,23 @@ const agentSite = new Map<string, [number, number]>()
 
 let readouts: Readouts | null = null
 let durability: Hello['durability'] = 'memory'
+/**
+ * §64.2: the age of this world, taken once from `hello` and counted forward
+ * locally. Since GENESIS — a deploy restarts the process and a season turn
+ * rebuilds the world, and an `up 6d` that resets on either would be a false
+ * statement about the thing the status line describes.
+ */
+let genesisMs = 0
+
+/** `up 6d`, `up 14h`, `up 3m` — one unit, the largest that is not zero */
+function sinceGenesis(): string {
+  if (!genesisMs) return 'up —'
+  const s = Math.max(0, (Date.now() - genesisMs) / 1000)
+  if (s >= 86_400) return `up ${Math.floor(s / 86_400)}d`
+  if (s >= 3_600) return `up ${Math.floor(s / 3_600)}h`
+  if (s >= 60) return `up ${Math.floor(s / 60)}m`
+  return `up ${Math.floor(s)}s`
+}
 let scrubbing = false
 let liveTick = 0
 let wrongWorld = false
@@ -304,6 +321,8 @@ const connection = new Connection(serverUrl(), {
     observer.applyHello(h)
     for (const e of h.events) ingest(e)
     durability = h.durability
+    genesisMs = Date.now() - (h.uptimeSeconds ?? 0) * 1000
+    el('uptime').textContent = sinceGenesis()
     acceptReadouts(h.readouts)
     bootAttached()
   },
@@ -1138,8 +1157,9 @@ scrub.addEventListener('input', () => {
     return
   }
   // §36.4: scrubbing the log opens the changelog rail alongside
-  renderChangelog()
-  el('changelog').classList.add('on')
+  // §36.4: scrubbing the log opens the changelog rail alongside — through the
+  // same switch every other surface uses (§64.1)
+  toggleSurface('changelog', true)
   connection.send({ t: 'scrub', ordinal })
 })
 
@@ -1337,7 +1357,7 @@ function renderNarrative(): void {
   // do. The window is honest about which it is.
   const watchedMs = performance.now() - sessionStartedAt
   const label = watchedMs < 55 * 60 * 1000 ? 'since you arrived' : 'in the last hour'
-  el('digest').innerHTML = d.length
+  el('digestBody').innerHTML = d.length
     ? `${label}: ${d.map((x) => escapeHtml(x.label)).join(' · ')}`
     : ''
 }
@@ -1491,6 +1511,12 @@ function queueFeedRow(e: EventWire): void {
   }
   renderFeedTail()
 }
+
+// §64.2: the status line's one moving part, ticked here rather than in the
+// render loop — it changes at most once a minute and must not cost a frame
+setInterval(() => {
+  el('uptime').textContent = sinceGenesis()
+}, 30_000)
 
 setInterval(() => {
   if (!feedHeld()) {
@@ -2001,7 +2027,6 @@ function updateFollow(dt: number): void {
 }
 
 // crew (§36.2): the chunk's most active agents this generation
-const crewPane = el('crew')
 let crewTimer = 0
 
 /** §51.3: status at a glance, in one glyph */
@@ -2168,10 +2193,48 @@ el('crewList').addEventListener('mouseleave', () => {
   pixelAgents.highlight = null
 })
 
+/**
+ * §64.1: every surface that is not the status line, the world or the log is a
+ * body class, toggled by one key and cleared by Escape.
+ *
+ * A class per surface rather than a pane reference per surface, because §64.4's
+ * ordering principle only works if adding a surface is as cheap as hiding one —
+ * and because Escape has to close everything without being told what is open.
+ */
+const SURFACES = {
+  narrative: 'show-narrative',
+  crew: 'show-crew',
+  changelog: 'show-changelog',
+  digest: 'show-digest',
+} as const
+type Surface = keyof typeof SURFACES
+
+function surfaceOn(name: Surface): boolean {
+  return document.body.classList.contains(SURFACES[name])
+}
+
+function toggleSurface(name: Surface, force?: boolean): void {
+  const on = force ?? !surfaceOn(name)
+  document.body.classList.toggle(SURFACES[name], on)
+  // a surface that opens empty is worse than one that is closed: the changelog
+  // used to be populated only by the §36.4 scrub, because it was always on
+  // screen and nobody had to ask it for anything
+  if (on && name === 'crew') renderCrew()
+  if (on && name === 'changelog') renderChangelog()
+  if (on && name === 'narrative') renderNarrative()
+}
+
+/** §64.1: Escape puts the screen back to the default view, whatever is open */
+function closeEverything(): void {
+  for (const cls of Object.values(SURFACES)) document.body.classList.remove(cls)
+  select(null)
+  chunksPane.classList.remove('on')
+  el('help').classList.remove('on')
+  el('explainer').style.display = 'none'
+}
+
 function toggleCrew(force?: boolean): void {
-  const on = force ?? !crewPane.classList.contains('on')
-  crewPane.classList.toggle('on', on)
-  if (on) renderCrew()
+  toggleSurface('crew', force)
 }
 el('crewClose').addEventListener('click', () => toggleCrew(false))
 // §51.3: the same pane the `r` key opens, reachable by anyone who never
@@ -2672,8 +2735,32 @@ addEventListener('keydown', (e) => {
     case 'v':
       setVerbose(!verboseFeed)
       break
+    /**
+     * §64.1: the surfaces. Each opens on its key and closes on the same key —
+     * which is the whole grammar, and the reason none of them needs to be
+     * advertised on screen.
+     */
     case 'r':
       toggleCrew()
+      break
+    case 'n':
+      toggleSurface('narrative')
+      break
+    case 'c':
+      toggleSurface('changelog')
+      break
+    case 'g':
+      toggleSurface('digest')
+      break
+    case 'm':
+      if (mode === 'city') toGlobe()
+      else diveTo(entry.id)
+      break
+    case 's':
+      el('soundBtn').click()
+      break
+    case 'o':
+      el('focusBtn').click()
       break
     case '[':
       cycleChunk(-1)
@@ -2690,8 +2777,7 @@ addEventListener('keydown', (e) => {
       else frameGlobeHome(1.6)
       break
     case 'Escape':
-      select(null)
-      chunksPane.classList.remove('on')
+      closeEverything()
       break
   }
 })
@@ -2982,7 +3068,7 @@ renderer.setAnimationLoop(() => {
   crewTimer += dt
   if (crewTimer > 1.5) {
     crewTimer = 0
-    if (crewPane.classList.contains('on')) renderCrew()
+    if (surfaceOn('crew')) renderCrew()
   }
 
   if (scene.fog && 'near' in scene.fog) {

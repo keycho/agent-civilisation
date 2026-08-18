@@ -187,6 +187,9 @@ async function constructHosts(): Promise<void> {
     const host: ChunkHost = { id, seed, world: null as unknown as WorldService, sockets: new Set() }
     host.world = newSeason(host, 1)
     hosts.set(id, host)
+    // §64.2: claim this chunk's genesis if nobody has, then read back whatever
+    // was recorded — which on every boot after the first is the original
+    void store.loadGenesis(id)
     console.log(
       `# ${seed.chunk.name}: ${seed.buildings.length} baseline buildings (${((Date.now() - t0) / 1000).toFixed(1)}s)`,
     )

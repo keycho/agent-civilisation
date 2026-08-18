@@ -1,0 +1,82 @@
+{
+  "chunk": "schiedam-havens",
+  "onScreen": [
+    "barBottom",
+    "barTop",
+    "log"
+  ],
+  "status": {
+    "line": "terrafork · havens, schiedam · gen 2 · live · observer · up 8m ? ambient off",
+    "observer": "observer",
+    "uptime": "up 8m",
+    "place": "havens, schiedam",
+    "gen": "gen 2",
+    "link": "live"
+  },
+  "log": {
+    "width": 430,
+    "rows": 12,
+    "longest": 50,
+    "sample": "Edith demolition comp",
+    "wrapped": 1
+  },
+  "grammar": [
+    {
+      "key": "n",
+      "appeared": true,
+      "gone": true
+    },
+    {
+      "key": "r",
+      "appeared": true,
+      "gone": true
+    },
+    {
+      "key": "c",
+      "appeared": true,
+      "gone": true
+    },
+    {
+      "key": "g",
+      "appeared": true,
+      "gone": true
+    }
+  ],
+  "bottom": {
+    "text": "diff as built log live ? keys",
+    "controls": 2,
+    "advertised": 1
+  },
+  "results": [
+    {
+      "name": "§64.1 default view is three things",
+      "ok": true,
+      "detail": "barBottom, barTop, log"
+    },
+    {
+      "name": "§64.2 status line states the constraint",
+      "ok": true,
+      "detail": "\"terrafork · havens, schiedam · gen 2 · live · observer · up 8m ? ambient off\""
+    },
+    {
+      "name": "§64.1 the log is the star, not a sidebar",
+      "ok": true,
+      "detail": "430px, 12 rows, longest 50 chars — \"Edith demolition comp\""
+    },
+    {
+      "name": "§64.1 one key opens, the same key closes",
+      "ok": true,
+      "detail": "n:open/close r:open/close c:open/close g:open/close"
+    },
+    {
+      "name": "§64.1 escape restores the default view",
+      "ok": true,
+      "detail": "8 panes open -> barBottom, barTop, log"
+    },
+    {
+      "name": "§64.3 the legend is behind `?`",
+      "ok": true,
+      "detail": "2 controls, 1 shortcuts advertised — \"diff as built log live ? keys\""
+    }
+  ]
+}

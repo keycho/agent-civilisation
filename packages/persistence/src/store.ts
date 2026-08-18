@@ -59,4 +59,16 @@ export interface WorldStore {
   snapshotOrdinals(chunkId: string): number[]
 
   eventCount(): number
+
+  /**
+   * §64.2: when this chunk's world first existed, in epoch milliseconds.
+   *
+   * Not process start — a deploy restarts the process and a season turn
+   * rebuilds the world, and a status line that resets to `up 0d` on either is
+   * telling the viewer something false about the thing it is describing.
+   * Recorded once, on the first boot that ever touched this chunk, and read
+   * back forever after. A store with no durable place to put it answers with
+   * the moment it was constructed, which is the truth available to it.
+   */
+  genesisAt(chunkId: string): number
 }

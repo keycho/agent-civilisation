@@ -166,6 +166,12 @@ export interface Hello {
   viewers: number
   /** what the store is actually writing to, so the client can say so */
   durability: 'postgres' | 'memory'
+  /**
+   * §64.2: how long this chunk's world has existed, in seconds since its
+   * genesis — not since the process started. Sent once, on hello; the client
+   * counts forward from it rather than being told again every frame.
+   */
+  uptimeSeconds: number
 }
 
 /** §20.4: the answer to a scrub. The texture at an ordinal, from the store. */

@@ -343,6 +343,8 @@ export class WorldService {
       events: recent.map((e) => eventWire(this.sim, e)),
       viewers,
       durability: this.store.durability,
+      // §64.2: since genesis, not since this process started
+      uptimeSeconds: Math.max(0, Math.round((Date.now() - this.store.genesisAt(this.chunkId)) / 1000)),
     }
   }
 

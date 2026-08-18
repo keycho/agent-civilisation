@@ -95,6 +95,16 @@ export class MemoryStore implements WorldStore {
   eventCount(): number {
     return this.log.length
   }
+
+  /**
+   * §64.2: an in-memory store has no genesis to remember, so the truth
+   * available to it is when it was made. Tests and the harness see a world
+   * that is as old as their process, which is exactly right for them.
+   */
+  private readonly bornAt = Date.now()
+  genesisAt(_chunkId: string): number {
+    return this.bornAt
+  }
 }
 
 function push<T>(m: Map<string, T[]>, k: string, v: T): void {

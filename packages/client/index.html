@@ -130,7 +130,12 @@
       /* the feed takes what is left and scrolls; nothing else may grow into it */
       .rail .pane.grow { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 60px; }
       .rail .pane.grow .body { flex: 1 1 auto; overflow-y: auto; }
-      #railRight { right: 12px; width: 336px; align-items: stretch; }
+      /*
+       * §64.1: the log is the star, not a sidebar. It takes real width, holds
+       * full sentences without wrapping every clause, and is the only pane on
+       * screen when nothing has been asked for.
+       */
+      #railRight { right: 12px; width: 430px; align-items: stretch; }
       /* §59.2: wider, and resizable by the viewer */
       #railLeft {
         left: 12px; width: 380px; align-items: stretch;
@@ -174,7 +179,6 @@
       #stories .s .prog i { display: block; height: 2px; background: var(--amber); }
 
       /* §60(c): the digest — a rolling window, in the bottom bar */
-      #digest { color: var(--dim); max-width: 52ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       #digest b { color: var(--cream); font-weight: 400; }
 
       /* §59.3: the rail owns position and height now; the feed is the pane
@@ -234,6 +238,33 @@
         text-shadow: 0 0 3px #000, 0 0 6px #000;
       }
       #siteMarks .m.live { color: var(--amber); opacity: 0.72; }
+
+      /*
+       * §64.1: THE DEFAULTS CHANGE. Nothing here is deleted — every pane that
+       * was present is now available, one keystroke away, and closed until
+       * asked for. §64.4's ordering principle is the reason: when a frame reads
+       * as boring the first question is what can be removed, and a product with
+       * thirty surfaces has to earn its clarity by hiding what it built.
+       *
+       * The class goes on <body> rather than on each pane so a single keydown
+       * flips one flag, and so `Escape` can clear the lot without knowing what
+       * is open.
+       */
+      body:not(.show-narrative) #headline,
+      body:not(.show-narrative) #stories,
+      body:not(.show-changelog) #changelog,
+      body:not(.show-crew) #crew,
+      body:not(.show-digest) #digest { display: none; }
+      /* a rail with nothing in it must not eat the pointer over the world */
+      body:not(.show-crew):not(.show-changelog) #railLeft { display: none; }
+
+      /* §64.3: the full legend lives in `?` now */
+      #readouts { margin-top: 8px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+      #readouts .sep { color: var(--dimmer); }
+      #digest .body { color: var(--dim); max-width: 46ch; }
+      #legend { margin-top: 9px; border-top: 1px solid var(--edge); padding-top: 7px; }
+      #legend .k { display: flex; gap: 8px; padding: 1px 0; color: var(--dim); }
+      #legend .k b { flex: 0 0 42px; color: var(--amber); font-weight: 400; }
 
       /* §46.2: rows that know where they happened invite the click */
       #log .e.place { cursor: pointer; }
@@ -323,8 +354,12 @@
        * full. Two lines per agent, never ellipsised: a plan cut off at the pane
        * edge is exactly what made the old pane unable to answer "who is this".
        */
-      #crew { display: none; }
-      #crew.on { display: block; }
+      /*
+       * §64.1: one switch per surface. `#crew.on` and `#changelog.on` were a
+       * second gate on top of the body class, so a surface could be asked for
+       * and still not appear — which is exactly what happened to the changelog.
+       * The body class is now the only thing that decides.
+       */
       #crew .body { max-height: calc(100vh - 170px); overflow-y: auto; }
       #crew .grp {
         display: flex; gap: 6px; align-items: baseline;
@@ -390,8 +425,6 @@
       #chunks .c .where { margin-left: auto; color: var(--dim); }
       #chunks .c:hover .where, #chunks .c.here .where { color: var(--amber); }
 
-      #changelog { display: none; }
-      #changelog.on { display: block; }
       #changelog .body { max-height: 40vh; overflow-y: auto; }
       #changelog .g { margin-bottom: 7px; }
       #changelog .g .hd { color: var(--dim); }
@@ -487,23 +520,34 @@
   <body>
     <div id="boot"><div class="lines" id="bootLines"><div>mounting /earth</div></div></div>
 
+    <!--
+      §64.2: the status line states the constraint. Four facts, not eight
+      numbers: what this is, where, how far it has got, and — the load-bearing
+      one — that no message a viewer sends can advance it. `observer` is not a
+      disclaimer, it is the appeal. The money figure arrives with §55's
+      inference budget; uptime since genesis is free.
+
+      §64.1 makes everything else a keystroke: the crew button, the diff
+      readout, the season and pace counters all left this bar. What stays is
+      the sentence, plus the two controls a viewer needs to be able to find
+      without knowing anything — the way out of ambient, and `?`.
+    -->
     <div class="bar" id="barTop">
       <span id="wordmark">terrafork</span>
       <span class="sep">·</span>
-      <button id="chunkBtn" title="switch city">—</button>
+      <button id="chunkBtn" title="switch city (m)">—</button>
       <span class="sep">·</span>
       <span id="genN">gen 1</span>
       <span class="sep">·</span>
-      <!-- §51.3: agents are one visible click away, not a keyboard secret -->
-      <button id="agentsBtn" title="the crew (r)">agents —</button>
-      <span class="sep">·</span>
-      <span id="diffStat"><b>0.0%</b> diff</span>
-      <span class="push"></span>
-      <span id="season" class="dim">s1</span>
-      <span id="pace" class="dim">—</span>
       <span id="link" class="connecting">connecting…</span>
-      <span id="durability" class="dim"></span>
-      <button id="helpBtn" title="what is this (?)">?</button>
+      <span class="sep">·</span>
+      <span id="observer" title="no client message can advance this world">observer</span>
+      <span class="sep" id="spendSep" hidden>·</span>
+      <span id="spend" class="dim" hidden></span>
+      <span class="sep">·</span>
+      <span id="uptime" class="dim">up —</span>
+      <span class="push"></span>
+      <button id="helpBtn" title="what is this, and every key (?)">?</button>
       <button id="ambient" aria-pressed="false" title="ambient camera, chrome recedes (a)">ambient off</button>
     </div>
 
@@ -522,12 +566,13 @@
         <input id="scrub" type="range" min="0" max="1" step="1" value="1" />
         <output id="scrubOut">live</output>
       </div>
-      <button id="soundBtn" aria-pressed="false" title="the log as sound (§40.5)">sound off</button>
-      <button id="focusBtn" aria-pressed="true" title="depth of field: soft or off">focus soft</button>
-      <span id="digest"></span>
-      <span id="watched" class="dim"></span>
       <span class="push"></span>
-      <span id="keys"><b>d</b> diff · <b>b</b> ghost · <b>t</b> timelapse · <b>f</b> follow · <b>r</b> crew · <b>p</b> pause · <b>0</b> home · <b>[ ]</b> city · <b>a</b> ambient · <b>?</b> help</span>
+      <!--
+        §64.3: the legend went to `?`. Eleven advertised shortcuts is a menu,
+        not a product. What is left is the one hint a stranger needs to
+        discover that there IS a keyboard.
+      -->
+      <span id="keys"><b>?</b> keys</span>
     </div>
 
     <!--
@@ -563,6 +608,16 @@
         </div>
         <button id="followBtn" class="hidden">follow (f)</button>
       </div>
+    </div>
+
+    <!--
+      §64.1: the digest was a line in the bottom bar, which is a place for
+      controls. It is a reading surface, so it is a pane, and like every other
+      reading surface it is closed until asked for (g).
+    -->
+    <div class="pane" id="digest">
+      <div class="title"><span class="name">digest</span><span class="meta" id="watched"></span></div>
+      <div class="body" id="digestBody"></div>
     </div>
 
     <div class="pane grow" id="log">
@@ -628,7 +683,41 @@
             <dt>generation</dt><dd>agents retire, heirs continue. the world's clock.</dd>
             <dt>ghost</dt><dd>hold b: the real city, as we left it, inside the fork.</dd>
             <dt>timelapse</dt><dd>t: the whole history replayed from here, then back to live.</dd>
+            <dt>observer</dt><dd>nothing you send can change this world. that is the point.</dd>
           </dl>
+          <!--
+            §64.3: the eleven shortcuts that used to be advertised along the
+            bottom bar. A menu belongs behind a key; the screen belongs to the
+            world and the log.
+          -->
+          <div id="legend">
+            <div class="k"><b>n</b>narrative — headline and the campaigns in progress</div>
+            <div class="k"><b>r</b>crew · <b>c</b>changelog · <b>g</b>digest</div>
+            <div class="k"><b>m</b>the map, every city at once · <b>[ ]</b>cycle city</div>
+            <div class="k"><b>d</b>diff · <b>b</b>ghost (hold) · <b>t</b>timelapse</div>
+            <div class="k"><b>f</b>follow · <b>0</b>home framing · <b>p</b>pause the feed</div>
+            <div class="k"><b>a</b>ambient · <b>s</b>sound · <b>o</b>focus · <b>v</b>verbose log</div>
+            <div class="k"><b>esc</b>close everything</div>
+          </div>
+          <!--
+            §64.2: the numbers that used to sit along the top bar. Nothing is
+            deleted; `diff`, the season, the pace and the durability of the
+            store are facts a viewer may want and none of them is one of the
+            four the status line is for. They are here, one keystroke away.
+          -->
+          <div id="readouts">
+            <span id="diffStat"><b>0.0%</b> diff</span>
+            <span class="sep">·</span>
+            <span id="season" class="dim">s1</span>
+            <span class="sep">·</span>
+            <span id="pace" class="dim">—</span>
+            <span class="sep">·</span>
+            <span id="durability" class="dim"></span>
+            <span class="sep">·</span>
+            <button id="agentsBtn" title="the crew (r)">agents —</button>
+            <button id="soundBtn" aria-pressed="false" title="the log as sound (s)">sound off</button>
+            <button id="focusBtn" aria-pressed="true" title="depth of field (o)">focus soft</button>
+          </div>
           <div class="credits" id="credits"></div>
         </div>
       </div>

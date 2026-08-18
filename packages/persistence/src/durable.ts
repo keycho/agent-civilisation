@@ -122,6 +122,18 @@ export class DurableStore implements WorldStore {
         payload          jsonb not null default '{}'::jsonb
       )`
     await sql`create index if not exists events_chunk_tick on events (chunk_id, season, tick)`
+    /**
+     * §64.2: when each chunk's world first existed. One row per chunk, written
+     * on the first boot that ever touched it and never updated — a deploy
+     * restarts the process and a season turn rebuilds the world, and an
+     * `up 6d` that resets on either is a false statement about the thing the
+     * status line is describing.
+     */
+    await sql`
+      create table if not exists genesis (
+        chunk_id text primary key,
+        at       timestamptz not null default now()
+      )`
     await sql`create index if not exists events_building on events (building_id)`
     await sql`
       create table if not exists snapshots (
@@ -215,6 +227,38 @@ export class DurableStore implements WorldStore {
 
   eventCount(): number {
     return this.memory.eventCount()
+  }
+
+  private readonly genesis = new Map<string, number>()
+
+  genesisAt(chunkId: string): number {
+    return this.genesis.get(chunkId) ?? this.memory.genesisAt(chunkId)
+  }
+
+  /**
+   * §64.2: claim this chunk's genesis if nobody has, then read back whatever
+   * is recorded — which on every boot after the first is the original. Async
+   * and called once at startup; `genesisAt` is the synchronous read the frame
+   * path uses, and falls back to process start until this lands.
+   */
+  async loadGenesis(chunkId: string): Promise<number> {
+    if (!this.sql) return this.memory.genesisAt(chunkId)
+    try {
+      // the table is created by `migrate`, which is still in flight at boot —
+      // without this the insert lands on a table that does not exist yet and
+      // the catch below swallows it into a world that never learns its own age
+      await this.ready
+      await this.sql`insert into genesis (chunk_id) values (${chunkId}) on conflict do nothing`
+      const rows = await this.sql<Array<{ at: Date }>>`
+        select at from genesis where chunk_id = ${chunkId}`
+      const at = rows[0]?.at ? new Date(rows[0].at).getTime() : Date.now()
+      this.genesis.set(chunkId, at)
+      return at
+    } catch (err) {
+      // a world that cannot read its own age still runs; it just says so
+      console.error('[genesis] could not read', chunkId, err)
+      return this.memory.genesisAt(chunkId)
+    }
   }
 
   // -- the spectator's side: asynchronous, durable ----------------------------
