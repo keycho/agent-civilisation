@@ -1,5 +1,6 @@
 import {
   DepthTexture,
+  HalfFloatType,
   Mesh,
   NearestFilter,
   OrthographicCamera,
@@ -13,6 +14,7 @@ import {
   type PerspectiveCamera,
   type WebGLRenderer,
 } from 'three'
+import { BloomPass } from './bloom.ts'
 
 /**
  * §16.3: "tilt-shift depth of field — the single cheapest signal for
@@ -23,6 +25,18 @@ import {
  * frame regardless of content. It fades out as the camera comes down to street
  * level, where a miniature read is wrong and just looks out of focus.
  */
+/** first index whose value is >= t, in a sorted array */
+function lowerBound(sorted: number[], t: number): number {
+  let lo = 0
+  let hi = sorted.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (sorted[mid] < t) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+
 export class TiltShiftPass {
   private target: WebGLRenderTarget
   private quad: Mesh
@@ -46,14 +60,23 @@ export class TiltShiftPass {
   /** what the last frame actually asked for, for the capture rigs */
   lastStrength = 1
 
+  /** §56.1: the glow, built from this pass's own linear buffer */
+  readonly bloom: BloomPass
+
   constructor(width: number, height: number) {
     const depth = new DepthTexture(width, height, UnsignedShortType)
     this.target = new WebGLRenderTarget(width, height, {
       format: RGBAFormat,
+      // §56.1: half-float, so the scene buffer keeps authored radiance above
+      // 1.0 instead of clamping it. The DOF and grade below are unaffected —
+      // they were already reading linear values — but the bright pass now has
+      // an emitter/reflector distinction to threshold on rather than a guess.
+      type: HalfFloatType,
       depthTexture: depth,
       minFilter: NearestFilter,
       magFilter: NearestFilter,
     })
+    this.bloom = new BloomPass(width, height)
 
     this.material = new ShaderMaterial({
       uniforms: {
@@ -71,6 +94,8 @@ export class TiltShiftPass {
         uContrast: { value: 0.32 },
         uDesat: { value: 0.18 },
         uNight: { value: 0 },
+        tBloom: { value: this.bloom.texture },
+        uBloom: { value: 0 },
       },
       vertexShader: /* glsl */ `
         varying vec2 vUv;
@@ -83,10 +108,11 @@ export class TiltShiftPass {
         varying vec2 vUv;
         uniform sampler2D tColor;
         uniform sampler2D tDepth;
+        uniform sampler2D tBloom;
         uniform vec2 uTexel;
         uniform float uNear, uFar, uFocus, uRange, uMaxBlur, uStrength, uVignette;
         uniform float uExposure, uContrast, uDesat;
-        uniform float uNight;
+        uniform float uNight, uBloom;
 
         /**
          * §48.2: the one post chain — filmic tonemap (ACES approximation),
@@ -116,7 +142,16 @@ export class TiltShiftPass {
         vec4 vignetted(vec4 c) {
           float r = length(vUv * 2.0 - 1.0);
           float v = 1.0 - uVignette * (1.0 - 0.65 * uNight) * smoothstep(0.62, 1.42, r);
-          return vec4(grade(c.rgb) * v, c.a);
+          vec3 lit = grade(c.rgb);
+          // §56.1: the glow joins AFTER the grade, carrying its emitter's own
+          // warmth, with its own soft compression standing in for the tonemap
+          // it skipped — so a hot window blooms without punching a white hole
+          // through the plate. It rides the vignette with everything else: a
+          // light at the frame edge that ignored the falloff would float off
+          // the object the §47.1 vignette exists to make the plate read as.
+          vec3 b = texture2D(tBloom, vUv).rgb * uBloom;
+          lit += b / (1.0 + b);
+          return vec4(lit * v, c.a);
         }
 
         float viewZ(vec2 uv) {
@@ -165,6 +200,9 @@ export class TiltShiftPass {
   setSize(width: number, height: number): void {
     this.target.setSize(width, height)
     this.material.uniforms.uTexel.value.set(1 / width, 1 / height)
+    this.bloom.setSize(width, height)
+    // setSize reallocates, so the composite's handle has to be re-bound
+    this.material.uniforms.tBloom.value = this.bloom.texture
   }
 
   render(
@@ -189,6 +227,15 @@ export class TiltShiftPass {
     renderer.render(scene, camera)
     renderer.setRenderTarget(null)
 
+    // §56.1: the glow is built from the linear buffer BEFORE the grade reads
+    // it, then handed to the composite to add after. Skipped entirely when the
+    // caller has asked for no glow, so golden-hour cities pay nothing for it.
+    u.uBloom.value = this.bloom.strength
+    if (this.bloom.strength > 0.001) {
+      this.bloom.generate(renderer, this.target.texture)
+      u.tBloom.value = this.bloom.texture
+    }
+
     if (strength <= 0.01) {
       // nothing to do; still needs the blit so the frame is not blank
       u.uStrength.value = 0
@@ -196,9 +243,59 @@ export class TiltShiftPass {
     renderer.render(this.scene, this.camera)
   }
 
+  /**
+   * §56.1 calibration instrument. The bright pass claims a line between
+   * "surface returning light" and "surface emitting it" at 1.0 linear — that
+   * claim is measurable, not a matter of taste, so this reads the half-float
+   * scene buffer back and reports where the plate's radiance actually sits.
+   * Used by tools/watch to set the threshold from the frame rather than from
+   * an argument about it.
+   */
+  measureLinear(renderer: WebGLRenderer, samples = 64): Record<string, number> {
+    const w = this.target.width
+    const h = this.target.height
+    const buf = new Uint16Array(w * h * 4)
+    renderer.readRenderTargetPixels(this.target, 0, 0, w, h, buf)
+    const half = (u: number): number => {
+      const s = (u & 0x8000) >> 15
+      const e = (u & 0x7c00) >> 10
+      const f = u & 0x03ff
+      if (e === 0) return (s ? -1 : 1) * 2 ** -14 * (f / 1024)
+      if (e === 0x1f) return f ? Number.NaN : (s ? -1 : 1) * Number.POSITIVE_INFINITY
+      return (s ? -1 : 1) * 2 ** (e - 15) * (1 + f / 1024)
+    }
+    const lums: number[] = []
+    let max = 0
+    for (let i = 0; i < w * h; i++) {
+      const r = half(buf[i * 4])
+      const g = half(buf[i * 4 + 1])
+      const b = half(buf[i * 4 + 2])
+      const l = 0.299 * r + 0.587 * g + 0.114 * b
+      if (Number.isFinite(l)) {
+        if (l > max) max = l
+        lums.push(l)
+      }
+    }
+    lums.sort((a, b) => a - b)
+    const q = (p: number): number => lums[Math.min(lums.length - 1, Math.floor(lums.length * p))] ?? 0
+    const over = (t: number): number => lums.length - lowerBound(lums, t)
+    void samples
+    return {
+      max,
+      p50: q(0.5),
+      p90: q(0.9),
+      p99: q(0.99),
+      p999: q(0.999),
+      fracOver0_8: over(0.8) / lums.length,
+      fracOver1_0: over(1.0) / lums.length,
+      fracOver1_3: over(1.3) / lums.length,
+    }
+  }
+
   dispose(): void {
     this.target.dispose()
     this.material.dispose()
     this.quad.geometry.dispose()
+    this.bloom.dispose()
   }
 }

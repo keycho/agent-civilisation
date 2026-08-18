@@ -187,6 +187,32 @@ export class CameraRig {
     this.apply(k)
   }
 
+  /**
+   * §56 capture discipline. The damping above is asymptotic on purpose —
+   * "nothing in this camera ever snaps" — which means the rig is still
+   * converging long after a fly-to visually arrives. Between two frames of an
+   * a/b pair that residual drift can rotate the plate by a fraction of a
+   * degree, which at city distance displaces far edges by tens of pixels and
+   * swamps whatever the pair was meant to isolate. This finishes any running
+   * tween and lands the damped state exactly on the desired one, so a capture
+   * pair differs by the step under test alone. Never called in normal play.
+   */
+  settle(): void {
+    if (this.tween) {
+      const tw = this.tween
+      this.desiredTarget.copy(tw.toT)
+      this.desiredDistance = tw.toD
+      this.desiredAzimuth = tw.toA
+      this.desiredPolar = tw.toP
+      this.tween = null
+    }
+    this.target.copy(this.desiredTarget)
+    this.distance = this.desiredDistance
+    this.azimuth = this.desiredAzimuth
+    this.polar = this.desiredPolar
+    this.apply(1)
+  }
+
   private apply(_k: number): void {
     const sinP = Math.sin(this.polar)
     this.camera.position.set(

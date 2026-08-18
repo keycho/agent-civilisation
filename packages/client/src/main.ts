@@ -913,6 +913,17 @@ attachRigControls(rig, canvas, inputWinsCamera)
 const tiltShift = new TiltShiftPass(innerWidth, innerHeight)
 // §50.2: the grade stands down where the authored hour is night
 tiltShift.night = cityHour?.night ?? 0
+/**
+ * §56.1: the glow needs no per-hour ramp. §50.3's emissive terms are already
+ * multiplied by the authored hour's `night`, so a golden-hour plate emits
+ * almost nothing and its bright pass comes back empty on its own. Gating the
+ * glow by the hour as well would be the same decision applied twice, and would
+ * hide whether the threshold actually separates emitters from lit surfaces.
+ * One constant, and the hour decides what there is to bloom.
+ */
+const BLOOM_STRENGTH = 1
+/** capture-rig override, so a/b can isolate the glow's own contribution */
+let bloomOverride: number | null = null
 // DOF r2: the focus toggle, soft by default. Off is a real setting, not a
 // debug flag — someone reading a street wants the whole street.
 let focusOn = true
@@ -2233,6 +2244,8 @@ resize()
 
 let last = performance.now()
 let clock = 0
+/** §56: capture-rig clock pin — see the animation loop */
+let frozenClock: number | null = null
 const chipV = new Vector3()
 const tetherColour = new Color()
 
@@ -2311,6 +2324,15 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(0.05, (now - last) / 1000)
   last = now
   clock += dt
+  /**
+   * §56 capture discipline. Everything animated in this world runs off `clock`
+   * — the window breath, the work-light flicker, the water's three-wave glint.
+   * Two frames of the same city taken a second apart therefore differ
+   * everywhere the water is, which is enough to swamp the thing an a/b pair is
+   * supposed to isolate. Pinning the clock makes a pair differ only by the step
+   * under test. It is a capture instrument, never on in normal play.
+   */
+  const t = frozenClock ?? clock
 
   // §5/§21.6: positions are interpolated between frames rather than simulated.
   // Nothing in this loop advances the world.
@@ -2322,14 +2344,14 @@ renderer.setAnimationLoop(() => {
 
   // §50.3: relights run down before the upload, so a converted building's
   // windows climb it in the same frame the texel change landed
-  buildings.tickLights(dt, clock)
+  buildings.tickLights(dt, t)
   ghost.update(dt)
   sound.update(dt, readouts?.pace.decisionsPerSecond ?? 0)
   if (cinematicCooldown > 0) cinematicCooldown -= dt
   // §21.6: one upload per rendered frame, however many arrived since the last
   observer.flush()
-  agentMarkers.update(withIdentity(), substrate.groundY, dt, clock)
-  construction.update(observer.sites(), clock)
+  agentMarkers.update(withIdentity(), substrate.groundY, dt, t)
+  construction.update(observer.sites(), t)
   punctuation.update(dt)
   updateTethers()
   updateChip()
@@ -2361,7 +2383,7 @@ renderer.setAnimationLoop(() => {
     scene.fog.far = rig.distance * 2.1
   }
   env.sky.position.copy(rig.camera.position)
-  substrate.tick(clock)
+  substrate.tick(t)
 
   /**
    * §24.1: "widen the tilt-shift sharp band so it covers the plate rather than
@@ -2412,6 +2434,10 @@ renderer.setAnimationLoop(() => {
     30,
     rig.distance * 0.1 * (1 + 7 * oblique * oblique) * (1 + 6 * close * close),
   )
+  // §56.1: the glow follows the authored hour, and the globe keeps a little of
+  // it — the eight marks are the only emitters up there, and a mark that glows
+  // is a mark you can count (§49's acceptance) rather than one more dot.
+  tiltShift.bloom.strength = bloomOverride ?? (mode === 'globe' ? 0.5 : BLOOM_STRENGTH)
   // §49: the globe is fully exempt from the miniature's depth of field — the
   // grade and vignette still apply, the blur does not
   tiltShift.render(
@@ -2496,6 +2522,39 @@ function civHome(): void {
     maxBlurPx: tiltShift.maxBlurPx,
     on: focusOn,
   }),
+  /**
+   * §56.1: read the linear scene buffer back, so the bloom threshold is set
+   * from what the plate actually radiates rather than from an assumption
+   * about it. Call after a frame has rendered.
+   */
+  measureLinear: () => tiltShift.measureLinear(renderer),
+  /**
+   * §56 capture discipline: pin the animation clock so an a/b pair differs
+   * only by the step under test, not by where the water's glint happened to
+   * be. Pass null to resume.
+   */
+  freezeClock(at: number | null) {
+    frozenClock = at
+  },
+  bloom: {
+    get strength() {
+      return tiltShift.bloom.strength
+    },
+    get threshold() {
+      return tiltShift.bloom.threshold
+    },
+    set threshold(v: number) {
+      tiltShift.bloom.threshold = v
+    },
+    /**
+     * §56.1: force the glow off for a frame, so a capture can isolate what the
+     * bloom itself contributes from what the half-float buffer and the
+     * emissive headroom changed underneath it.
+     */
+    override(v: number | null) {
+      bloomOverride = v
+    },
+  },
   /** §51.3 hooks for the capture rigs: what floats, who is followed, what colour */
   floatMarks: () => floatLights.marks,
   followedId: () => followId,

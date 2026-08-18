@@ -320,14 +320,23 @@ export function createBuildingMaterial(data: BuildingDataTexture): BuildingMater
           float breath = 0.88 + 0.12 * sin(uTime * 0.7 + roll * 31.4);
 
           vec3 warm = uWindowWarm * mix(1.0, 1.08, civHash(cell + 3.0));
-          totalEmissiveRadiance += warm * pane * lit * breath * uNight * 1.35;
+          // §56.1: lit windows emit into HDR headroom rather than stopping at
+          // display white. Measured (tools/watch/measure-linear.mjs), the
+          // brightest surface any golden-hour plate returns is 0.76 linear,
+          // while these panes used to peak at 1.05 — a real separation, but
+          // far too narrow to threshold a glow against. Emitting past 2.0 puts
+          // the line between reflecting and emitting beyond argument. The
+          // §48.2 ACES curve absorbs most of the increase (a peak pane goes
+          // 0.83 -> 0.94 displayed), so §50.3's authored look survives; the
+          // hottest window centres do read slightly hotter, which is stated.
+          totalEmissiveRadiance += warm * pane * lit * breath * uNight * 3.2;
 
           // shopfronts: the ground floor of owned retail and commercial glows
           // as a band rather than a grid
           if (vRole > 1.5 && vRole < 2.5) {
             int wPurpose = int(floor(vData.b * 255.0 + 0.5));
             float shop = (wPurpose == ${PURPOSE_INDEX.retail} || wPurpose == ${PURPOSE_INDEX.commercial}) ? 1.0 : 0.0;
-            totalEmissiveRadiance += warm * shop * owned * standing * wCondition * uNight * 0.55;
+            totalEmissiveRadiance += warm * shop * owned * standing * wCondition * uNight * 1.3;
           }
 
           // §50.3 work lights: a site under construction burns cold white low
@@ -341,13 +350,13 @@ export function createBuildingMaterial(data: BuildingDataTexture): BuildingMater
           float aboveGround = max(0.0, vFloorM - vSink);
           float low = 1.0 - smoothstep(0.0, 9.0, aboveGround);
           float flicker = 0.82 + 0.18 * sin(uTime * 2.3 + wJitter * 40.0);
-          totalEmissiveRadiance += vec3(0.72, 0.78, 0.86) * working * low * flicker * uNight * 0.9;
+          totalEmissiveRadiance += vec3(0.72, 0.78, 0.86) * working * low * flicker * uNight * 2.1;
         }
       `,
       )
   }
 
   // force a recompile if the material is reused across chunks
-  material.customProgramCacheKey = () => 'civ-building-v3'
+  material.customProgramCacheKey = () => 'civ-building-v4'
   return material
 }
