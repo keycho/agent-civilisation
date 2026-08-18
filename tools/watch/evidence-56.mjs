@@ -15,6 +15,8 @@ import { chromium } from 'playwright'
 import { mkdir } from 'node:fs/promises'
 
 const OUT = process.argv[2] ?? 'tools/watch/evidence/56/a0'
+/** stage switches, so one harness can capture both sides of a pair */
+const OFF = new Set((process.env.CIV_OFF ?? '').split(',').filter(Boolean))
 const CHUNKS = process.argv.slice(3).length
   ? process.argv.slice(3)
   : ['brooklyn-redhook', 'tokyo-kyojima', 'schiedam-havens', 'london-deptford', 'paris-ourcq']
@@ -97,10 +99,12 @@ for (const chunk of CHUNKS) {
   // reads as a change the step under test did not make. Pinning the clock and
   // landing the camera exactly makes stage-to-stage diffs bit-identical where
   // nothing changed — measured, not assumed (tools/watch/abdiff.mjs).
-  await page.evaluate(() => {
+  await page.evaluate((off) => {
+    if (off.includes('lamps')) window.civ.setLamps(false)
+    if (off.includes('bloom')) window.civ.bloom.override(0)
     window.civ.freezeClock(120)
     window.civ.rig.settle()
-  })
+  }, [...OFF])
   await page.waitForTimeout(1400)
   await page.screenshot({ path: `${OUT}/${chunk}.png` })
   console.log(`${chunk}: ${n} owned -> ${OUT}/${chunk}.png`)

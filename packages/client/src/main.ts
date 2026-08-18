@@ -52,6 +52,7 @@ import { BuildingRenderer } from './render/buildingRenderer.ts'
 import { configureRenderer, createEnvironment, dimGround } from './render/environment.ts'
 import { createLandmarkLines } from './render/landmarkLines.ts'
 import { createRoadMeshes } from './render/roadMesh.ts'
+import { StreetLights } from './render/streetLights.ts'
 import { ConstructionOverlay } from './render/scaffold.ts'
 import { createSubstrateView } from './render/substrateMesh.ts'
 import { createTrees } from './render/trees.ts'
@@ -126,6 +127,23 @@ cityRoot.add(
 // joins the root, so only the plate, its landcover, the roads and the canopy
 // are touched.
 dimGround(cityRoot, cityHour?.groundScale ?? 1)
+
+/**
+ * §56.1: street lights. Added AFTER dimGround on purpose — a lamp emits, it is
+ * not ground albedo, and the dark-hour ground pull that puts the buildings back
+ * on top of their plate must not reach the things lighting it.
+ */
+const streetLights = new StreetLights(
+  seed.roads.nodes,
+  seed.roads.edges,
+  substrate.heightAt,
+  HALF_EXTENT,
+  {
+    night: cityHour?.night ?? 0,
+    warm: cityHour?.lampWarm ?? '#ffb765',
+  },
+)
+cityRoot.add(streetLights.group)
 
 const construction = new ConstructionOverlay()
 cityRoot.add(construction.scaffold)
@@ -2352,6 +2370,7 @@ renderer.setAnimationLoop(() => {
   observer.flush()
   agentMarkers.update(withIdentity(), substrate.groundY, dt, t)
   construction.update(observer.sites(), t)
+  streetLights.update(rig.distance)
   punctuation.update(dt)
   updateTethers()
   updateChip()
@@ -2582,6 +2601,26 @@ function civHome(): void {
     orbitFor,
     /** return to the §24.1 framed orientation, for tooling and captures */
     home: civHome,
+    /**
+     * §56: drop to a street framing at a named place. City zoom shows the
+     * density of the light; only this shows whether a lamp is on the kerb, a
+     * pole arrived, and traffic is running down the carriageway rather than
+     * through the buildings.
+     */
+    street(distance = 240, opts: { x?: number; y?: number; polar?: number; azimuth?: number } = {}) {
+      director.takeControl()
+      rig.flyTo(pointAt(opts.x ?? 0, opts.y ?? 0), distance, {
+        polar: opts.polar ?? 1.18,
+        azimuth: opts.azimuth ?? 0.5,
+        duration: 0.01,
+      })
+    },
+  },
+  /** §56.2: how many lamps this chunk's hour actually lit */
+  streetLightCount: () => streetLights.count,
+  /** §56.2 capture switch: isolate the lamps from everything else in frame */
+  setLamps(on: boolean) {
+    streetLights.on = on
   },
 }
 

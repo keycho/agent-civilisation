@@ -239,6 +239,14 @@ export interface CityHour {
   night: number
   windowWarm: string
   /**
+   * §56.1: the street lamp's own warmth, which is not the window's. Interiors
+   * are incandescent-ish and lamps are sodium — keeping them the same colour
+   * flattens the street and the building into one light, and the reference's
+   * depth comes partly from the fact that they differ. Only consulted where
+   * the hour is dusk or darker; the default is a sodium warm.
+   */
+  lampWarm?: string
+  /**
    * §50.2: how much light the ground still gets at this hour, as a
    * multiplier on substrate, road and canopy albedo. At golden hour the
    * raking key models the buildings and they hold their own against a pale
@@ -326,6 +334,8 @@ export const CITY_HOUR: Record<string, CityHour> = {
     groundScale: 0.34,
     night: 0.92,
     windowWarm: '#ffb765',
+    // tokyo's streets run cooler than its interiors: mercury/led, not sodium
+    lampWarm: '#ffd9a8',
   },
 
   /**
@@ -346,6 +356,8 @@ export const CITY_HOUR: Record<string, CityHour> = {
     groundScale: 0.3,
     night: 1.0,
     windowWarm: '#ffc07d',
+    // red hook's streets are old sodium — oranger than its windows
+    lampWarm: '#ffa955',
   },
 }
 
