@@ -2635,6 +2635,9 @@ renderer.setAnimationLoop(() => {
   sound.update(dt, readouts?.pace.decisionsPerSecond ?? 0)
   if (cinematicCooldown > 0) cinematicCooldown -= dt
   // §21.6: one upload per rendered frame, however many arrived since the last
+  // §57.2: close the gap between what the sim has done and what the picture
+  // has shown, at the wall-clock floors each stage is owed
+  observer.advanceVisual(dt)
   observer.flush()
   agentMarkers.update(withIdentity(), substrate.groundY, dt, t)
   construction.update(observer.sites(), t)
