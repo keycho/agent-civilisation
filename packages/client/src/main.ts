@@ -747,6 +747,10 @@ attachRigControls(rig, canvas, inputWinsCamera)
 const tiltShift = new TiltShiftPass(innerWidth, innerHeight)
 // §50.2: the grade stands down where the authored hour is night
 tiltShift.night = cityHour?.night ?? 0
+// DOF r2: the focus toggle, soft by default. Off is a real setting, not a
+// debug flag — someone reading a street wants the whole street.
+let focusOn = true
+const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
 
 // ---------------------------------------------------------------------------
 // chrome (§35): status line, bars, panes
@@ -1523,6 +1527,14 @@ el('crewClose').addEventListener('click', () => toggleCrew(false))
 // learned there was an `r` key
 el('agentsBtn').addEventListener('click', () => toggleCrew())
 
+// DOF r2: the focus toggle sits in the bottom bar, beside where the §40.5
+// sound toggle lands — the two settings a viewer might actually want off
+el('focusBtn').addEventListener('click', () => {
+  focusOn = !focusOn
+  el('focusBtn').setAttribute('aria-pressed', String(focusOn))
+  el('focusBtn').textContent = focusOn ? 'focus soft' : 'focus off'
+})
+
 /**
  * §51.3: the mini-card. Hovering a floating marker names the agent, its plan
  * and its balance, without the commitment of a follow. The balance is a
@@ -2181,16 +2193,41 @@ renderer.setAnimationLoop(() => {
    * view: identical at the calibrated case (polar 0.66), wider as the camera
    * comes down, narrower toward top-down where there is no depth to keep.
    */
-  tiltShift.focusRange =
-    Math.max(30, rig.distance * 0.1 * (Math.sin(rig.polar) / Math.sin(0.66)))
+  /**
+   * DOF r2. The §39 derivation was right about the mechanism and much too
+   * timid about the amount: sin(polar) alone widens the band by about half
+   * between the home framing and the pitch floor, and an oblique frame does
+   * not have half again as much depth in it — it has the whole plate, from
+   * the near kerb to the far skyline, all of it subject. The melted-church
+   * frame is what that costs.
+   *
+   * So obliquity now drives the band hard, and proximity drives it harder
+   * still: at the home framing the diorama read is untouched, by the pitch
+   * floor the band is several times wider, and at street framing it covers
+   * everything in front of the camera — which is the same thing as off.
+   */
+  const oblique = clamp01((rig.polar - 0.66) / (rig.limits.maxPolar - 0.66))
+  // `streetness` is the LENS ramp — it is already 0.74 at 430 m, because the
+  // fov starts opening long before the camera is in a street. Borrowing it for
+  // the focal band widened the band on a neighbourhood view that still wants
+  // the diorama read. Proximity gets its own ramp, which stays at zero until
+  // the camera is genuinely close.
+  const close = clamp01((rig.lens.cityDistance * 0.35 - rig.distance) / (rig.lens.cityDistance * 0.35 - rig.lens.streetDistance))
+  tiltShift.focusRange = Math.max(
+    30,
+    rig.distance * 0.1 * (1 + 7 * oblique * oblique) * (1 + 6 * close * close),
+  )
   // §49: the globe is fully exempt from the miniature's depth of field — the
   // grade and vignette still apply, the blur does not
   tiltShift.render(
     renderer,
     scene,
     rig.camera,
+    // focus follows attention: rig.distance is the distance to the orbit
+    // target, so the plane sits on whatever the camera is pointed at — the
+    // double-click focus, the followed agent, the log line's fly-to
     rig.distance,
-    mode === 'globe' ? 0 : 1 - rig.streetness * 0.85,
+    mode === 'globe' || !focusOn ? 0 : (1 - close) * (1 - close),
   )
   if (mode === 'globe') {
     globe.updateLOD(rig.distance)
@@ -2253,6 +2290,13 @@ function civHome(): void {
   get roster() {
     return roster
   },
+  /** DOF r2: what the focal band is doing right now, for the capture rigs */
+  dof: () => ({
+    range: tiltShift.focusRange,
+    strength: tiltShift.lastStrength,
+    maxBlurPx: tiltShift.maxBlurPx,
+    on: focusOn,
+  }),
   /** §51.3 hooks for the capture rigs: what floats, who is followed, what colour */
   floatMarks: () => floatLights.marks,
   followedId: () => followId,

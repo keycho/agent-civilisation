@@ -35,8 +35,16 @@ export class TiltShiftPass {
 
   /** metres either side of the focal plane that stay sharp */
   focusRange = 130
-  maxBlurPx = 9
+  /**
+   * DOF r2: capped well below the old 9. At 9px the far field stopped being
+   * soft and became formless — a smear where a skyline used to be. The point
+   * of the miniature read is that the far field is out of focus, not that it
+   * is gone.
+   */
+  maxBlurPx = 5
   strength = 1
+  /** what the last frame actually asked for, for the capture rigs */
+  lastStrength = 1
 
   constructor(width: number, height: number) {
     const depth = new DepthTexture(width, height, UnsignedShortType)
@@ -173,6 +181,7 @@ export class TiltShiftPass {
     u.uRange.value = this.focusRange
     u.uMaxBlur.value = this.maxBlurPx
     u.uStrength.value = strength
+    this.lastStrength = strength
     u.uNight.value = this.night
 
     renderer.setRenderTarget(this.target)
