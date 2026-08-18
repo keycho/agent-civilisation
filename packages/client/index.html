@@ -212,6 +212,29 @@
       @media (prefers-reduced-motion: reduce) {
         #log .e.monument { animation: none; }
       }
+      /*
+       * §63.4: fine grain over world and chrome together. Fixed, above
+       * everything, pointer-transparent. The opacity is the whole argument —
+       * enough to bind the two layers into one surface, never enough to cost a
+       * character of the terminal register.
+       */
+      #grain {
+        position: fixed; inset: 0; z-index: 9; pointer-events: none;
+        opacity: 0.055; background-repeat: repeat; background-size: 128px 128px;
+        mix-blend-mode: overlay;
+      }
+      @media (prefers-reduced-motion: reduce) { #grain { opacity: 0.035; } }
+
+      /* §63.4: the world's own readouts — dim mono, amber only where it earns it */
+      #siteMarks { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
+      #siteMarks .m {
+        position: absolute; transform: translate(-50%, -50%);
+        font-size: 9px; line-height: 1.25; letter-spacing: 0.04em;
+        color: var(--dimmer); white-space: pre; text-align: center;
+        text-shadow: 0 0 3px #000, 0 0 6px #000;
+      }
+      #siteMarks .m.live { color: var(--amber); opacity: 0.72; }
+
       /* §46.2: rows that know where they happened invite the click */
       #log .e.place { cursor: pointer; }
       #log .e.place:hover { color: var(--cream); background: var(--wash); }
@@ -627,6 +650,23 @@
       <button id="candidatesBtn" title="show the 34k coarse candidates">candidates</button>
       <span class="dim" id="arcsTag">arcs: replayed region run</span>
     </div>
+
+    <!--
+      §63.4: the cryptic layer. §35.5 banned grain for legibility; §63.4 relaxes
+      that ban to a subtle WHOLE-FRAME treatment, because unifying the world and
+      the chrome into one register is exactly what it is for. It sits above
+      everything, takes no pointer, and is faint enough that no text loses a
+      pixel — the tile and the opacity are set in main.ts and measured.
+    -->
+    <div id="grain"></div>
+
+    <!--
+      §63.4: technical readouts drawn into the WORLD layer rather than only the
+      panes. Parcel ordinals and coordinates on active sites, dim mono, in the
+      §35 register — projected each frame, so they belong to the city rather
+      than to the interface.
+    -->
+    <div id="siteMarks"></div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

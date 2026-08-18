@@ -1,0 +1,45 @@
+{
+  "label": "c-cryptic",
+  "rows": [
+    {
+      "chunk": "schiedam-havens",
+      "meanLuminance": 0.0692,
+      "p90Luminance": 0.137,
+      "saturatedFraction": 0.8744,
+      "warmFraction": 0.2911,
+      "litFraction": 0.3229
+    },
+    {
+      "chunk": "london-deptford",
+      "meanLuminance": 0.0417,
+      "p90Luminance": 0.0684,
+      "saturatedFraction": 0.1794,
+      "warmFraction": 0.008,
+      "litFraction": 0.2992
+    },
+    {
+      "chunk": "paris-ourcq",
+      "meanLuminance": 0.048,
+      "p90Luminance": 0.1061,
+      "saturatedFraction": 0.8952,
+      "warmFraction": 0.0082,
+      "litFraction": 0.26
+    },
+    {
+      "chunk": "tokyo-kyojima",
+      "meanLuminance": 0.0406,
+      "p90Luminance": 0.0718,
+      "saturatedFraction": 0.8911,
+      "warmFraction": 0.0142,
+      "litFraction": 0.1756
+    },
+    {
+      "chunk": "brooklyn-redhook",
+      "meanLuminance": 0.026,
+      "p90Luminance": 0.0395,
+      "saturatedFraction": 0.155,
+      "warmFraction": 0.0832,
+      "litFraction": 0.0289
+    }
+  ]
+}

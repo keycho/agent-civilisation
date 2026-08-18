@@ -1187,6 +1187,8 @@ function ingest(e: EventWire): void {
   } else if (e.type === 'demolition_completed') {
     watched.demolished++
     if (e.x !== undefined && e.y !== undefined) punctuation.demolitionDust(e.x, e.y)
+    // §63.4: the world starts remembering what stood here, at ambient alpha
+    if (e.buildingId) ghost.remember(e.buildingId)
     sound.thud(placed)
   } else {
     sound.tick(placed)
@@ -2794,6 +2796,100 @@ function updateChip(): void {
   chip.classList.add('on')
 }
 
+/**
+ * §63.4: fine grain over world and chrome together.
+ *
+ * §35.5 banned grain because the terminal register is typographic rather than
+ * atmospheric, and that was right while the world was a warm diorama and the
+ * chrome was a skin around it. §63 reverses the premise: the two layers are
+ * now one identity, and a single film of noise across both is the cheapest
+ * thing that says so. Generated once into a tile rather than shipped as an
+ * asset, so it costs nothing and cannot drift from the palette.
+ *
+ * Monochrome on purpose. The tile is value only — §63.4's "amber is the only
+ * saturated colour anywhere" applies to the film as much as to the city.
+ */
+function grainTile(): string {
+  const n = 128
+  const c = document.createElement('canvas')
+  c.width = n
+  c.height = n
+  const g = c.getContext('2d')!
+  const img = g.createImageData(n, n)
+  // a fixed hash rather than Math.random: the film is the same every session,
+  // so an a/b pair differs by the step under test and not by its own noise
+  let h = 0x2f6e2b1
+  for (let i = 0; i < n * n; i++) {
+    h ^= h << 13
+    h ^= h >>> 17
+    h ^= h << 5
+    h >>>= 0
+    const v = 90 + (h % 76)
+    img.data[i * 4] = v
+    img.data[i * 4 + 1] = v
+    img.data[i * 4 + 2] = v
+    img.data[i * 4 + 3] = 255
+  }
+  g.putImageData(img, 0, 0)
+  return c.toDataURL('image/png')
+}
+el('grain').style.backgroundImage = `url(${grainTile()})`
+
+/**
+ * §63.4: technical readouts drawn into the world layer, not only the panes.
+ *
+ * A site an agent is working carries its parcel ordinal and its coordinates,
+ * dim mono, in the §35 register — the machine's own annotation of the ground
+ * it is taking. Capped, because the point is that the world is instrumented
+ * rather than that the screen is full: the busiest sites only.
+ */
+const MAX_SITE_MARKS = 14
+const markV = new Vector3()
+
+/** a stable four-character ordinal for a point of ground, in the §35 register */
+function siteOrdinal(x: number, y: number): string {
+  const k = (Math.round(x) * 73856093) ^ (Math.round(y) * 19349663)
+  return (k >>> 0).toString(16).slice(-4).padStart(4, '0')
+}
+function updateSiteMarks(): void {
+  const host = el('siteMarks')
+  const wanted: Array<{ id: string; x: number; y: number; live: boolean }> = []
+  const working = new Set<string>()
+  for (const a of presence.positions()) {
+    if (a.activity === 'building' || a.activity === 'demolishing') working.add(a.id)
+  }
+  for (const [id, at] of agentSite) {
+    wanted.push({ id, x: at[0], y: at[1], live: working.has(id) })
+    if (wanted.length >= MAX_SITE_MARKS) break
+  }
+  // reuse nodes rather than rebuilding the list every frame
+  while (host.children.length > wanted.length) host.lastElementChild!.remove()
+  while (host.children.length < wanted.length) {
+    const d = document.createElement('div')
+    d.className = 'm'
+    host.appendChild(d)
+  }
+  wanted.forEach((w, i) => {
+    const node = host.children[i] as HTMLElement
+    markV.copy(pointAt(w.x, w.y))
+    markV.y += 4
+    markV.project(rig.camera)
+    if (markV.z > 1 || Math.abs(markV.x) > 1.05 || Math.abs(markV.y) > 1.05) {
+      node.style.display = 'none'
+      return
+    }
+    node.style.display = ''
+    node.style.left = `${((markV.x + 1) / 2) * innerWidth}px`
+    node.style.top = `${(1 - (markV.y + 1) / 2) * innerHeight}px`
+    node.className = `m${w.live ? ' live' : ''}`
+    // §63.4 asks for parcel ordinals and coordinates, and §63.1's rule holds
+    // here too: an internal id is never something a viewer reads. The ordinal
+    // is derived from the ground itself, so it names the SITE rather than
+    // whoever happens to be standing on it.
+    node.textContent = `${siteOrdinal(w.x, w.y)}\n${Math.round(w.x)} ${Math.round(w.y)}`
+  })
+}
+
 renderer.setAnimationLoop(() => {
   const now = performance.now()
   const dt = Math.min(0.05, (now - last) / 1000)
@@ -2849,6 +2945,7 @@ renderer.setAnimationLoop(() => {
   punctuation.update(dt)
   updateTethers()
   updateChip()
+  updateSiteMarks()
 
   if (mode === 'city') {
     // §59.1: the exact term that keeps a figure at or above 16 px — the lens
