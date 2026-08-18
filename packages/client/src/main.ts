@@ -685,13 +685,45 @@ canvas.addEventListener('click', (e) => {
   if (best) diveTo(best.id)
 })
 
-attachRigControls(rig, canvas, () => {
+/**
+ * §51.1, absolute rule: any pointer input exits ambient instantly and hands
+ * the camera over, with the mode flip announced. Ambient only resumes after
+ * 60s of idleness, and only if it was on before the input.
+ */
+let ambientWasOn = false
+let ambientResumeTimer: ReturnType<typeof setTimeout> | null = null
+
+function announceMode(text: string): void {
+  const m = el('modeFlip')
+  m.textContent = text
+  m.classList.add('on')
+  setTimeout(() => m.classList.remove('on'), 1400)
+}
+
+function inputWinsCamera(): void {
   globeIdle = 0
+  if (document.body.classList.contains('ambient')) {
+    ambientWasOn = true
+    document.body.classList.remove('ambient')
+    el('ambient').setAttribute('aria-pressed', 'false')
+    announceMode('manual')
+  }
+  if (ambientResumeTimer) clearTimeout(ambientResumeTimer)
+  ambientResumeTimer = setTimeout(() => {
+    if (ambientWasOn && !followId && !document.body.classList.contains('ambient')) {
+      document.body.classList.add('ambient')
+      el('ambient').setAttribute('aria-pressed', 'true')
+      director.enabled = true
+      announceMode('ambient')
+    }
+  }, 60_000)
   director.takeControl()
   // §36.2: grabbing the camera releases the tether — following is a mode the
   // viewer leaves by looking elsewhere, not a lock
   if (followId) follow(null)
-})
+}
+
+attachRigControls(rig, canvas, inputWinsCamera)
 
 const tiltShift = new TiltShiftPass(innerWidth, innerHeight)
 
@@ -908,6 +940,34 @@ canvas.addEventListener('click', (e) => {
   select(buildings.pick(raycaster))
 })
 el('close').addEventListener('click', () => select(null))
+
+/** §51.1: double-click a building or parcel for a focus orbit around it */
+canvas.addEventListener('dblclick', (e) => {
+  if (mode !== 'city') return
+  pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1)
+  raycaster.setFromCamera(pointer, rig.camera)
+  const hit = buildings.pick(raycaster)
+  if (hit !== null) {
+    const id = observer.idAt(hit)
+    const at = id ? places.get(id) : undefined
+    const target = at ? pointAt(at[0], at[1]) : intersectGround()
+    if (target) focusOrbit(target)
+  } else {
+    const g = intersectGround()
+    if (g) focusOrbit(g)
+  }
+})
+
+function intersectGround(): Vector3 | null {
+  const t = (substrate.groundY - raycaster.ray.origin.y) / raycaster.ray.direction.y
+  if (!Number.isFinite(t) || t <= 0) return null
+  return raycaster.ray.origin.clone().addScaledVector(raycaster.ray.direction, t)
+}
+
+function focusOrbit(at: Vector3): void {
+  inputWinsCamera()
+  rig.flyTo(at, Math.min(Math.max(rig.distance * 0.5, 130), 240), { polar: 0.86, duration: 1.6 })
+}
 
 function pickAgent(cx: number, cy: number): string | null {
   const v = new Vector3()
@@ -1518,6 +1578,8 @@ el('credits').innerHTML =
 function toggleAmbient(): void {
   if (followId) follow(null)
   const on = !document.body.classList.contains('ambient')
+  ambientWasOn = on
+  if (ambientResumeTimer) clearTimeout(ambientResumeTimer)
   // §24.1: "panels ... gone entirely in ambient." The top bar keeps the ambient
   // button itself reachable, so it is exempt — leaving it running must not mean
   // leaving it with no way out.
@@ -1571,6 +1633,11 @@ addEventListener('keydown', (e) => {
       break
     case '?':
       openCards(true)
+      break
+    case '0':
+      // §51.1: 0 returns to the chunk's home framing
+      if (mode === 'city') civHome()
+      else frameGlobeHome(1.6)
       break
     case 'Escape':
       select(null)
@@ -1795,6 +1862,16 @@ function* withIdentity(): Generator<AgentPresence> {
   }
 }
 
+/** §51.1: the chunk's home framing — 0 lands here, as do load and switch */
+function civHome(): void {
+  director.takeControl()
+  rig.flyTo(new Vector3(0, substrate.groundY, 0), frameThePlate(innerWidth / innerHeight), {
+    azimuth: CITY_AZIMUTH,
+    polar: 0.66,
+    duration: 1.2,
+  })
+}
+
 // exposed for tooling and for driving screenshots
 ;(window as unknown as Record<string, unknown>).civ = {
   rig,
@@ -1832,14 +1909,7 @@ function* withIdentity(): Generator<AgentPresence> {
     diveTo,
     orbitFor,
     /** return to the §24.1 framed orientation, for tooling and captures */
-    home() {
-      director.takeControl()
-      rig.flyTo(new Vector3(0, substrate.groundY, 0), frameThePlate(innerWidth / innerHeight), {
-        azimuth: CITY_AZIMUTH,
-        polar: 0.66,
-        duration: 1.2,
-      })
-    },
+    home: civHome,
   },
 }
 

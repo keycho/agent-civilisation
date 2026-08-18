@@ -247,6 +247,19 @@
       #chip .who { color: var(--amber); }
 
       /*
+       * §51.1: the mode flip. When input wins the camera (or ambient resumes)
+       * the chrome says so — one word, centred under the top bar, gone in a
+       * breath. Its own layer: it must read even while ambient hides the panes.
+       */
+      #modeFlip {
+        position: fixed; z-index: 6; top: 42px; left: 50%; transform: translateX(-50%);
+        padding: 1px 9px; border: 1px solid var(--edge); background: var(--pane);
+        color: var(--amber); opacity: 0; transition: opacity 260ms ease;
+        pointer-events: none;
+      }
+      #modeFlip.on { opacity: 1; }
+
+      /*
        * §35.2 boot: over the world fading in. Two seconds, skippable, once per
        * session.
        */
@@ -376,6 +389,7 @@
     </div>
 
     <div id="chip"><span class="who" id="chipWho"></span><span id="chipWhat"></span></div>
+    <div id="modeFlip"></div>
 
     <!-- §49: the globe's chrome — crisp screen-space labels, the hover card,
          the candidates layer toggle, and the arcs' provenance tag -->
