@@ -276,15 +276,15 @@ export const CITY_HOUR: Record<string, CityHour> = {
    * afternoon is when the lights are already on inside.
    */
   'london-deptford': {
-    sun: '#d8dee4',
-    sunIntensity: 2.35,
-    fillSky: '#b9c4cd',
-    fillGround: '#8e8d88',
-    fillIntensity: 3.5,
-    coolAmbient: '#6a7684',
-    coolAmbientIntensity: 0.75,
+    sun: '#d3dae2',
+    sunIntensity: 2.5,
+    fillSky: '#a4b1bd',
+    fillGround: '#7e7d78',
+    fillIntensity: 2.5,
+    coolAmbient: '#5d6975',
+    coolAmbientIntensity: 0.7,
     elevationDeg: 42,
-    groundScale: 0.92,
+    groundScale: 0.74,
     night: 0.26,
     windowWarm: '#ffcb8c',
   },
