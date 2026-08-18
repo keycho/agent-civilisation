@@ -234,6 +234,13 @@
       .gleader.on { display: block; }
       #globeCard { top: 42px; right: 12px; width: 270px; display: none; }
       body.globe #globeCard.on { display: block; }
+      /*
+       * §57.3: the map is the selector, and the city's own panes have nothing
+       * to say about a world seen from orbit — worse, the right rail covered a
+       * third of the plate, which on a projection that promises "every city in
+       * one frame" is the one thing it must not do.
+       */
+      body.globe #railRight, body.globe #railLeft { display: none; }
       #globeCard .body { padding: 8px 11px; }
       #globeTools {
         position: fixed; left: 12px; bottom: 40px; z-index: 5; display: none;

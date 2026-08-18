@@ -62,7 +62,7 @@ import { createSubstrateView } from './render/substrateMesh.ts'
 import { createTrees } from './render/trees.ts'
 import { PunctuationLayer } from './render/punctuation.ts'
 import { FloatLights } from './render/floatlights.ts'
-import { GLOBE_HOME, GLOBE_HOME_SPAN, GLOBE_ZOOM, GlobeView, orbitFor } from './render/globe.ts'
+import { FlatMapView, MAP_HOME_SPAN, MAP_ZOOM, orbitFor } from './render/flatMap.ts'
 import { AgentInterpolator, Connection, fromBase64 } from './world/connection.ts'
 import { loadChunk } from './world/load.ts'
 import { Observer } from './world/observer.ts'
@@ -231,7 +231,7 @@ const floatLights = new FloatLights()
 cityRoot.add(floatLights.group)
 
 // §49: the globe, same void, same grade
-const globe = new GlobeView(
+const globe = new FlatMapView(
   HALF_EXTENT * 0.92,
   chunks.map((c) => c.id),
   new Map(chunks.map((c) => [c.id, c.name])),
@@ -558,17 +558,21 @@ let mode: 'city' | 'globe' = 'city'
 let globeIdle = 0
 
 /**
- * §49 r3: the globe's own §24.1. One fixed home framing — full disc, limb all
- * the way round, europe centred, comfortable margin — that zoom-out lands on
- * and ambient returns to. Free zoom is clamped either side so the frame never
- * degenerates into coastline scribbles at one end or a speck at the other.
+ * §57.3: the map's home framing — the whole plate, every city in it, always.
+ * On a sphere this had to be argued for (which hemisphere, how much limb); on
+ * a flat map it is simply the plate fitted to the frame, and the only question
+ * is which dimension binds. The map is 2:1 and most windows are wider than
+ * they are tall, so on a wide window it is the height, and on a narrow one the
+ * width.
  */
 function globeHomeDistance(): number {
-  return rig.distanceToFrame(globe.radius * GLOBE_HOME_SPAN)
+  const aspect = innerWidth / innerHeight
+  const needVertical = Math.max(globe.halfHeight * 2, (globe.halfWidth * 2) / aspect)
+  return rig.distanceToFrame(needVertical * MAP_HOME_SPAN)
 }
 
 function frameGlobeHome(duration: number): void {
-  const orbit = orbitFor(GLOBE_HOME.lat, GLOBE_HOME.lon)
+  const orbit = orbitFor(0, 0)
   rig.flyTo(new Vector3(0, 0, 0), globeHomeDistance(), { ...orbit, duration })
 }
 
@@ -579,8 +583,11 @@ function toGlobe(): void {
   director.enabled = false
   cityRoot.visible = false
   globe.group.visible = true
-  rig.limits.minDistance = rig.distanceToFrame(globe.radius * GLOBE_ZOOM.minSpan)
-  rig.limits.maxDistance = rig.distanceToFrame(globe.radius * GLOBE_ZOOM.maxSpan)
+  // §57.3: zoom is bounded around the home framing rather than around a disc,
+  // so no permitted zoom can lose a city off the edge of the plate
+  const home = globeHomeDistance()
+  rig.limits.minDistance = home * MAP_ZOOM.minSpan
+  rig.limits.maxDistance = home * MAP_ZOOM.maxSpan
   rig.limits.panRadius = 0
   frameGlobeHome(2.0)
   el('chunkBtn').textContent = 'earth'
@@ -597,7 +604,12 @@ function toGlobe(): void {
 function diveTo(id: string): void {
   const m = globe.markers.find((x) => x.id === id)
   if (!m) return
-  rig.flyTo(m.position.clone().multiplyScalar(1.12), globe.radius * 0.7, { duration: 1.7 })
+  // §57.3: the dive drops toward the mark from directly above it — there is no
+  // limb to swing round on a flat map, so the approach is a descent
+  rig.flyTo(m.position.clone(), globeHomeDistance() * MAP_ZOOM.minSpan, {
+    ...orbitFor(0, 0),
+    duration: 1.7,
+  })
   setTimeout(() => {
     if (id === entry.id) toCity()
     else {
@@ -663,7 +675,6 @@ globeLabels.addEventListener('mouseover', (e) => {
 })
 
 const labelV = new Vector3()
-const camDir = new Vector3()
 
 /**
  * §49 r3: labels anchor to their marks. Each sits immediately beside its mark
@@ -673,15 +684,20 @@ const camDir = new Vector3()
  * mark set: a city behind the limb drops both.
  */
 function updateGlobeLabels(): void {
-  camDir.copy(rig.camera.position).normalize()
   const live: Array<{ m: (typeof globe.markers)[number]; sx: number; sy: number; div: HTMLElement }> = []
   for (const m of globe.markers) {
     const div = labelEls.get(m.id)
     if (!div) continue
-    // one test drives both: behind the limb means no mark and no label
-    const facing = m.position.clone().normalize().dot(camDir) > 0.08
+    /**
+     * §57.3: no limb test. On the sphere this line decided whether a mark was
+     * facing the camera, and it was the source of the labels-detached-from-
+     * marks failure the globe never shook off — the mark set and the label set
+     * were two answers to a question that had to have one. A flat map has no
+     * far side: every mark is visible, so the only test left is whether it is
+     * in front of the camera at all.
+     */
     labelV.copy(m.position).project(rig.camera)
-    const onScreen = facing && labelV.z <= 1
+    const onScreen = labelV.z <= 1
     m.sprite.visible = onScreen
     if (!onScreen) {
       div.classList.remove('on')
@@ -2659,7 +2675,7 @@ renderer.setAnimationLoop(() => {
       const m = migrationRecord[arcCursor++ % migrationRecord.length]
       const from = globe.markers.find((x) => x.id === m.fromChunk)?.position
       const to = globe.markers.find((x) => x.id === m.toSettlement)?.position
-      if (from && to) globeArcs.launchArc(from, to)
+      if (from && to) globeArcs.launchArc(from, to, '#e2a54f', 6, 'up')
     }
   }
 
@@ -2917,6 +2933,9 @@ function civHome(): void {
       })
     },
   },
+  /** §57.3: the map's marks, for the every-city-in-one-frame check */
+  mapMarkers: () =>
+    globe.markers.map((m) => ({ id: m.id, x: m.position.x, y: m.position.y, z: m.position.z })),
   /** §57.4: the plate's own extent, so a framing check can project its corners */
   halfExtent: HALF_EXTENT,
   groundY: substrate.groundY,

@@ -85,6 +85,7 @@ interface Arc {
   sprite: Sprite
   /** arc height as a fraction of the chord */
   lift: number
+  liftAxis: 'radial' | 'up'
 }
 
 export class FloatLights {
@@ -146,13 +147,25 @@ export class FloatLights {
    * §49: the migration arc — the same light, travelling. Positions are in
    * whatever space the group lives in (globe or city render space).
    */
-  launchArc(from: Vector3, to: Vector3, colour = '#e2a54f', duration = 6): void {
+  launchArc(
+    from: Vector3,
+    to: Vector3,
+    colour = '#e2a54f',
+    duration = 6,
+    /**
+     * §57.3: which way is "up" for the arc's lift. On the globe it was radial
+     * (away from the planet's centre); on the flat map it is simply up, and
+     * the radial rule would have bent every migration sideways across the
+     * plate instead of over it.
+     */
+    liftAxis: 'radial' | 'up' = 'radial',
+  ): void {
     const sprite = new Sprite(
       new SpriteMaterial({ map: glyphTexture(colour), depthTest: false, transparent: true }),
     )
     sprite.scale.set(9, 9, 1)
     this.group.add(sprite)
-    this.arcs.push({ from: from.clone(), to: to.clone(), t: 0, duration, sprite, lift: 0.22 })
+    this.arcs.push({ from: from.clone(), to: to.clone(), t: 0, duration, sprite, lift: 0.22, liftAxis })
   }
 
   /** advance travelling lights; the caller owns per-frame agent updates */
@@ -171,7 +184,8 @@ export class FloatLights {
       p.copy(a.from).lerp(a.to, t)
       // a lifted path: rise along the normal of the chord midpoint (globe
       // space: away from origin; city space: up)
-      const liftDir = p.lengthSq() > 1 ? p.clone().normalize() : new Vector3(0, 1, 0)
+      const liftDir =
+        a.liftAxis === 'up' || p.lengthSq() <= 1 ? new Vector3(0, 1, 0) : p.clone().normalize()
       p.addScaledVector(liftDir, Math.sin(t * Math.PI) * a.from.distanceTo(a.to) * a.lift)
       const mat = a.sprite.material as SpriteMaterial
       mat.opacity = t > 0.8 ? (1 - t) / 0.2 : 1
