@@ -8,6 +8,7 @@ import {
   agentIdentity,
   agentWire,
   eventWire,
+  learnNames,
   materialiseSpec,
   progressOf,
   purposeIndexOf,
@@ -89,6 +90,15 @@ export class WorldService {
     this.onSaturated = opts.onSaturated
     this.throughputIndex = opts.throughput ?? 2
     this.store.season = this.season
+    /**
+     * §63.1: the retained log is read for the names it carries before anything
+     * is served from it. A season turn rebuilds the world from the seed, so
+     * rows written by earlier seasons — and rows written before this fix, which
+     * carry no name of their own — have no live agent to resolve against. Their
+     * `agent_born` and `estate_transferred` rows always did carry the name; one
+     * pass at boot puts it where the wire can reach it.
+     */
+    learnNames(this.store.events({ limit: 40_000 }))
     this.sim = new Simulation(opts.seed, this.store, {
       agentCount: opts.agentCount ?? 58,
       seed: opts.rngSeed ?? 'world-1',

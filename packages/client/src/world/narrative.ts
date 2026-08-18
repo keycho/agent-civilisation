@@ -113,7 +113,7 @@ export class Narrative {
       if (!s && this.opensAStory(e.type)) {
         s = {
           agentId: e.agentId,
-          agentName: e.agentName ?? e.agentId,
+          agentName: e.agentName ?? 'someone',
           acquired: 0,
           assembled: 0,
           cleared: 0,

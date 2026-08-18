@@ -421,7 +421,8 @@ function acceptReadouts(r: Readouts): void {
 // ---------------------------------------------------------------------------
 
 const rig = new CameraRig(innerWidth / innerHeight)
-rig.limits.panRadius = radius * 1.1
+rig.limits.panHalfX = HALF_EXTENT
+rig.limits.panHalfZ = HALF_EXTENT
 
 /**
  * §24.1: "zoom so the diamond's width fills the frame width, accepting corner
@@ -580,9 +581,13 @@ function globeHomeDistance(): number {
   return rig.distanceToFrame(needVertical * MAP_HOME_SPAN)
 }
 
-function frameGlobeHome(duration: number): void {
+function frameGlobeHome(duration: number, snap = false): void {
   const orbit = orbitFor(0, 0)
-  rig.flyTo(new Vector3(0, 0, 0), globeHomeDistance(), { ...orbit, duration })
+  // §62.4: the map's `0` is the same four-part reset the city's is
+  rig.home(new Vector3(0, 0, 0), globeHomeDistance(), orbit.azimuth, orbit.polar, {
+    duration,
+    snap,
+  })
 }
 
 function toGlobe(): void {
@@ -597,7 +602,11 @@ function toGlobe(): void {
   const home = globeHomeDistance()
   rig.limits.minDistance = home * MAP_ZOOM.minSpan
   rig.limits.maxDistance = home * MAP_ZOOM.maxSpan
-  rig.limits.panRadius = 0
+  // §62.1: on the map the plate IS the map, so the target is bounded by the
+  // map's own 2:1 footprint. Pinning it to the origin instead would make the
+  // dive impossible, which is how the invariant would have leaked back out.
+  rig.limits.panHalfX = globe.halfWidth
+  rig.limits.panHalfZ = globe.halfHeight
   frameGlobeHome(2.0)
   el('chunkBtn').textContent = 'earth'
   document.body.classList.add('globe')
@@ -637,7 +646,8 @@ function toCity(): void {
   cityRoot.visible = true
   rig.limits.minDistance = 40
   rig.limits.maxDistance = frameThePlate(innerWidth / innerHeight) * 1.35
-  rig.limits.panRadius = radius * 1.1
+  rig.limits.panHalfX = HALF_EXTENT
+  rig.limits.panHalfZ = HALF_EXTENT
   rig.flyTo(new Vector3(0, substrate.groundY, 0), CITY_FRAMING * 1.55, {
     azimuth: CITY_AZIMUTH + 0.7,
     polar: 0.36,
@@ -1205,8 +1215,31 @@ const sessionStartedAt = performance.now()
  * A surname is added only where the first name is genuinely ambiguous, so the
  * common case stays as short as it reads.
  */
+/**
+ * §63.1: an internal id is never a name.
+ *
+ * `agent-56-g2-23-g3-105-g4-171` went out in the headline, in every story card
+ * and through the log, because this fell back to the id when the wire carried
+ * no name — and the wire carried no name for every heir from a previous
+ * season, which after a turn is most of the backfill. The server fix (§63.1,
+ * the name goes on the row) stops that at source; this is the second line,
+ * because a rendered id is a product failure whatever produced it and the
+ * client must not be able to emit one at all.
+ */
+const AGENT_ID = /^agent-\d/
+
+export function agentLabel(id: string | undefined, full: string | undefined): string {
+  if (full && !AGENT_ID.test(full)) return full
+  return 'someone'
+}
+
+/** the first name a line uses, or nothing at all — never an id */
+function firstName(full: string | undefined): string {
+  return full && !AGENT_ID.test(full) ? full.split(' ')[0] : ''
+}
+
 function displayName(id: string | undefined, full: string | undefined): string {
-  const name = (full ?? id ?? 'someone').toLowerCase()
+  const name = agentLabel(id, full).toLowerCase()
   const first = name.split(' ')[0]
   let clash = false
   for (const [otherId, a] of roster) {
@@ -1551,8 +1584,8 @@ function pushFeedRow(e: EventWire, times = 1, instant = false): void {
   row.innerHTML =
     `<span class="ord">${e.id}</span>` +
     `<span class="t">${
-      e.agentName
-        ? `<b${tone ? ` style="color:${tone}"` : ''}>${escapeHtml(e.agentName.split(' ')[0])}</b> `
+      firstName(e.agentName)
+        ? `<b${tone ? ` style="color:${tone}"` : ''}>${escapeHtml(firstName(e.agentName))}</b> `
         : ''
     }<span class="tx"></span><span class="n">${times > 1 ? ` ×${times}` : ''}</span></span>`
   const tx = row.querySelector('.tx') as HTMLElement
@@ -2422,7 +2455,7 @@ function renderChangelog(): void {
               `<div class="ev" data-g="${gen}" data-i="${i}"><span class="w">${Math.round(
                 e.cinematicWeight,
               )}</span><span class="t">${
-                e.agentName ? `${escapeHtml(e.agentName.split(' ')[0])} ` : ''
+                firstName(e.agentName) ? `${escapeHtml(firstName(e.agentName))} ` : ''
               }${escapeHtml(e.rationale ?? e.type.replace(/_/g, ' '))}</span></div>`,
           )
           .join('') +
@@ -2983,19 +3016,54 @@ function* withIdentity(): Generator<AgentPresence> {
   }
 }
 
-/** §51.1: the chunk's home framing — 0 lands here, as do load and switch */
-function civHome(): void {
+/**
+ * §51.1/§62.4: the chunk's home framing — 0 lands here, as do load and switch.
+ *
+ * §62.4 makes this a RESET rather than a fly-to that happens to pass four
+ * arguments: target, distance, pitch and azimuth land together, through the
+ * rig's own `home`, so there is no way to add a caller later that resets three
+ * of them. The reported failure — border framing with the city in a corner,
+ * and rotation sweeping a point that is not the city — is precisely what a
+ * correct distance aimed at a stale target looks like.
+ */
+function civHome(opts: { snap?: boolean } = {}): void {
+  // a follow re-aims the camera every frame, so a home framing taken while one
+  // is running is undone before it lands. `0` is the rescue; it lets go first.
+  if (followId) follow(null)
   director.takeControl()
-  rig.flyTo(new Vector3(0, substrate.groundY, 0), frameThePlate(innerWidth / innerHeight), {
-    azimuth: CITY_AZIMUTH,
-    polar: CITY_POLAR,
-    duration: 1.2,
-  })
+  rig.home(
+    new Vector3(0, substrate.groundY, 0),
+    frameThePlate(innerWidth / innerHeight),
+    CITY_AZIMUTH,
+    CITY_POLAR,
+    { duration: 1.2, snap: opts.snap },
+  )
 }
 
 // exposed for tooling and for driving screenshots
 ;(window as unknown as Record<string, unknown>).civ = {
   rig,
+  /**
+   * §62.2: the plate the camera is not allowed to lose, so the fuzz harness
+   * projects the same square the invariant bounds rather than re-deriving an
+   * extent from chunk bounds it would have to keep in step by hand.
+   */
+  plate: {
+    halfExtent: HALF_EXTENT,
+    groundY: substrate.groundY,
+    /** the map is its own plate, 2:1, and must not be lost either */
+    get map() {
+      return { halfWidth: globe.halfWidth, halfHeight: globe.halfHeight }
+    },
+    get mode() {
+      return mode
+    },
+    /** §62.4: whichever `0` lands on, snapped, for the capture rigs */
+    home(snap = true) {
+      if (mode === 'city') civHome({ snap })
+      else frameGlobeHome(1.2, snap)
+    },
+  },
   buildings,
   observer,
   director,

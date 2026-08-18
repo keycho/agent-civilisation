@@ -169,7 +169,7 @@ export function eventWire(sim: Simulation, e: WorldEvent): EventWire {
     id: e.id,
     type: e.type,
     agentId: e.agentId,
-    agentName: agent?.name,
+    agentName: agent?.name ?? storedName(e),
     generation: agent?.generation ?? sim.generation,
     buildingId: e.buildingId,
     rationale: e.rationale,
@@ -178,6 +178,52 @@ export function eventWire(sim: Simulation, e: WorldEvent): EventWire {
     y: at ? round(at[1]) : undefined,
     monument: monumentName(e),
   }
+}
+
+/**
+ * §63.1: the name as the row recorded it, for every event the live world can
+ * no longer account for — anything written before the current season turned.
+ * `agent_born`/`agent_died`/`estate_transferred` already wrote it under `name`
+ * and `to`; everything from the action emitter now writes `agentName`.
+ *
+ * The index exists for the rows already in the store when this shipped, which
+ * carry no name of their own. It fills itself from the log as the log is read:
+ * `agent_born` has always carried `payload.name` and always precedes that
+ * agent's other rows, so one in-order pass over a backfill names everything
+ * behind it. Bounded because a season turn prunes, and cheap because it is one
+ * string per agent that has ever acted in the retained window.
+ */
+const nameIndex = new Map<string, string>()
+
+/** the name a row carries itself, if it carries one */
+function ownName(e: WorldEvent): string | undefined {
+  const p = e.payload as { agentName?: string; name?: string; to?: string } | undefined
+  const n = p?.agentName ?? p?.name ?? (e.type === 'estate_transferred' ? p?.to : undefined)
+  return typeof n === 'string' && n.length > 0 ? n : undefined
+}
+
+/**
+ * §63.1: read a batch of rows for the names they carry, before any of them are
+ * wired. Deliberately a separate pass rather than learning as rows are mapped:
+ * the store returns newest-first, so an agent's own `agent_born` row arrives
+ * AFTER the rows that need it, and a learn-as-you-go index would name a
+ * backfill in exactly the wrong direction. Order-independent by construction.
+ */
+export function learnNames(events: Iterable<WorldEvent>): void {
+  for (const e of events) {
+    if (!e.agentId) continue
+    const n = ownName(e)
+    if (n) nameIndex.set(e.agentId, n)
+  }
+}
+
+function storedName(e: WorldEvent): string | undefined {
+  return ownName(e) ?? (e.agentId ? nameIndex.get(e.agentId) : undefined)
+}
+
+/** for tests: the index is process-wide, so a fresh case starts from nothing */
+export function forgetNames(): void {
+  nameIndex.clear()
 }
 
 /** §58.3: the sim stamps the fact; the wire carries only the name. */

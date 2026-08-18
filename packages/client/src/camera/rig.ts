@@ -19,8 +19,25 @@ export interface RigLimits {
   maxDistance: number
   minPolar: number
   maxPolar: number
-  /** how far the target may stray from the chunk centre, metres */
-  panRadius: number
+  /**
+   * §62.1: the rectangle the orbit target may occupy, as half-extents in
+   * metres about the origin — the plate's own footprint plus its margin. Was
+   * `panRadius`, a circle, which is the wrong shape for either plate: it cut
+   * the corners off the region a viewer may look at while letting the target
+   * out past the edge mid-side. The city plate is square and the §57.3 map is
+   * 2:1, so the bound has to be able to be both.
+   */
+  panHalfX: number
+  panHalfZ: number
+}
+
+/**
+ * §62.1: where the target is allowed to be — the plate's own footprint, so a
+ * corner of the city is as reachable as its middle and no more.
+ */
+function clampToPlate(v: Vector3, limits: RigLimits): void {
+  v.x = MathUtils.clamp(v.x, -limits.panHalfX, limits.panHalfX)
+  v.z = MathUtils.clamp(v.z, -limits.panHalfZ, limits.panHalfZ)
 }
 
 export interface LensConfig {
@@ -83,7 +100,8 @@ export class CameraRig {
     maxDistance: 2800,
     minPolar: 0.12,
     maxPolar: 1.32,
-    panRadius: 520,
+    panHalfX: 520,
+    panHalfZ: 520,
   }
 
   lens: LensConfig = CITY_LENS
@@ -184,7 +202,53 @@ export class CameraRig {
     this.distance += (this.desiredDistance - this.distance) * k
     this.azimuth += (this.desiredAzimuth - this.azimuth) * k
     this.polar += (this.desiredPolar - this.polar) * k
+    this.enforce()
     this.apply(k)
+  }
+
+  /**
+   * §62.1: the invariants, enforced EVERY FRAME after any input — which is the
+   * whole finding of §62. Clamping inside `pan` and `zoom` and again at `0`
+   * bounds the endpoints those functions produce; it says nothing about the
+   * states reachable between them. A `flyTo` target was never clamped at all,
+   * `resize` could shrink `maxDistance` under a camera already further out,
+   * and a limits change (city -> map -> city) left the live state wherever the
+   * old limits had allowed. Each of those is a way to be outside the envelope
+   * while every individual clamp is still correct, and the plate goes off
+   * screen for exactly as long as the damping takes to not fix it.
+   *
+   * So: both the desired state and the damped live state are pulled inside the
+   * bands here, on every frame, whatever moved them.
+   */
+  private enforce(): void {
+    clampToPlate(this.desiredTarget, this.limits)
+    clampToPlate(this.target, this.limits)
+    this.desiredDistance = MathUtils.clamp(
+      this.desiredDistance,
+      this.limits.minDistance,
+      this.limits.maxDistance,
+    )
+    this.distance = MathUtils.clamp(
+      this.distance,
+      this.limits.minDistance,
+      this.limits.maxDistance,
+    )
+    this.desiredPolar = MathUtils.clamp(
+      this.desiredPolar,
+      this.limits.minPolar,
+      this.limits.maxPolar,
+    )
+    this.polar = MathUtils.clamp(this.polar, this.limits.minPolar, this.limits.maxPolar)
+    // §62.5: azimuth is free, and the one thing that must not accumulate — an
+    // unwrapped angle grows without bound under continuous orbiting and
+    // eventually loses precision in the sines that place the camera. Shifting
+    // both angles by the same whole turn is invisible; a tween holds absolute
+    // endpoints, so it is left to finish before the shift is taken.
+    if (!this.tween && (this.azimuth > Math.PI || this.azimuth < -Math.PI)) {
+      const shift = wrapAngle(this.azimuth) - this.azimuth
+      this.azimuth += shift
+      this.desiredAzimuth += shift
+    }
   }
 
   /**
@@ -215,6 +279,7 @@ export class CameraRig {
     // the step under test
     this.driftTarget = 0
     this.driftAmount = 0
+    this.enforce()
     this.apply(1)
   }
 
@@ -281,12 +346,68 @@ export class CameraRig {
   }
 
   private clampTarget(): void {
-    const r = this.limits.panRadius
-    const d = Math.hypot(this.desiredTarget.x, this.desiredTarget.z)
-    if (d > r) {
-      this.desiredTarget.x *= r / d
-      this.desiredTarget.z *= r / d
+    clampToPlate(this.desiredTarget, this.limits)
+  }
+
+  /**
+   * §62.4: `0`. The reported failure — "lands at the plate's border with the
+   * city in a corner, and rotating sweeps around a point that is not the
+   * city" — is what a home framing looks like when the DISTANCE is recomputed
+   * for the plate but the TARGET is not brought back to its centre. The rig
+   * therefore owns the reset rather than leaving it as four arguments a caller
+   * has to remember to pass together: target, distance, pitch and azimuth land
+   * as one operation, and nothing is optional.
+   *
+   * `snap` exists for the same reason `settle` does — a capture, and a
+   * recovery from a state a viewer wants out of NOW, should not have to wait
+   * out the damping.
+   */
+  home(
+    at: Vector3,
+    distance: number,
+    azimuth: number,
+    polar: number,
+    opts: { duration?: number; snap?: boolean } = {},
+  ): void {
+    this.cancelTween()
+    if (opts.snap) {
+      this.desiredTarget.copy(at)
+      this.desiredDistance = distance
+      this.desiredAzimuth = azimuth
+      this.desiredPolar = polar
+      this.settle()
+      return
     }
+    this.flyTo(at, distance, { azimuth, polar, duration: opts.duration ?? 1.2 })
+  }
+
+  /**
+   * §62.2: the invariants as a predicate, so a harness asserts against what
+   * the rig believes rather than re-deriving the bands from constants that
+   * might have drifted apart from it.
+   */
+  outOfBounds(): string[] {
+    const out: string[] = []
+    const { panHalfX, panHalfZ } = this.limits
+    if (Math.abs(this.target.x) > panHalfX + 1e-3 || Math.abs(this.target.z) > panHalfZ + 1e-3) {
+      out.push(
+        `target (${this.target.x.toFixed(1)}, ${this.target.z.toFixed(1)}) outside ` +
+          `±${panHalfX.toFixed(0)} x ±${panHalfZ.toFixed(0)}`,
+      )
+    }
+    if (this.distance < this.limits.minDistance - 1e-3 || this.distance > this.limits.maxDistance + 1e-3) {
+      out.push(
+        `distance ${this.distance.toFixed(0)} outside [${this.limits.minDistance.toFixed(
+          0,
+        )}, ${this.limits.maxDistance.toFixed(0)}]`,
+      )
+    }
+    if (this.polar < this.limits.minPolar - 1e-3 || this.polar > this.limits.maxPolar + 1e-3) {
+      out.push(
+        `polar ${this.polar.toFixed(3)} outside [${this.limits.minPolar}, ${this.limits.maxPolar}]`,
+      )
+    }
+    return out
   }
 
   /** How close to street level we are, 0..1 — used to fade the tilt-shift out. */

@@ -1,0 +1,31 @@
+{
+  "seed": 3,
+  "sequences": 6,
+  "totalFrames": 281,
+  "worstOverall": 0.0650887573964497,
+  "modeFlips": 0,
+  "failures": [],
+  "bad": {
+    "mode": "city",
+    "d": 40,
+    "polar": 1.32,
+    "target": [
+      46.3,
+      -87.9
+    ],
+    "azimuth": -1.388,
+    "coverage": 0.7692307692307693
+  },
+  "home": {
+    "mode": "city",
+    "offCentre": 4.453222009663753e-16,
+    "d": 2366,
+    "polar": 0.66,
+    "azimuth": 0,
+    "target": [
+      0,
+      0
+    ]
+  },
+  "homeOk": true
+}

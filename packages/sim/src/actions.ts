@@ -312,6 +312,21 @@ function emit(world: World, type: EventType, opts: EmitOptions): void {
     if (b.landmark) weight += 24
   }
   let payload = opts.payload
+  /**
+   * §63.1: the name goes ON the row.
+   *
+   * The wire used to resolve `agentId -> name` against the LIVE world, and
+   * events outlive the world that wrote them: the store retains four seasons
+   * and a season turn rebuilds the world from the seed, so every heir from a
+   * previous season resolved to nothing. Measured on production, 166 of 288
+   * events on a fresh connection had no name — every one of them an heir,
+   * while generation-1 agents resolved only because `agent-0` happens to
+   * exist in every season and collides by luck onto the wrong person.
+   *
+   * §5 already says what to do about this: the log is the record. A name that
+   * has to be joined against mutable state is not recorded, it is inferred.
+   */
+  if (opts.agent) payload = { ...payload, agentName: opts.agent.name }
   if (monumentFalling(type, opts.building)) {
     weight = MAX_CINEMATIC_WEIGHT
     payload = {

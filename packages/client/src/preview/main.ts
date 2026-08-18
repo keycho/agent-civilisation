@@ -40,7 +40,8 @@ createPreviewEnvironment(scene)
 scene.add(createPreviewGround(2000))
 
 const rig = new CameraRig(innerWidth / innerHeight, TOOL_LENS)
-rig.limits.panRadius = 900
+rig.limits.panHalfX = 900
+rig.limits.panHalfZ = 900
 rig.limits.maxDistance = 3200
 rig.limits.minDistance = 30
 const FRAME = rig.distanceToFrame(760)
