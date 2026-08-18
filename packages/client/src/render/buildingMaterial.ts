@@ -201,17 +201,33 @@ export function createBuildingMaterial(data: BuildingDataTexture): BuildingMater
           base *= uCityWall;
         }
 
-        // §48.3: per-building variation within the material family — the
-        // value jitter that was here, plus a small stable warm/cool hue tilt
-        // hashed off the same channel, so no two adjacent facades match
-        base *= 0.93 + 0.14 * jitter;
+        /**
+         * §56.2: light does the work, material calms down.
+         *
+         * The counterintuitive lesson from the reference is that its buildings
+         * are nearly ONE material and all of its variety is light. Our §48.3
+         * value jitter is right at golden hour, where a raking key models the
+         * fabric and the variation reads as craft. At a dusk hour there is no
+         * key: the same jitter becomes noise competing with the windows, and
+         * the frame stops having a subject.
+         *
+         * So the VALUE spread narrows as the hour darkens and the hue tilt
+         * does not — per-city identity (§42.1) is carried by hue, and it
+         * survives intact. The ramp starts past dusk rather than scaling on the
+         * night value directly, so the golden-hour cities are untouched: schiedam,
+         * london and paris sit at 0.26 or below and get exactly the fabric
+         * §48.3 authored.
+         */
+        float calm = 1.0 - 0.72 * smoothstep(0.35, 0.85, uNight);
+        base *= mix(1.0, 0.93 + 0.14 * jitter, calm);
         float hueT = fract(jitter * 7.31);
         base *= mix(vec3(1.025, 0.995, 0.955), vec3(0.965, 1.0, 1.045), hueT);
 
         // §48.3: age shows — older stock (era toward 1) warms and weathers
-        // down a step beyond the old tint
+        // down a step beyond the old tint. The warm shift is hue and stays;
+        // the darkening is value and calms with everything else.
         base = mix(base, base * vec3(1.06, 0.99, 0.90), era);
-        base *= 1.0 - 0.06 * era;
+        base *= 1.0 - 0.06 * era * calm;
 
         // condition: dulls and darkens as a building decays (§4); §48.3 also
         // greys a poor roof toward slate-neutral
@@ -357,6 +373,6 @@ export function createBuildingMaterial(data: BuildingDataTexture): BuildingMater
   }
 
   // force a recompile if the material is reused across chunks
-  material.customProgramCacheKey = () => 'civ-building-v4'
+  material.customProgramCacheKey = () => 'civ-building-v5'
   return material
 }
