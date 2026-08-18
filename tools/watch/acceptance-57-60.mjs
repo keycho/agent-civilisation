@@ -57,16 +57,31 @@ await page.waitForTimeout(9000)
 // ---------------------------------------------------------------------------
 // 1. one headline that tells them what is happening
 // ---------------------------------------------------------------------------
+/**
+ * "reads one headline that TELLS THEM WHAT IS HAPPENING" — so `the world is
+ * quiet` does not count, however honest it is. §60(a) names the most dramatic
+ * action currently in progress, which needs one to be in progress; on a fresh
+ * connection that takes a moment, and the claim is that it takes a moment
+ * rather than that it happens instantly.
+ */
+await page
+  .waitForFunction(
+    () => !document.getElementById('headline')?.classList.contains('quiet'),
+    null,
+    { timeout: 45000 },
+  )
+  .catch(() => {})
 const headline = await page.evaluate(() => {
   const h = document.getElementById('headline')
   return {
-    visible: !!h && getComputedStyle(h).display !== 'none',
+    visible: !!h && getComputedStyle(h).display !== 'none' && !h.classList.contains('quiet'),
+    who: h?.querySelector('#headlineWho')?.textContent?.trim() ?? '',
     text: h?.querySelector('.body')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
   }
 })
 claim(
-  '§60 headline',
-  headline.visible && headline.text.length > 8,
+  '§60 headline names an action',
+  headline.visible && !!headline.who && headline.text.length > 12,
   headline.text ? `"${headline.text}"` : 'no headline',
 )
 
@@ -111,13 +126,13 @@ await page.evaluate(() => {
   window.civ.director.enabled = true
 })
 console.log('  .... recording 60 s of ambient')
-const before = await page.evaluate(() => window.civ.observer.stageCounts())
+const before = await page.evaluate(() => ({ ...window.civ.watched }))
 const t0 = Date.now()
 for (let i = 0; i < 5; i++) {
   await page.waitForTimeout(12_000)
   await page.screenshot({ path: `${OUT}/ambient-t${String((i + 1) * 12).padStart(2, '0')}s.png` })
 }
-const after = await page.evaluate(() => window.civ.observer.stageCounts())
+const after = await page.evaluate(() => ({ ...window.civ.watched }))
 const seconds = Math.round((Date.now() - t0) / 1000)
 
 // ---------------------------------------------------------------------------
@@ -197,11 +212,13 @@ await page.screenshot({ path: `${OUT}/3-pixel-agent.png` })
 // ---------------------------------------------------------------------------
 await page.evaluate(() => window.civ.follow(null))
 await page.waitForTimeout(600)
-await page.evaluate(() => document.getElementById('chunkBtn')?.click())
-await page.waitForTimeout(4500)
+// the product's own entry to the map (§57.3); §57.4's zoom-out handover is
+// the other one and the fuzz already exercises that
+await page.evaluate(() => window.civ.ui.toGlobe())
+await page.waitForTimeout(5000)
 const map = await page.evaluate(() => {
   const view = window.civ.mapView
-  if (!view) return null
+  if (!view || window.civ.plate.mode !== 'globe') return null
   const rig = window.civ.rig
   rig.settle()
   rig.camera.updateMatrixWorld(true)

@@ -35,9 +35,13 @@ const rows = []
 for (const chunk of CHUNKS) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
   page.on('pageerror', (e) => console.log('PAGE EXCEPTION', chunk, e.message))
-  // no server: the seed alone is the day-0 world, which is the honest control
-  // for a palette change — it is identical between arms by construction
-  await page.goto(`${ORIGIN}/?chunk=${chunk}`, { waitUntil: 'domcontentloaded' })
+  // CIV_LIVE points every city at a running server, which is what §63.5's
+  // acceptance frames need — a day-0 world has no agent light in it at all, so
+  // it can prove the cold half and nothing about the warm one
+  const live = process.env.CIV_LIVE
+    ? `&server=${encodeURIComponent(`${process.env.CIV_LIVE}/ws/${chunk}`)}`
+    : ''
+  await page.goto(`${ORIGIN}/?chunk=${chunk}${live}`, { waitUntil: 'domcontentloaded' })
   await page.waitForFunction(() => window.civ != null, null, { timeout: 120000 })
   await page.evaluate(() => {
     document.getElementById('watchBtn')?.click()

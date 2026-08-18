@@ -1,0 +1,42 @@
+{
+  "chunk": "schiedam-havens",
+  "origin": "http://127.0.0.1:5173",
+  "server": "ws://127.0.0.1:8820/ws/schiedam-havens",
+  "results": [
+    {
+      "name": "§60 headline names an action",
+      "ok": true,
+      "detail": "\"bram dijkgraaf — redevelop 2 assembled lots at 4 levels click to fly there\""
+    },
+    {
+      "name": "§57.4 whole city framed",
+      "ok": true,
+      "detail": "936/936 buildings inside the frame (100.0%) at d=2366"
+    },
+    {
+      "name": "§57.2 a demolition completed",
+      "ok": true,
+      "detail": "11 in 79 s"
+    },
+    {
+      "name": "§57.2 a building rose",
+      "ok": true,
+      "detail": "9 in 79 s"
+    },
+    {
+      "name": "§60 story card followed",
+      "ok": true,
+      "detail": "\"elske dijkgraaf96assembled 1\" → following agent-57-g2-9-g3-44-g4-75-g5-94-g6-112-g7-127 at d=3063"
+    },
+    {
+      "name": "§59.1 a pixel agent picked out",
+      "ok": true,
+      "detail": "agent-10-g2-28-g3-95 at 16.0 px tall, followed"
+    },
+    {
+      "name": "§57.3 flat map, every city at once",
+      "ok": true,
+      "detail": "8/8 marks in frame — havens, deptford, red hook, ourcq, kyojima, westwijk, dorp, haven"
+    }
+  ]
+}

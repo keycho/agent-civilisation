@@ -1357,13 +1357,22 @@ el('storyList').addEventListener('click', (ev) => {
   const card = (ev.target as HTMLElement).closest('.s') as HTMLElement | null
   if (!card) return
   const id = card.dataset.agent
-  if (id) showAgentCard(id)
-  if (!card.dataset.x) return
-  inputWinsCamera()
-  rig.flyTo(pointAt(Number(card.dataset.x), Number(card.dataset.y)), 280, {
-    polar: 0.82,
-    duration: 2.0,
-  })
+  if (!id) return
+  showAgentCard(id)
+  /**
+   * §60(b) acceptance: "follows a story card to its completion". Flying to
+   * where the campaign happens to be right now is not that — the campaign
+   * moves, and a fixed camera on a finished site watches nothing. Clicking a
+   * card FOLLOWS its agent, so the story stays framed while it runs, and the
+   * agent's own log opens beside it.
+   */
+  follow(id)
+  if (card.dataset.x) {
+    rig.flyTo(pointAt(Number(card.dataset.x), Number(card.dataset.y)), 280, {
+      polar: 0.82,
+      duration: 2.0,
+    })
+  }
 })
 
 /**
@@ -3145,6 +3154,26 @@ function civHome(opts: { snap?: boolean } = {}): void {
    * projects the same square the invariant bounds rather than re-deriving an
    * extent from chunk bounds it would have to keep in step by hand.
    */
+  /** §63.5/§62.2: the flat map itself, for the acceptance and fuzz harnesses */
+  mapView: globe,
+  /** §57.2 acceptance: what this session has actually watched happen */
+  get watched() {
+    return watched
+  },
+  /**
+   * §57-60 acceptance: every baseline building's centroid, so "a whole city
+   * framed" is a count of what is inside the frame rather than a judgement.
+   */
+  buildingCentroids: () =>
+    seed.buildings.map((b) => {
+      let x = 0
+      let y = 0
+      for (const p of b.footprint) {
+        x += p[0]
+        y += p[1]
+      }
+      return [x / b.footprint.length, y / b.footprint.length] as [number, number]
+    }),
   plate: {
     halfExtent: HALF_EXTENT,
     groundY: substrate.groundY,
