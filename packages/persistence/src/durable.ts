@@ -171,8 +171,12 @@ export class DurableStore implements WorldStore {
     return this.memory.events(q)
   }
 
-  weightedEvents(sinceTick: number, limit: number): WorldEvent[] {
-    return this.memory.weightedEvents(sinceTick, limit)
+  weightedEvents(chunkId: string, sinceTick: number, limit: number): WorldEvent[] {
+    return this.memory.weightedEvents(chunkId, sinceTick, limit)
+  }
+
+  weightSince(chunkId: string, sinceTick: number): number {
+    return this.memory.weightSince(chunkId, sinceTick)
   }
 
   /**

@@ -43,7 +43,15 @@ export interface WorldStore {
   appendEvent(e: Omit<WorldEvent, 'id'>): number
   events(q?: EventQuery): WorldEvent[]
   /** Most recent events ranked by cinematic weight — §17's director input. */
-  weightedEvents(sinceTick: number, limit: number): WorldEvent[]
+  weightedEvents(chunkId: string, sinceTick: number, limit: number): WorldEvent[]
+  /**
+   * §40.6: total cinematic weight since a tick — how much watchable work a
+   * chunk has done lately, as one number. Deliberately NOT weightedEvents
+   * summed: that returns the top N by weight, so on any busy world every
+   * chunk hits N times the maximum weight and the measure saturates. This
+   * walks the window and adds it up.
+   */
+  weightSince(chunkId: string, sinceTick: number): number
 
   putSnapshot(s: Snapshot): void
   /** nearest snapshot at or before `ordinal` */

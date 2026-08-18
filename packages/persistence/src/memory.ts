@@ -14,6 +14,15 @@ export class MemoryStore implements WorldStore {
   private nextId = 1
   private byBuilding = new Map<string, WorldEvent[]>()
   private byAgent = new Map<string, WorldEvent[]>()
+  /**
+   * FINDING: one store spans every hosted chunk (§44.5), but the two
+   * ranked reads below walked the whole log. On a multi-chunk process that
+   * made every city card's "last:" line the same globally-top event, each
+   * server then resolving its author against its OWN roster — so eight cards
+   * showed one event under eight different names. Ranked reads are
+   * chunk-scoped now, and this index is what makes that cheap.
+   */
+  private byChunk = new Map<string, WorldEvent[]>()
 
   appendEvent(e: Omit<WorldEvent, 'id'>): number {
     const id = this.nextId++
@@ -21,6 +30,7 @@ export class MemoryStore implements WorldStore {
     this.log.push(event)
     if (event.buildingId) push(this.byBuilding, event.buildingId, event)
     if (event.agentId) push(this.byAgent, event.agentId, event)
+    push(this.byChunk, event.chunkId, event)
     return id
   }
 
@@ -41,11 +51,22 @@ export class MemoryStore implements WorldStore {
     return out
   }
 
-  weightedEvents(sinceTick: number, limit: number): WorldEvent[] {
+  weightSince(chunkId: string, sinceTick: number): number {
+    const source = this.byChunk.get(chunkId) ?? []
+    let total = 0
+    for (let i = source.length - 1; i >= 0; i--) {
+      if (source[i].tick < sinceTick) break
+      total += source[i].cinematicWeight
+    }
+    return total
+  }
+
+  weightedEvents(chunkId: string, sinceTick: number, limit: number): WorldEvent[] {
+    const source = this.byChunk.get(chunkId) ?? []
     const recent: WorldEvent[] = []
-    for (let i = this.log.length - 1; i >= 0; i--) {
-      if (this.log[i].tick < sinceTick) break
-      recent.push(this.log[i])
+    for (let i = source.length - 1; i >= 0; i--) {
+      if (source[i].tick < sinceTick) break
+      recent.push(source[i])
     }
     recent.sort((a, b) => b.cinematicWeight - a.cinematicWeight || b.tick - a.tick)
     return recent.slice(0, limit)

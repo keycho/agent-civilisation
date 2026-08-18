@@ -127,6 +127,79 @@ operator pastes back exactly two values: `DATABASE_URL` on the Railway
 service, and the production origin into `servers.json`'s wss urls (plus
 `VITE_SERVER_URL` as the fallback).
 
+## 5. Genesis: standing a world up from nothing
+
+The runbook for a fresh world — new database, new service, no history. Every
+step is a command or a paste; nothing here is inferred.
+
+**0. What you need.** A Postgres url, a Railway (or any Node 22.18+ host)
+project, a Vercel project. Node >= 22.18 is load-bearing: the packages ship
+TypeScript sources and rely on native type stripping being on by default.
+
+**1. The database.** Run the DDL from §1 above in the Supabase SQL editor —
+`events` (app-assigned bigint id, chunk, season), `snapshots` (PK on
+chunk/season/event ordinal), the append-only trigger and its `civ.retention`
+escape. Do **not** paste `packages/persistence/schema.sql`; it is a different,
+older shape (bigserial ids, no season, FKs to an unpopulated `chunks` table)
+and the server will not write against it.
+
+The server also calls `migrate()` on boot and will create these itself against
+an empty database. Running the DDL by hand is for the case where you want to
+see it before the process does.
+
+**2. The seeds.** A world is its imported places. `packages/client/public/world/`
+already carries eight, committed, and they ship with both the client build and
+the server image — genesis needs no import run. To add a place instead:
+
+    npm run import -- --area <area-id>        # writes world/<chunk>.json + index.json
+
+Then re-run the §41.2 admission suite for the new chunk before it goes near a
+deploy, and author its hour in `CITY_HOUR` (§50.2) — an unauthored chunk
+renders at schiedam's golden hour, which is a fallback, not a decision.
+
+**3. The sim service.** One service, whichever shape:
+
+    CHUNKS=all DATABASE_URL=postgres://…  npm run server      # the whole roster
+    CHUNK=schiedam-havens DATABASE_URL=…  npm run server      # one chunk
+
+`CHUNKS` is case-insensitive and wins over `CHUNK`. On Railway set
+`DATABASE_URL` and `CHUNKS=all`, and leave `healthcheckTimeout` at the 300 in
+`railway.json` — eight worlds take longer to construct than the 30s default,
+and the listener binds before they do so `/health` answers `booting` with
+per-chunk status throughout.
+
+Boot is progressive and visible:
+
+    curl -s https://<host>/health  | head -c 400     # booting -> ok, per chunk
+    curl -s https://<host>/summary | head -c 400     # one object per chunk
+
+**4. The client.** Vercel: build `npm run build -w @civ/client`, output
+`packages/client/dist`. Point it at the sim with EITHER
+
+  * `VITE_SERVER_URL=wss://<host>` — a bare origin is fine, the client
+    completes it to `wss://<host>/ws/<chunkId>` itself; or
+  * `packages/client/public/world/servers.json` — per-chunk urls, which is
+    what a split-topology deploy would use.
+
+**5. Verify before announcing.** In order, because each answer makes the next
+question meaningful:
+
+    curl -s https://<host>/health   # every chunk ready, durability postgres
+    curl -s https://<host>/summary  # tick advancing between two calls
+    node tools/watch/prodcheck.mjs  # what url the built bundle resolves, and
+                                    # a real ws hello against it
+
+Note the sandbox caveat recorded in `prodcheck.mjs`: headless Chromium here
+cannot reach external hosts through the egress proxy (ERR_CONNECTION_RESET),
+while curl and node can. A browser-based check failing in this environment is
+not evidence about production.
+
+**6. What genesis does not give you.** The world starts at season 1 on the
+baseline, with no history — the scrub, the changelog and §40.2's timelapse
+have nothing to show until events accumulate. Divergence begins at 0.0% and
+the first structural change takes a few minutes of wall clock at the default
+throughput. That is the world being new, not the deploy being broken.
+
 ## What is not built
 
 **Resume.** A restart begins a new season rather than continuing the old one.

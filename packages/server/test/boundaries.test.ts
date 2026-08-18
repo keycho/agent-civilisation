@@ -86,9 +86,23 @@ test('nothing a client can send advances the world (§21.6)', async () => {
   const protocol = await readFile(join(ROOT, 'packages/protocol/src/index.ts'), 'utf8')
   const body = protocol.slice(protocol.indexOf('export type ClientMessage'))
   const kinds = [...body.matchAll(/t: '(\w+)'/g)].map((m) => m[1])
+  /**
+   * The canary fires whenever the client vocabulary grows, and the answer is
+   * a confirmation, not an edit. Confirmed for each:
+   *
+   *   inspect       reads one building out of the sim and replies
+   *   inspectAgent  §47.2's character sheet — `agentDetail` reads the agent,
+   *                 its plan and its holdings and replies; it writes nothing,
+   *                 queues nothing, and cannot name a building into existence
+   *   ping          answers with the frame clock
+   *   scrub         a store query for a snapshot at an ordinal
+   *
+   * None of them advance the tick, seed a world, or steer an agent — every
+   * one is a question the server answers about a world it alone drives.
+   */
   assert.deepEqual(
     kinds.sort(),
-    ['inspect', 'ping', 'scrub'],
+    ['inspect', 'inspectAgent', 'ping', 'scrub'],
     'a new client message appeared; confirm it cannot advance, seed or steer the world',
   )
 })

@@ -263,9 +263,20 @@ function summaryOfChunk(host: ChunkHost): Record<string, unknown> {
    * read from the store's own ranking over a recent window. The agent's name
    * resolves only while they live; a dead author's line stands unattributed.
    */
-  const top = host.world.store.weightedEvents(Math.max(0, w.tick - 4000), 1)[0]
+  const since = Math.max(0, w.tick - 4000)
+  const top = host.world.store.weightedEvents(host.world.chunkId, since, 1)[0]
   const author = top?.agentId ? w.agents.get(top.agentId)?.name.split(' ')[0] : undefined
+  /**
+   * §40.6/§49.4: "dive to the busiest city" was ranked on raw activity rate,
+   * which ranks the chunk doing the most BOOKKEEPING — acquisitions and
+   * failed bids count the same as a tower going up. The first thing a
+   * stranger sees should be the chunk with the most WATCHABLE work in it, so
+   * the ranking is the sum of cinematic weight over the same recent window
+   * the card's "last:" line already reads.
+   */
+  const heat = host.world.store.weightSince(host.world.chunkId, since)
   return {
+    heat,
     id: host.world.chunkId,
     country: host.seed.chunk.country ?? 'NL',
     materialised: true,

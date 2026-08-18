@@ -1845,6 +1845,8 @@ interface CitySummary {
   divergenceIndex?: number
   agentCount?: number
   activityRate?: number
+  /** §40.6: summed cinematic weight over the recent window — watchability */
+  heat?: number
   lastEvent?: { text: string; weight: number }
 }
 const citySummaries = new Map<string, CitySummary>()
@@ -1894,7 +1896,7 @@ function sparkline(id: string): string {
 function renderCityCards(): void {
   const rows = chunks
     .map((c) => ({ c, s: citySummaries.get(c.id) }))
-    .sort((a, b) => (b.s?.activityRate ?? -1) - (a.s?.activityRate ?? -1))
+    .sort((a, b) => (b.s?.heat ?? b.s?.activityRate ?? -1) - (a.s?.heat ?? a.s?.activityRate ?? -1))
   el('chunkList').innerHTML = rows
     .map(({ c, s }) => {
       const mat = CITY_MATERIALS[c.id] ?? CITY_MATERIAL_DEFAULT
@@ -2537,11 +2539,16 @@ if (bareLoad && !arriving && !sessionStorage.getItem('tf-globe-seen')) {
   void pollSummaries().then(() => {
     setTimeout(() => {
       if (mode !== 'globe') return
+      // §40.6: the busiest city is the one with the most watchable work in
+      // it, not the one filing the most paperwork — heat is the summed
+      // cinematic weight of the recent window, and only falls back to the raw
+      // rate for a chunk too old to be serving it
       let busiest = entry.id
-      let bestRate = -1
+      let best = -1
       for (const [id, s] of citySummaries) {
-        if ((s.activityRate ?? 0) > bestRate) {
-          bestRate = s.activityRate ?? 0
+        const score = s.heat ?? s.activityRate ?? 0
+        if (score > best) {
+          best = score
           busiest = id
         }
       }
