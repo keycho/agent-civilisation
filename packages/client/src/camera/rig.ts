@@ -210,15 +210,48 @@ export class CameraRig {
     this.distance = this.desiredDistance
     this.azimuth = this.desiredAzimuth
     this.polar = this.desiredPolar
+    // a capture must not be drifting: §56.8 is deliberately never still, and
+    // an a/b pair taken during it would differ by the breath rather than by
+    // the step under test
+    this.driftTarget = 0
+    this.driftAmount = 0
     this.apply(1)
   }
 
+  /**
+   * §56.3: ambient drift. "Stillness reads as screenshot; drift reads as film."
+   *
+   * The offset is applied at PLACEMENT time and never written back into the
+   * rig's state. That is the whole trick: the damping above pulls the state
+   * toward its desired value every frame, so a drift stored in azimuth or
+   * distance would be fought and flattened, and a drift written into the
+   * desired value would be overwritten by any running flyTo tween. Offsetting
+   * only where the camera is computed leaves the tween, the damping and the
+   * director's cuts all working exactly as before, with the camera never
+   * quite still on top of them.
+   */
+  driftTarget = 0
+  private driftAmount = 0
+  private driftT = 0
+
+  advanceDrift(dt: number): void {
+    this.driftT += dt
+    // ease in and out rather than switching: a drift that starts abruptly is
+    // a nudge, which reads as a bug rather than as breath
+    this.driftAmount += (this.driftTarget - this.driftAmount) * (1 - Math.pow(0.2, dt))
+  }
+
   private apply(_k: number): void {
-    const sinP = Math.sin(this.polar)
+    // three incommensurate periods, so the path never visibly repeats
+    const a = this.driftAmount
+    const azimuth = this.azimuth + Math.sin(this.driftT * 0.062) * 0.105 * a
+    const polar = this.polar + Math.sin(this.driftT * 0.047 + 1.7) * 0.030 * a
+    const distance = this.distance * (1 + Math.sin(this.driftT * 0.035 + 0.6) * 0.055 * a)
+    const sinP = Math.sin(polar)
     this.camera.position.set(
-      this.target.x + this.distance * sinP * Math.sin(this.azimuth),
-      this.target.y + this.distance * Math.cos(this.polar),
-      this.target.z + this.distance * sinP * Math.cos(this.azimuth),
+      this.target.x + distance * sinP * Math.sin(azimuth),
+      this.target.y + distance * Math.cos(polar),
+      this.target.z + distance * sinP * Math.cos(azimuth),
     )
     this.camera.lookAt(this.target)
 

@@ -2399,6 +2399,20 @@ renderer.setAnimationLoop(() => {
   presence.advance(dt)
 
   updateFollow(dt)
+  // §56.3: the ambient camera is never quite still. Only in ambient, only
+  // when nothing is being followed — a viewer who has taken the camera or is
+  // watching one agent gets the frame they asked for, held.
+  // A pinned clock IS the capture signal (see `t` above): everything else
+  // animated in this world stops with it, and a camera that kept breathing
+  // through a frozen frame would put its own motion into every a/b pair.
+  rig.driftTarget =
+    frozenClock === null &&
+    document.body.classList.contains('ambient') &&
+    !followId &&
+    mode === 'city'
+      ? 1
+      : 0
+  rig.advanceDrift(dt)
   rig.update(dt)
   director.update(dt, liveTick)
 
