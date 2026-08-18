@@ -129,6 +129,21 @@
       #log .e.place { cursor: pointer; }
       #log .e.place:hover { color: var(--cream); background: var(--wash); }
 
+      /*
+       * §51.2: the feed paces itself. Two rows never in the stream's grammar:
+       * the roll-up of what the pace held back, and the per-generation count of
+       * routine lines. Both are dim, both expand on click.
+       */
+      #log .e.roll, #log .e.count { cursor: pointer; color: var(--dimmer); }
+      #log .e.roll { color: var(--amber); opacity: 0.75; }
+      #log .e.roll:hover, #log .e.count:hover { color: var(--cream); }
+      /* the typing tick: a caret while a line writes itself in, then gone */
+      #log .e .tx.typing::after { content: "▌"; color: var(--amber); opacity: 0.8; }
+      .pane .title .tbtn { border: 0; padding: 0 0 0 8px; color: var(--dimmer); line-height: 1; }
+      .pane .title .tbtn:hover { color: var(--cream); }
+      .pane .title .tbtn[aria-pressed="true"] { color: var(--amber); }
+      #logState { color: var(--amber); }
+
       /* §46.1: city cards in the pane grammar */
       #chunkList .card { display: block; padding: 6px 9px; border-bottom: 1px solid var(--edge); cursor: pointer; }
       #chunkList .card:hover { background: var(--wash); }
@@ -319,11 +334,14 @@
       <span id="actionsGen" class="dim"></span>
       <span id="watched" class="dim"></span>
       <span class="push"></span>
-      <span id="keys"><b>d</b> diff · <b>f</b> follow · <b>r</b> crew · <b>[ ]</b> city · <b>a</b> ambient · <b>?</b> help</span>
+      <span id="keys"><b>d</b> diff · <b>f</b> follow · <b>r</b> crew · <b>p</b> pause log · <b>0</b> home · <b>[ ]</b> city · <b>a</b> ambient · <b>?</b> help</span>
     </div>
 
     <div class="pane" id="log">
-      <div class="title"><span class="name">world.log</span><span class="meta" id="logMeta"></span></div>
+      <div class="title"><span class="name">world.log</span><span class="meta" id="logMeta"></span>
+        <span id="logState" class="hidden">paused</span>
+        <button id="verboseBtn" class="tbtn" aria-pressed="false" title="show routine lines too">verbose</button>
+      </div>
       <div class="body" id="feedList"></div>
     </div>
 

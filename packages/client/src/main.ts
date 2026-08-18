@@ -820,7 +820,7 @@ function ingest(e: EventWire): void {
   }
   renderWatched()
   // §36.2: while following, the log reads as that agent's log
-  if (!followId || e.agentId === followId) pushFeedRow(e)
+  if (!followId || e.agentId === followId) queueFeedRow(e)
 }
 
 /**
@@ -846,6 +846,30 @@ function renderWatched(): void {
 // ---------------------------------------------------------------------------
 
 const feedList = el('feedList')
+
+/**
+ * §51.2: the log is for reading, the world is for watching — so the feed
+ * refuses the throughput race. Events arrive at whatever rate the world runs
+ * at; rows are rendered at most one per FEED_RATE_MS, the excess coalescing
+ * into the ×N collapse or waiting behind a `+n more` roll-up. Routine lines
+ * (the dim class) don't enter the queue at all by default: they count into a
+ * per-generation total that expands on click, or with the verbose toggle.
+ */
+const FEED_RATE_MS = 500
+const FEED_MAX_ROWS = 12
+/** the typing tick is decoration: anyone who asked for less motion gets none */
+const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches
+
+interface FeedItem {
+  e: EventWire
+  n: number
+}
+const feedQueue: FeedItem[] = []
+let feedHovered = false
+let feedPausedByKey = false
+let verboseFeed = false
+let routineGen = -1
+let routineCount = 0
 // §35.6: one plan's constituent actions share a rationale and would otherwise
 // print it once per action. Consecutive same-agent same-line events collapse
 // into the newest row with a ×N count instead.
@@ -857,13 +881,109 @@ function severity(w: number): string {
   return w >= 50 ? 'high' : w >= 20 ? 'cream' : ''
 }
 
-function pushFeedRow(e: EventWire): void {
+function feedKey(e: EventWire): string {
+  return `${e.agentId ?? ''}|${e.type}|${e.rationale ?? e.type}`
+}
+
+const feedHeld = (): boolean => feedHovered || feedPausedByKey
+
+/**
+ * §51.2 intake. Routine lines are counted rather than queued — except while
+ * following, where a single agent's routine work is the entire subject and
+ * suppressing it would empty the pane the viewer opened on purpose.
+ */
+function queueFeedRow(e: EventWire): void {
+  if (!verboseFeed && !followId && severity(e.cinematicWeight) === '') {
+    if (e.generation !== routineGen) {
+      routineGen = e.generation
+      routineCount = 0
+    }
+    routineCount++
+    renderFeedTail()
+    return
+  }
+  const tail = feedQueue[feedQueue.length - 1]
+  if (tail && feedKey(tail.e) === feedKey(e)) {
+    tail.n++
+    tail.e = e
+  } else {
+    feedQueue.push({ e, n: 1 })
+    if (feedQueue.length > 400) feedQueue.splice(0, feedQueue.length - 400)
+  }
+  renderFeedTail()
+}
+
+setInterval(() => {
+  if (!feedHeld()) {
+    const item = feedQueue.shift()
+    if (item) pushFeedRow(item.e, item.n)
+  }
+  renderFeedTail()
+}, FEED_RATE_MS)
+
+/** the two pace rows: what's still waiting, and what was never worth a row */
+function renderFeedTail(): void {
+  let roll = feedList.querySelector('.e.roll') as HTMLElement | null
+  const waiting = feedQueue.reduce((n, i) => n + i.n, 0)
+  if (waiting > 0) {
+    if (!roll) {
+      roll = document.createElement('div')
+      roll.className = 'e roll'
+      roll.innerHTML = '<span class="ord">+</span><span class="t"></span>'
+      feedList.insertAdjacentElement('afterbegin', roll)
+    } else if (roll !== feedList.firstElementChild) {
+      feedList.insertAdjacentElement('afterbegin', roll)
+    }
+    roll.querySelector('.t')!.textContent = `${waiting} more${feedHeld() ? ' · held' : ''}`
+  } else roll?.remove()
+
+  let count = feedList.querySelector('.e.count') as HTMLElement | null
+  if (!verboseFeed && routineCount > 0) {
+    if (!count) {
+      count = document.createElement('div')
+      count.className = 'e count'
+      count.innerHTML = '<span class="ord">·</span><span class="t"></span>'
+    }
+    feedList.insertAdjacentElement('beforeend', count)
+    count.querySelector('.t')!.textContent = `${routineCount} routine this gen`
+  } else count?.remove()
+
+  el('logState').classList.toggle('hidden', !feedHeld())
+}
+
+/** click the roll-up and the pace steps aside: everything held renders now */
+function flushFeed(): void {
+  for (const item of feedQueue.splice(0, feedQueue.length).slice(-FEED_MAX_ROWS)) {
+    pushFeedRow(item.e, item.n, true)
+  }
+  renderFeedTail()
+}
+
+function setVerbose(on: boolean): void {
+  verboseFeed = on
+  el('verboseBtn').setAttribute('aria-pressed', String(on))
+  renderFeedTail()
+}
+el('verboseBtn').addEventListener('click', () => setVerbose(!verboseFeed))
+
+// §51.2: hovering the log pauses the stream — a line being read must not be
+// pushed off the bottom mid-sentence. Buffered, resumes on leave.
+el('log').addEventListener('pointerenter', () => {
+  feedHovered = true
+  renderFeedTail()
+})
+el('log').addEventListener('pointerleave', () => {
+  feedHovered = false
+  renderFeedTail()
+})
+
+function pushFeedRow(e: EventWire, times = 1, instant = false): void {
   const text = e.rationale ?? e.type.replace(/_/g, ' ')
-  const key = `${e.agentId ?? ''}|${e.type}|${text}`
-  const head = feedList.firstElementChild as HTMLElement | null
+  const key = feedKey(e)
+  const head = feedList.querySelector('.e:not(.roll):not(.count)') as HTMLElement | null
   const at = feedPlace(e)
   if (key === lastFeedKey && head) {
-    lastFeedCount++
+    lastFeedCount += times
     const n = head.querySelector('.n')
     if (n) n.textContent = ` ×${lastFeedCount}`
     const ord = head.querySelector('.ord')
@@ -876,21 +996,61 @@ function pushFeedRow(e: EventWire): void {
     return
   }
   lastFeedKey = key
-  lastFeedCount = 1
+  lastFeedCount = times
   // §35.7: ordinal gutter, never clock time (§20). §20.2 still holds: the
   // ordinal is the log's own key, not a rendering of the tick.
   // §46.2: rows carry their place — the feed says wilhelmina is clearing a
   // site; clicking goes there.
-  feedList.insertAdjacentHTML(
-    'afterbegin',
-    `<div class="e ${severity(e.cinematicWeight)}${at ? ' place' : ''}"${
-      at ? ` data-x="${at[0]}" data-y="${at[1]}"` : ''
-    }><span class="ord">${e.id}</span>` +
-      `<span class="t">${
-        e.agentName ? `<b>${escapeHtml(e.agentName.split(' ')[0])}</b> ` : ''
-      }${escapeHtml(text)}<span class="n"></span></span></div>`,
-  )
-  while (feedList.childElementCount > 12) feedList.lastElementChild?.remove()
+  const row = document.createElement('div')
+  row.className = `e ${severity(e.cinematicWeight)}${at ? ' place' : ''}`
+  if (at) {
+    row.dataset.x = String(at[0])
+    row.dataset.y = String(at[1])
+  }
+  row.innerHTML =
+    `<span class="ord">${e.id}</span>` +
+    `<span class="t">${
+      e.agentName ? `<b>${escapeHtml(e.agentName.split(' ')[0])}</b> ` : ''
+    }<span class="tx"></span><span class="n">${times > 1 ? ` ×${times}` : ''}</span></span>`
+  const tx = row.querySelector('.tx') as HTMLElement
+  feedList.insertAdjacentElement('afterbegin', row)
+  typeInto(tx, text, instant)
+  const rows = feedList.querySelectorAll('.e:not(.roll):not(.count)')
+  for (let i = FEED_MAX_ROWS; i < rows.length; i++) rows[i].remove()
+  renderFeedTail()
+}
+
+/**
+ * The line writes itself in. Subtle by construction: it is rate-capped by the
+ * feed's own pace (never more than one row per FEED_RATE_MS), finishes well
+ * inside that window, and any row still typing when the next arrives is
+ * completed immediately rather than racing it.
+ */
+const TYPE_MS = 240
+let typing: { el: HTMLElement; text: string; done: () => void } | null = null
+
+function typeInto(target: HTMLElement, text: string, instant: boolean): void {
+  if (typing) typing.done()
+  if (instant || REDUCED_MOTION || !text) {
+    target.textContent = text
+    return
+  }
+  const started = performance.now()
+  target.classList.add('typing')
+  const done = (): void => {
+    target.textContent = text
+    target.classList.remove('typing')
+    if (typing?.el === target) typing = null
+  }
+  typing = { el: target, text, done }
+  const step = (now: number): void => {
+    if (typing?.el !== target) return
+    const t = Math.min(1, (now - started) / TYPE_MS)
+    target.textContent = text.slice(0, Math.max(1, Math.round(text.length * t)))
+    if (t >= 1) done()
+    else requestAnimationFrame(step)
+  }
+  requestAnimationFrame(step)
 }
 
 function feedPlace(e: EventWire): [number, number] | null {
@@ -903,7 +1063,17 @@ function feedPlace(e: EventWire): [number, number] | null {
 // to where it happened
 feedList.addEventListener('click', (ev) => {
   const row = (ev.target as HTMLElement).closest('.e') as HTMLElement | null
-  if (!row?.dataset.x) return
+  if (!row) return
+  // §51.2: the two pace rows expand rather than fly
+  if (row.classList.contains('roll')) {
+    flushFeed()
+    return
+  }
+  if (row.classList.contains('count')) {
+    setVerbose(true)
+    return
+  }
+  if (!row.dataset.x) return
   director.takeControl()
   rig.flyTo(pointAt(Number(row.dataset.x), Number(row.dataset.y)), 240, {
     polar: 0.82,
@@ -1621,6 +1791,14 @@ addEventListener('keydown', (e) => {
     case 'f':
       if (followId) follow(null)
       else if (selectedAgentId) follow(selectedAgentId)
+      break
+    case 'p':
+      // §51.2: a sticky hold on the stream, for reading rather than watching
+      feedPausedByKey = !feedPausedByKey
+      renderFeedTail()
+      break
+    case 'v':
+      setVerbose(!verboseFeed)
       break
     case 'r':
       toggleCrew()
