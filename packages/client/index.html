@@ -67,7 +67,7 @@
       #barBottom label { color: var(--dim); }
       #barBottom .row { display: flex; align-items: center; gap: 8px; }
       #barBottom output { min-width: 62px; color: var(--cream); }
-      #keys { color: var(--dimmer); }
+      #keys { color: var(--dimmer); white-space: nowrap; }
       #keys b { color: var(--dim); font-weight: 400; }
 
       /* §35.6: thin amber tracks, square thumbs */
@@ -112,8 +112,70 @@
        * boxes: routine dim, physical change cream, high weight amber with a
        * faint row wash — the weight column drives it.
        */
-      #log { right: 12px; bottom: 52px; width: 336px; }
-      #log .body { padding: 4px 0; max-height: 34vh; overflow: hidden; }
+      /*
+       * §59.3: panes stop being independently-positioned rectangles that happen
+       * not to overlap, and become two managed stacks — one per screen edge.
+       * Every pane in a rail is laid out by the rail, so crew and changelog
+       * cannot collide however long either grows; each scrolls inside itself
+       * instead of pushing the next one off the bottom. The rails are bounded
+       * by the two bars, so the whole set fits any window down to 1280x800.
+       */
+      .rail {
+        position: fixed; top: 42px; bottom: 52px; z-index: 2;
+        display: flex; flex-direction: column; gap: 8px;
+        pointer-events: none;
+      }
+      .rail > * { pointer-events: auto; }
+      .rail .pane { position: static; flex: 0 0 auto; min-height: 0; }
+      /* the feed takes what is left and scrolls; nothing else may grow into it */
+      .rail .pane.grow { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 60px; }
+      .rail .pane.grow .body { flex: 1 1 auto; overflow-y: auto; }
+      #railRight { right: 12px; width: 336px; align-items: stretch; }
+      #railLeft { left: 12px; width: 300px; align-items: stretch; }
+
+      /*
+       * §60(a): the headline. One line, always present, naming the most
+       * dramatic thing currently under way. Amber because it is the one row on
+       * screen that is never routine.
+       */
+      #headline { cursor: pointer; }
+      #headline .body { padding: 6px 9px; }
+      #headline .lead { color: var(--amber); }
+      #headline .dim { display: block; color: var(--dim); }
+      #headline:hover { border-color: var(--dim); }
+      #headline.quiet .lead { color: var(--dim); }
+
+      /* §60(b): stories — a campaign per card, progressing in place */
+      #stories {}
+      /* four cards, whole — a card cut in half reads as a rendering fault */
+      #stories .body { padding: 3px 0; max-height: 250px; overflow-y: auto; }
+      #stories .s { display: block; padding: 4px 9px; cursor: pointer; border-left: 2px solid transparent; }
+      #stories .s:hover { background: var(--wash); border-left-color: var(--amber); }
+      #stories .s .hd { display: flex; gap: 6px; align-items: baseline; }
+      #stories .s .who { color: var(--cream); }
+      #stories .s .chip { width: 7px; height: 7px; flex: 0 0 7px; align-self: center; }
+      #stories .s .w { margin-left: auto; color: var(--dimmer); }
+      #stories .s .stage { color: var(--dim); padding-left: 13px; }
+      #stories .s .stage b { color: var(--amber); font-weight: 400; }
+      /*
+       * NOT `.bar`: that class is already taken by the full-width fixed strips
+       * at the top and bottom of the screen (`.bar { position: fixed; left: 0;
+       * right: 0 }`), so a progress bar named `bar` inherited it and every
+       * story card drew a 1267px strip straight across the plate. Four stories
+       * meant four bands over the city — which read as a renderer fault and
+       * cost an hour of hunting through the scene graph for geometry that was
+       * never there.
+       */
+      #stories .s .prog { height: 2px; background: var(--edge); margin: 3px 0 0 13px; }
+      #stories .s .prog i { display: block; height: 2px; background: var(--amber); }
+
+      /* §60(c): the digest — a rolling window, in the bottom bar */
+      #digest { color: var(--dim); max-width: 52ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #digest b { color: var(--cream); font-weight: 400; }
+
+      /* §59.3: the rail owns position and height now; the feed is the pane
+       * that absorbs whatever space the others leave. */
+      #log .body { padding: 4px 0; }
       #log .e { display: flex; gap: 8px; padding: 1.5px 9px; color: var(--dim); }
       #log .e .ord {
         flex: 0 0 52px; text-align: right; color: var(--dimmer);
@@ -251,7 +313,7 @@
       #chunks .c .where { margin-left: auto; color: var(--dim); }
       #chunks .c:hover .where, #chunks .c.here .where { color: var(--amber); }
 
-      #changelog { bottom: 52px; left: 12px; width: 300px; display: none; }
+      #changelog { display: none; }
       #changelog.on { display: block; }
       #changelog .body { max-height: 40vh; overflow-y: auto; }
       #changelog .g { margin-bottom: 7px; }
@@ -385,18 +447,30 @@
       </div>
       <button id="soundBtn" aria-pressed="false" title="the log as sound (§40.5)">sound off</button>
       <button id="focusBtn" aria-pressed="true" title="depth of field: soft or off">focus soft</button>
-      <span id="actionsGen" class="dim"></span>
+      <span id="digest"></span>
       <span id="watched" class="dim"></span>
       <span class="push"></span>
       <span id="keys"><b>d</b> diff · <b>b</b> ghost · <b>t</b> timelapse · <b>f</b> follow · <b>r</b> crew · <b>p</b> pause · <b>0</b> home · <b>[ ]</b> city · <b>a</b> ambient · <b>?</b> help</span>
     </div>
 
-    <div class="pane" id="log">
-      <div class="title"><span class="name">world.log</span><span class="meta" id="logMeta"></span>
-        <span id="logState" class="hidden">paused</span>
-        <button id="verboseBtn" class="tbtn" aria-pressed="false" title="show routine lines too">verbose</button>
+    <!--
+      §60: the narrative hierarchy sits ABOVE the log, because the log answers
+      "what just happened" and a stranger's first question is "what is
+      happening". Headline, then the stories in progress, then the feed.
+      §59.3: all of it inside the managed right rail, which owns the layout.
+    -->
+    <div class="rail" id="railRight">
+    <div class="pane" id="headline">
+      <div class="body">
+        <span class="lead" id="headlineText">the world is quiet</span>
+        <span class="dim" id="headlineWho"></span>
       </div>
-      <div class="body" id="feedList"></div>
+    </div>
+
+    <div class="pane" id="stories">
+      <div class="title"><span class="name">in progress</span>
+        <span class="meta" id="storiesMeta"></span></div>
+      <div class="body" id="storyList"></div>
     </div>
 
     <div class="pane" id="inspector">
@@ -414,11 +488,16 @@
       </div>
     </div>
 
-    <div class="pane" id="crew">
-      <div class="title"><span class="name">crew</span><span class="meta" id="crewMeta">this generation</span>
-        <button class="x" id="crewClose" title="close">x</button></div>
-      <div class="body" id="crewList"></div>
+    <div class="pane grow" id="log">
+      <div class="title"><span class="name">world.log</span><span class="meta" id="logMeta"></span>
+        <span id="logState" class="hidden">paused</span>
+        <button id="verboseBtn" class="tbtn" aria-pressed="false" title="show routine lines too">verbose</button>
+      </div>
+      <div class="body" id="feedList"></div>
     </div>
+    </div>
+
+
 
     <div class="pane" id="agentLog">
       <div class="title"><span class="name" id="agentLogName">agent.log</span>
@@ -427,16 +506,24 @@
       <div class="body" id="agentFeed"></div>
     </div>
 
+    <div class="rail" id="railLeft">
+    <div class="pane" id="crew">
+      <div class="title"><span class="name">crew</span><span class="meta" id="crewMeta">this generation</span>
+        <button class="x" id="crewClose" title="close">x</button></div>
+      <div class="body" id="crewList"></div>
+    </div>
+    <div class="pane" id="changelog">
+      <div class="title"><span class="name">changelog</span><span class="meta">as observed</span></div>
+      <div class="body" id="changelogList"></div>
+    </div>
+    </div>
+
     <div class="pane" id="chunks">
       <div class="title"><span class="name">chunks</span><span class="meta">[ ] to cycle</span>
         <button class="x" id="chunksClose" title="close">x</button></div>
       <div class="body" id="chunkList"></div>
     </div>
 
-    <div class="pane" id="changelog">
-      <div class="title"><span class="name">changelog</span><span class="meta">as observed</span></div>
-      <div class="body" id="changelogList"></div>
-    </div>
 
     <div id="cards">
       <div class="pane" id="explainer" style="display: none">

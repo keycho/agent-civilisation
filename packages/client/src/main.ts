@@ -15,6 +15,7 @@
  */
 import {
   AGENT_MOTION_MAX_THROUGHPUT,
+  isDrama,
   BUILDING_SLOT_SPARE,
   CITY_HOUR,
   CITY_MATERIALS,
@@ -65,6 +66,7 @@ import { GLOBE_HOME, GLOBE_HOME_SPAN, GLOBE_ZOOM, GlobeView, orbitFor } from './
 import { AgentInterpolator, Connection, fromBase64 } from './world/connection.ts'
 import { loadChunk } from './world/load.ts'
 import { Observer } from './world/observer.ts'
+import { Narrative, type OpenAction } from './world/narrative.ts'
 
 const canvas = document.createElement('canvas')
 document.body.insertBefore(canvas, document.body.firstChild)
@@ -393,7 +395,10 @@ function acceptReadouts(r: Readouts): void {
     lastGen = r.generation
     actionsThisGen = archive.reduce((n, e) => n + (e.generation === r.generation ? 1 : 0), 0)
   }
-  el('actionsGen').textContent = `${actionsThisGen} actions this gen`
+  // §60(c): the raw per-generation counter was saying what the digest now
+  // says in the world's own words, and the bottom bar had run out of room for
+  // both. The count still drives the readout above.
+  void actionsThisGen
   el('agentsBtn').textContent = `agents ${roster.size}`
   el('logMeta').textContent = `${r.eventCount} events`
   if (scrubbing) return
@@ -1089,10 +1094,153 @@ function ingest(e: EventWire): void {
   }
   maybeCinematic(e)
   renderWatched()
+  // §60: the hierarchy reads the same stream the feed does, before the feed's
+  // own pacing touches it — a headline must name what is happening now, not
+  // what the rate cap has got round to printing.
+  narrative.ingest(e)
   // world.log stays the world's; the followed agent narrates in its own pane
   queueFeedRow(e)
   if (followId && e.agentId === followId) queueAgentRow(e)
 }
+
+// ---------------------------------------------------------------------------
+// §60: the narrative hierarchy — headline, stories, digest
+// ---------------------------------------------------------------------------
+
+const narrative = new Narrative()
+const sessionStartedAt = performance.now()
+
+/**
+ * §60: first names collide — this world had two wouters running campaigns at
+ * once, and two identical rows in a list of five is a list a reader distrusts.
+ * A surname is added only where the first name is genuinely ambiguous, so the
+ * common case stays as short as it reads.
+ */
+function displayName(id: string | undefined, full: string | undefined): string {
+  const name = (full ?? id ?? 'someone').toLowerCase()
+  const first = name.split(' ')[0]
+  let clash = false
+  for (const [otherId, a] of roster) {
+    if (otherId === id) continue
+    if ((a.name ?? '').toLowerCase().split(' ')[0] === first) {
+      clash = true
+      break
+    }
+  }
+  return clash ? name.split(' ').slice(0, 2).join(' ') : first
+}
+
+/**
+ * §60(a): the headline is ONE line, so it has to carry the specific thing.
+ * The writer's rationale already says it — "clearing the office for the site
+ * plan", "develop 104m2 at 8 levels" — and a generic verb phrase over the top
+ * of that ("something is coming down") only pushes the real sentence down a
+ * line. The rationale leads when there is one; the verb is the fallback.
+ */
+function headlineLine(a: OpenAction): string {
+  if (a.rationale) return a.rationale
+  switch (a.type) {
+    case 'demolition_started':
+      return 'is clearing a site'
+    case 'construction_started':
+      return 'is raising a building'
+    default:
+      return 'is at work'
+  }
+}
+
+function renderNarrative(): void {
+  // ---- (a) the headline ------------------------------------------------
+  const h = narrative.headline()
+  const pane = el('headline')
+  if (h) {
+    const who = h.agentId ? roster.get(h.agentId) : undefined
+    const tone = who ? agentColourHex(who.strategy, who.colourIndex) : ''
+    const name = displayName(h.agentId, h.agentName)
+    el('headlineText').innerHTML =
+      `<b${tone ? ` style="color:${tone}"` : ''}>${escapeHtml(name)}</b>` +
+      `<span class="amber"> — ${escapeHtml(headlineLine(h))}</span>`
+    el('headlineWho').textContent = h.x !== undefined ? 'click to fly there' : ''
+    pane.classList.remove('quiet')
+    if (h.x !== undefined && h.y !== undefined) {
+      pane.dataset.x = String(h.x)
+      pane.dataset.y = String(h.y)
+    } else {
+      delete pane.dataset.x
+    }
+  } else {
+    el('headlineText').textContent = 'the world is quiet'
+    el('headlineWho').textContent = ''
+    pane.classList.add('quiet')
+    delete pane.dataset.x
+  }
+
+  // ---- (b) the stories -------------------------------------------------
+  const stories = narrative.topStories(4)
+  el('storiesMeta').textContent = stories.length ? `${stories.length}` : ''
+  const list = el('storyList')
+  list.innerHTML = stories
+    .map((s) => {
+      const who = roster.get(s.agentId)
+      const tone = who ? agentColourHex(who.strategy, who.colourIndex) : '#8a8069'
+      const stages: string[] = []
+      if (s.acquired) stages.push(`acquired <b>${s.acquired}</b>`)
+      if (s.assembled) stages.push(`assembled <b>${s.assembled}</b>`)
+      if (s.cleared) stages.push(`cleared <b>${s.cleared}</b>`)
+      if (s.building) stages.push(`building <b>${s.building}</b>`)
+      if (s.built) stages.push(`raised <b>${s.built}</b>`)
+      // the arc a campaign runs: ground, then clearance, then a building
+      const done = (s.acquired || s.assembled ? 1 : 0) + (s.cleared ? 1 : 0) + (s.built ? 1 : s.building ? 0.4 : 0)
+      const pct = Math.min(100, Math.round((done / 3) * 100))
+      return (
+        `<div class="s" data-agent="${escapeHtml(s.agentId)}"${
+          s.x !== undefined ? ` data-x="${s.x}" data-y="${s.y}"` : ''
+        }>` +
+        `<div class="hd"><span class="chip" style="background:${tone}"></span>` +
+        `<span class="who">${escapeHtml(displayName(s.agentId, s.agentName))}</span>` +
+        `<span class="w">${Math.round(s.weight)}</span></div>` +
+        `<div class="stage">${stages.join(' ▸ ') || 'securing ground'}</div>` +
+        `<div class="prog"><i style="width:${pct}%"></i></div>` +
+        `</div>`
+      )
+    })
+    .join('')
+
+  // ---- (c) the digest --------------------------------------------------
+  const d = narrative.digest()
+  // §60(c) says "in the last hour", but a session two minutes old has not
+  // watched an hour, and claiming otherwise is the one thing a digest must not
+  // do. The window is honest about which it is.
+  const watchedMs = performance.now() - sessionStartedAt
+  const label = watchedMs < 55 * 60 * 1000 ? 'since you arrived' : 'in the last hour'
+  el('digest').innerHTML = d.length
+    ? `${label}: ${d.map((x) => escapeHtml(x.label)).join(' · ')}`
+    : ''
+}
+
+// the hierarchy is a reading of state, not of arrivals: it refreshes on a
+// cadence so a held headline visibly persists rather than flickering per event
+setInterval(renderNarrative, 700)
+
+el('headline').addEventListener('click', () => {
+  const p = el('headline')
+  if (!p.dataset.x) return
+  inputWinsCamera()
+  rig.flyTo(pointAt(Number(p.dataset.x), Number(p.dataset.y)), 300, { polar: 0.8, duration: 2.0 })
+})
+
+el('storyList').addEventListener('click', (ev) => {
+  const card = (ev.target as HTMLElement).closest('.s') as HTMLElement | null
+  if (!card) return
+  const id = card.dataset.agent
+  if (id) showAgentCard(id)
+  if (!card.dataset.x) return
+  inputWinsCamera()
+  rig.flyTo(pointAt(Number(card.dataset.x), Number(card.dataset.y)), 280, {
+    polar: 0.82,
+    duration: 2.0,
+  })
+})
 
 /**
  * §46.3 (§40.3 shipped): the session-personal line, computed from the frame
@@ -1109,7 +1257,12 @@ function renderWatched(): void {
     const last = watched.died[watched.died.length - 1].split(' ')[0].toLowerCase()
     bits.push(watched.died.length === 1 ? `${last} died` : `${last} + ${watched.died.length - 1} died`)
   }
-  el('watched').textContent = bits.length ? `while you watched: ${bits.join(' · ')}` : ''
+  // §60(c): the digest makes this claim better — same rolling window, named
+  // in the world's own vocabulary rather than in counters. What §46.3 still
+  // owns that the digest does not is the DEATHS, which are personal ("adriana
+  // + 10 died"), so that is all that stays here.
+  const personal = watched.died.length ? bits.filter((b) => b.includes('died')) : []
+  el('watched').textContent = personal.length ? personal.join(' · ') : ''
 }
 
 // ---------------------------------------------------------------------------
@@ -1164,7 +1317,11 @@ const feedHeld = (): boolean => feedHovered || feedPausedByKey
  * unfiltered, so world.log stays the world's at every zoom.
  */
 function queueFeedRow(e: EventWire): void {
-  if (!verboseFeed && severity(e.cinematicWeight) === '') {
+  // §60(d): weight now drives INCLUSION, not only colour. The old test here
+  // was `severity(w) === ''`, i.e. anything under 20 — which the §57.1
+  // measurement showed to be a fifth of live traffic, so four fifths still
+  // competed for twelve rows. Kind decides now; see DRAMA_TYPES.
+  if (!verboseFeed && !isDrama(e.type, e.cinematicWeight)) {
     if (e.generation !== routineGen) {
       routineGen = e.generation
       routineCount = 0
@@ -2309,10 +2466,21 @@ let frozenClock: number | null = null
 const chipV = new Vector3()
 const tetherColour = new Color()
 
+/**
+ * §46.2's tether, narrowed by §57. It existed to say which worker owned which
+ * site, drawn from the agent to the site. Now that a worker STANDS on its site
+ * (see withIdentity) that line is zero-length for everyone it used to serve,
+ * and the version that was being drawn — anchor to site, up to 171 m — was
+ * saying "this agent was born over there", which is not a fact anyone needs
+ * continuously. It survives for the FOLLOWED agent only, where a line from
+ * the work back to the rest of that agent's estate is genuinely an answer to
+ * "what else is theirs".
+ */
 function updateTethers(): void {
   let n = 0
   for (const a of presence.positions()) {
     if (n >= TETHER_MAX) break
+    if (a.id !== followId) continue
     if (a.activity !== 'building' && a.activity !== 'demolishing') continue
     const site = agentSite.get(a.id)
     if (!site) continue
@@ -2542,10 +2710,13 @@ function* floatAgents(): Generator<import('./render/floatlights.ts').FloatAgent>
   for (const a of presence.positions()) {
     const who = roster.get(a.id)
     if (!who) continue
+    // the float marker rides the same placement as the body — see withIdentity
+    const site =
+      a.activity === 'building' || a.activity === 'demolishing' ? agentSite.get(a.id) : undefined
     yield {
       id: a.id,
-      x: a.x,
-      y: a.y,
+      x: site ? site[0] : a.x,
+      y: site ? site[1] : a.y,
       activity: a.activity,
       strategy: who.strategy,
       colourIndex: who.colourIndex,
@@ -2555,10 +2726,36 @@ function* floatAgents(): Generator<import('./render/floatlights.ts').FloatAgent>
   }
 }
 
+/**
+ * §57/§59.1: put a working agent where its work is.
+ *
+ * `agent.x/y` is an anchor set once at birth and never written again — by
+ * §21.6's design the sim does not simulate positions, and `focusPoint` reads
+ * the holdings centroid rather than any coordinate. So an agent that started a
+ * demolition kept rendering at wherever it was born. Measured on a live world:
+ * a "building" agent stood a median 96 m and up to 171 m from the site it was
+ * building, which at city framing is a quarter of the screen — and the §46.2
+ * tether dutifully drew that gap as a long horizontal streak across the plate.
+ * Those streaks are a good part of the "chaos" §57 opens with.
+ *
+ * The client already knows the site: `agentSite` is keyed off the same
+ * construction/demolition_started events the tether uses. Placing the worker
+ * there costs nothing, makes the tether zero-length so the streaks disappear
+ * on their own, and is what §59.1's "working = a loop AT the site" needs to be
+ * true before any sprite is drawn.
+ */
 function* withIdentity(): Generator<AgentPresence> {
   for (const a of presence.positions()) {
     const who = roster.get(a.id)
-    yield { ...a, strategy: who?.strategy ?? 'consolidator', colourIndex: who?.colourIndex ?? 0 }
+    const site =
+      a.activity === 'building' || a.activity === 'demolishing' ? agentSite.get(a.id) : undefined
+    yield {
+      ...a,
+      x: site ? site[0] : a.x,
+      y: site ? site[1] : a.y,
+      strategy: who?.strategy ?? 'consolidator',
+      colourIndex: who?.colourIndex ?? 0,
+    }
   }
 }
 
@@ -2673,6 +2870,11 @@ function civHome(): void {
       })
     },
   },
+  /** §57: the scene root, for locating a stray object by switching it off */
+  cityRoot,
+  /** §57: presence and the site index, for measuring what the tethers connect */
+  presence,
+  agentSite,
   /** §56.2: how many lamps this chunk's hour actually lit */
   streetLightCount: () => streetLights.count,
   /** §56.2 capture switch: isolate the lamps from everything else in frame */

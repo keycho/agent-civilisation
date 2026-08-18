@@ -56,6 +56,54 @@ export const BASE_CINEMATIC_WEIGHT: Record<EventType, number> = {
   agent_died: 12,
 }
 
+/**
+ * §60(d): what the default feed is FOR.
+ *
+ * Weight was already colouring the feed; it was never deciding what entered
+ * it, and the §57.1 measurement is why that had to change. Over 1166 live
+ * tokyo events the weight distribution runs >=10 100%, >=20 80%, >=50 26%,
+ * >=90 8% — so the old "cream and above" intake admitted four fifths of all
+ * traffic, which is not a selection at all. The mix says the same thing from
+ * the other side: building_expanded 28%, building_converted 22%,
+ * building_renovated 9%. Six in ten events were an agent tidying.
+ *
+ * So inclusion is by KIND, which is what a viewer actually distinguishes: a
+ * building coming down is a story whatever it scores, and a level added to a
+ * terrace is not one however well it happened to price. Everything outside
+ * this set still reaches the archive, the changelog, an agent's own pane and
+ * the verbose feed — it stops competing for the twelve rows a stranger reads.
+ *
+ * Seasons and districts are in because they are the largest structural events
+ * this world has (weight 100 and 90). Migrations and ignitions belong in this
+ * set by §60(d) and are not here yet: neither is on the wire (§53.1).
+ */
+export const DRAMA_TYPES: ReadonlySet<EventType> = new Set<EventType>([
+  'parcels_assembled',
+  'demolition_started',
+  'demolition_completed',
+  'construction_started',
+  'construction_completed',
+  'road_built',
+  'district_formed',
+  'agent_died',
+  'season_ended',
+  'season_began',
+])
+
+/**
+ * §60(d): the exception that keeps the filter honest. A routine kind that
+ * scores exceptionally is still a story — a renovation of a listed church
+ * outranks a development of a shed — so situational weight can readmit one
+ * without readmitting its whole kind. Set above the 90th percentile of live
+ * traffic (measured: >=90 is 8% of events, and only 18% reach 70).
+ */
+export const DRAMA_WEIGHT_FLOOR = 88
+
+/** §60(d): is this event worth one of the twelve rows a stranger reads? */
+export function isDrama(type: EventType, cinematicWeight: number): boolean {
+  return DRAMA_TYPES.has(type) || cinematicWeight >= DRAMA_WEIGHT_FLOOR
+}
+
 /** Feed colour per event family, so the live feed reads at a glance. */
 export const EVENT_TONE: Record<EventType, string> = {
   building_acquired: '#d8b36a',

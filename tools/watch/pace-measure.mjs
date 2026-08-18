@@ -16,6 +16,7 @@
  *   node tools/watch/pace-measure.mjs <wss-base> <seconds> [chunk ...]
  */
 import { WebSocket } from 'ws'
+import { isDrama } from '@civ/core'
 
 const BASE = process.argv[2] ?? 'wss://agent-civilisation-production.up.railway.app'
 const SECONDS = Number(process.argv[3] ?? 180)
@@ -41,6 +42,7 @@ async function watch(chunk) {
     const unpaired = new Map(PAIRS.map(([s]) => [s, 0]))
     let events = 0
     let notable = 0
+    let drama = 0
     const weights = []
     const byType = new Map()
     let firstAt = 0
@@ -64,6 +66,8 @@ async function watch(chunk) {
         notable,
         eventsPerSecond: events / elapsed,
         notablePerSecond: notable / elapsed,
+        drama,
+        dramaPerSecond: drama / elapsed,
         ordinalsAdvanced: lastOrdinal - firstOrdinal,
         durations: Object.fromEntries([...durations].map(([k, v]) => [k, v])),
         weights,
@@ -96,6 +100,8 @@ async function watch(chunk) {
         // §60's own definition of notable, used here so the count means the
         // same thing the feed will mean by it
         if ((e.cinematicWeight ?? 0) >= 20) notable++
+        // §60(d): what the DEFAULT feed will actually admit, using the shipped rule
+        if (isDrama(e.type, e.cinematicWeight ?? 0)) drama++
         const w = e.cinematicWeight ?? 0
         weights.push(w)
         byType.set(e.type, (byType.get(e.type) ?? 0) + 1)
@@ -133,7 +139,7 @@ for (const r of results) {
   )
   console.log(
     `  events ${r.events} over ${r.elapsed.toFixed(0)}s = ${r.eventsPerSecond.toFixed(2)}/s` +
-      `   notable (weight>=20) ${r.notable} = ${r.notablePerSecond.toFixed(2)}/s   ordinals advanced ${r.ordinalsAdvanced}`,
+      `   old intake (w>=20) ${r.notablePerSecond.toFixed(2)}/s   §60d drama intake ${r.dramaPerSecond.toFixed(2)}/s   ordinals +${r.ordinalsAdvanced}`,
   )
   const w = r.weights ?? []
   if (w.length) {

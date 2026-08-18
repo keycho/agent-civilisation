@@ -79,7 +79,19 @@ export class Simulation {
   private readonly snapshotEvery: number
   private readonly onSnapshot?: SimulationOptions['onSnapshot']
   private readonly rng: ReturnType<typeof makeRng>
-  private namedDistricts = new Set<string>()
+  /**
+   * §60(d), found by measuring the live feed: which BUILDINGS already belong to
+   * an announced district, not which district ids have been seen.
+   *
+   * `findDistricts` keys a district on its rounded centroid, and a centroid
+   * moves every time the district gains a building — so a district that grew by
+   * one house came back with an id nobody had seen and announced itself as
+   * newly formed, again, at weight 90. Measured on production: district_formed
+   * was 8% of all events, making a duplicate the single most frequent
+   * high-weight line in the feed. Membership is what actually identifies a
+   * district as it grows.
+   */
+  private districtedBuildings = new Set<string>()
   /** §15: name culture follows the chunk's country; NL is the fallback */
   private readonly names: { first: string[]; house: string[] }
   private lastReport: DivergenceReport
@@ -469,8 +481,11 @@ export class Simulation {
     // cheap enough to check on a cadence, expensive enough not to do per step
     if (w.tick % 120 !== 0) return
     for (const d of findDistricts(w)) {
-      if (this.namedDistricts.has(d.id)) continue
-      this.namedDistricts.add(d.id)
+      // a district already announced under any of its members is the same
+      // district, however far its centroid has since drifted
+      const known = d.buildingIds.some((id) => this.districtedBuildings.has(id))
+      for (const id of d.buildingIds) this.districtedBuildings.add(id)
+      if (known) continue
       w.store.appendEvent({
         chunkId: w.chunkId,
         tick: w.tick,
