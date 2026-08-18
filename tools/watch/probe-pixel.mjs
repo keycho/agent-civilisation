@@ -1,0 +1,21 @@
+import { chromium } from 'playwright'
+import { mkdir } from 'node:fs/promises'
+await mkdir('tools/watch/evidence/59-1', { recursive: true })
+const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+  args: ['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader','--no-sandbox'] })
+const p = await b.newPage({ viewport: { width: 1280, height: 800 } })
+p.on('pageerror', e => console.log('ERR', e.message))
+await p.goto('http://127.0.0.1:5173/?chunk=schiedam-havens&server=' + encodeURIComponent('ws://127.0.0.1:8820/ws/schiedam-havens'), { waitUntil: 'domcontentloaded' })
+await p.waitForFunction(() => window.civ != null, null, { timeout: 120000 })
+await p.evaluate(() => { document.getElementById('watchBtn')?.click(); window.civ.director.enabled = false; window.civ.ui.home() })
+await p.waitForTimeout(14000)
+await p.evaluate(() => { window.civ.freezeClock(120); window.civ.rig.settle() })
+await p.waitForTimeout(1500)
+await p.evaluate(() => window.civ.setPixelAgents(false))
+await p.waitForTimeout(900)
+await p.screenshot({ path: 'tools/watch/evidence/59-1/iso-off.png' })
+await p.evaluate(() => window.civ.setPixelAgents(true))
+await p.waitForTimeout(900)
+await p.screenshot({ path: 'tools/watch/evidence/59-1/iso-on.png' })
+console.log('agents:', await p.evaluate(() => window.civ.pixelMarks().length))
+await b.close()

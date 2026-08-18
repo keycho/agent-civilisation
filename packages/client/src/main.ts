@@ -54,6 +54,7 @@ import { configureRenderer, createEnvironment, dimGround } from './render/enviro
 import { createLandmarkLines } from './render/landmarkLines.ts'
 import { createRoadMeshes } from './render/roadMesh.ts'
 import { StreetLights } from './render/streetLights.ts'
+import { PixelAgents } from './render/pixelAgents.ts'
 import { Traffic } from './render/traffic.ts'
 import { createStreetTrees } from './render/streetTrees.ts'
 import { createWaterReflections } from './render/waterReflections.ts'
@@ -229,6 +230,14 @@ cityRoot.add(tether)
  */
 const floatLights = new FloatLights()
 cityRoot.add(floatLights.group)
+
+/**
+ * §59.1: the city's agents are pixel people now. FloatLights stays for the
+ * map's migration arcs — that half of §47.3a's "one moving-light grammar" was
+ * always right; it was the diamonds standing in for inhabitants that were not.
+ */
+const pixelAgents = new PixelAgents(CITY_MATERIALS[seed.chunk.id] ?? CITY_MATERIAL_DEFAULT)
+cityRoot.add(pixelAgents.group)
 
 // §49: the globe, same void, same grade
 const globe = new FlatMapView(
@@ -2010,10 +2019,11 @@ const lastPointer: [number, number] = [0, 0]
 
 function markAt(px: number, py: number): string | null {
   if (mode !== 'city') return null
+  // §59.1: hit-test the pixel people, who are the thing on screen now
   const v = new Vector3()
   let best: { id: string; d: number } | null = null
-  for (const m of floatLights.marks) {
-    v.copy(m.position).project(rig.camera)
+  for (const m of pixelAgents.marks) {
+    v.set(m.x, m.y, m.z).project(rig.camera)
     if (v.z > 1) continue
     const sx = ((v.x + 1) / 2) * innerWidth
     const sy = (1 - (v.y + 1) / 2) * innerHeight
@@ -2664,8 +2674,15 @@ renderer.setAnimationLoop(() => {
   updateChip()
 
   if (mode === 'city') {
-    floatLights.setAgents(floatAgents(), substrate.groundY, rig.distance)
-    floatLights.update(dt)
+    // §59.1: the exact term that keeps a figure at or above 16 px — the lens
+    // opens as the camera descends, so it is computed per frame rather than baked
+    const fovRad = (rig.camera.fov * Math.PI) / 180
+    pixelAgents.setAgents(
+      pixelPeople(),
+      substrate.groundY,
+      t,
+      (2 * Math.tan(fovRad / 2)) / innerHeight,
+    )
   } else {
     // §49: the recorded migrations replay as travelling lights
     globeArcs.update(dt)
@@ -2769,11 +2786,11 @@ renderer.setAnimationLoop(() => {
   }
 })
 
-function* floatAgents(): Generator<import('./render/floatlights.ts').FloatAgent> {
+/** §59.1: the city population, as pixel people */
+function* pixelPeople(): Generator<import('./render/pixelAgents.ts').PixelAgent> {
   for (const a of presence.positions()) {
     const who = roster.get(a.id)
     if (!who) continue
-    // the float marker rides the same placement as the body — see withIdentity
     const site =
       a.activity === 'building' || a.activity === 'demolishing' ? agentSite.get(a.id) : undefined
     yield {
@@ -2782,12 +2799,12 @@ function* floatAgents(): Generator<import('./render/floatlights.ts').FloatAgent>
       y: site ? site[1] : a.y,
       activity: a.activity,
       strategy: who.strategy,
-      colourIndex: who.colourIndex,
-      name: who.name,
+      colour: agentColourHex(who.strategy, who.colourIndex),
       followed: followId === a.id,
     }
   }
 }
+
 
 /**
  * §57/§59.1: put a working agent where its work is.
@@ -2892,7 +2909,14 @@ function civHome(): void {
     },
   },
   /** §51.3 hooks for the capture rigs: what floats, who is followed, what colour */
-  floatMarks: () => floatLights.marks,
+  /** §59.1: the sprite atlas, so the pixel art can be inspected as drawn */
+  agentAtlas: () => pixelAgents.atlasCanvas,
+  /** §59.1 capture switch, to isolate the figures from everything else */
+  setPixelAgents(on: boolean) {
+    pixelAgents.group.visible = on
+  },
+  /** §59.1: where the pixel people are standing, for the chrome and for checks */
+  pixelMarks: () => pixelAgents.marks,
   followedId: () => followId,
   colourOf: (strategy: string, colourIndex: number) => agentColourHex(strategy, colourIndex),
   setMode(v: number) {
