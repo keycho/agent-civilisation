@@ -14,7 +14,7 @@ import { readFileSync, existsSync } from 'node:fs'
 const CHANNELS = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }
 
 /** minimal PNG reader: 8-bit, non-interlaced, which is what playwright emits */
-function decode(path) {
+export function decode(path) {
   const d = readFileSync(path)
   let pos = 8
   let w = 0
@@ -69,7 +69,10 @@ function decode(path) {
   return { w, h, ch, data: out }
 }
 
-const [dirA, dirB, ...rest] = process.argv.slice(2)
+// importing this module for `decode` must not run the differ
+const SELF = import.meta.url.endsWith(process.argv[1]?.split('/').pop() ?? '\u0000')
+const [dirA, dirB, ...rest] = SELF ? process.argv.slice(2) : []
+if (SELF) {
 const CHUNKS = rest.length
   ? rest
   : ['brooklyn-redhook', 'tokyo-kyojima', 'schiedam-havens', 'london-deptford', 'paris-ourcq']
@@ -110,4 +113,5 @@ for (const chunk of CHUNKS) {
     `${chunk.padEnd(18)} touched=${pct(touched)} material=${pct(material)} ` +
       `brighter=${pct(brightened)} mean|d|=${(sum / n / 3).toFixed(3)}`,
   )
+}
 }

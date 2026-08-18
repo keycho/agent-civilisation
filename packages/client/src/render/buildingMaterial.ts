@@ -246,6 +246,13 @@ export function createBuildingMaterial(data: BuildingDataTexture): BuildingMater
         float w = DIVERGENCE_WEIGHTS[clamp(divIdx, 0, 7)];
         vec3 target = DIVERGENCE_COLORS[clamp(divIdx, 0, 7)];
         float lum = dot(base, vec3(0.299, 0.587, 0.114));
+        /**
+         * §63.2: this happens with NOTHING held. Untouched baseline stock is
+         * the world as we left it and it is near-monochrome at rest; the diff
+         * toggle then takes it the rest of the way. It was a mode; the whole
+         * §63 argument is that it should be the world.
+         */
+        base = mix(base, mix(base, vec3(lum), BASELINE_DESATURATION), 1.0 - w);
         vec3 grey = mix(base, vec3(lum), UNTOUCHED_DESATURATION);
         base = mix(base, grey, uDivergenceMode * (1.0 - w));
         base = mix(base, target, uDivergenceMode * w);

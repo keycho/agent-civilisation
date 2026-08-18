@@ -98,6 +98,17 @@ export const DIVERGENCE_COLORS_RGB: RGB[] = DIVERGENCE_COLOR.map(hexToRgb)
 export const UNTOUCHED_DESATURATION = 0.85
 
 /**
+ * §63.2: how much of its hue untouched baseline stock loses with NO toggle
+ * pressed. `UNTOUCHED_DESATURATION` above is the diff view's setting, reached
+ * by holding `d`; this is the world's resting state, because §63.2 asks for
+ * diff-by-default expressed through light rather than through a mode. Not the
+ * full 0.85 — the world as we left it should still read as a city at night,
+ * not as an absence — but far enough that a terracotta roof is grey until
+ * somebody buys it.
+ */
+export const BASELINE_DESATURATION = 0.62
+
+/**
  * §42.1: per-city material base, riding the palette lerp. The cities were
  * reading as the same place — deptford, ourcq and red hook all wore
  * schiedam's terracotta. Each chunk gets a restrained material base: a
@@ -261,103 +272,150 @@ export interface CityHour {
   sky?: string
 }
 
+/**
+ * §63.2: THE INVERSION. Darkness is reality; light is what the agents did.
+ *
+ * §48.1 fixed one golden hour and §50.2 authored five. The accumulated result
+ * was the complaint §63 opens with — a warm diorama with a terminal skin
+ * around it, two registers that never become one thing. Golden-hour terracotta
+ * says charming dutch town; the thesis is agents taking the earth.
+ *
+ * So every city's hour is now cold and after dark. The consequence is the
+ * point, and it is a lighting change rather than new geometry: with no key
+ * light, the only warm thing left in any frame is what the civilization lit —
+ * windows in owned stock, worksite glow, construction lights, the diff amber.
+ * The city is lit exactly where the civilization is awake. That is
+ * diff-by-default expressed as light instead of as a colour toggle.
+ *
+ * §63.3: per-city identity moves to the COLD half. Each chunk keeps its §42.1
+ * character in the temperature of its darkness — paris zinc, london slate,
+ * schiedam grey-green, tokyo blue-grey, brooklyn charcoal — while the warm
+ * half is identical everywhere, because it is the same civilization.
+ *
+ * GOLDEN_HOUR is not deleted. §63.2 retires it as the global default and
+ * leaves it as an authored per-city hour, so a city that wants it can have it
+ * by naming it here.
+ */
+
+/**
+ * §63.3: the warm half, identical in every city. Interior light behind glass
+ * where an agent owns the building. One colour, deliberately — a viewer
+ * comparing two cities should see the same civilization in both.
+ */
+export const AGENT_WARM = '#ffb15c'
+
+/**
+ * §63.2: street lighting is INFRASTRUCTURE, not agent activity, so it may not
+ * be warm — the whole rule is that warmth means the civilization is awake
+ * here. §56.2's lamps stay, in the cold register: mercury-white, which is what
+ * a modern street actually is anyway. Stated as a deviation from §56.1, which
+ * authored them sodium.
+ */
+export const INFRASTRUCTURE_COLD = '#c8d4e0'
+
+/** the cold rig a chunk gets when nobody has authored one for it */
+export const NIGHT_HOUR: CityHour = {
+  sun: '#7d8794',
+  sunIntensity: 2.1,
+  fillSky: '#63707e',
+  fillGround: '#2f353c',
+  /**
+   * Dark, not absent. The first pass of §63.2 took the fabric down until the
+   * plate measured 2% of the frame lit at all, which is not "the world as we
+   * left it at night" — it is the world deleted, and a viewer cannot see what
+   * the agents are changing if there is nothing to change. These are set so
+   * untouched stock reads as cold grey MASS: legible silhouette, no hue, and
+   * still an order below the warm light in the same frame.
+   */
+  fillIntensity: 4.6,
+  coolAmbient: '#39414c',
+  coolAmbientIntensity: 2.4,
+  elevationDeg: 7,
+  groundScale: 0.4,
+  night: 1.0,
+  windowWarm: AGENT_WARM,
+  lampWarm: INFRASTRUCTURE_COLD,
+}
+
 export const CITY_HOUR: Record<string, CityHour> = {
-  // the reference look, as shipped by §48.1 — unchanged, and the control
+  /**
+   * Schiedam: grey-green. Estuary light with the green of brackish water and
+   * wet brick in it — the coldest of the dutch chunks because it is the one
+   * on the deep water.
+   */
   'schiedam-havens': {
-    sun: GOLDEN_HOUR.sun,
-    sunIntensity: GOLDEN_HOUR.sunIntensity,
-    fillSky: GOLDEN_HOUR.fillSky,
-    fillGround: GOLDEN_HOUR.fillGround,
-    fillIntensity: GOLDEN_HOUR.fillIntensity,
-    coolAmbient: GOLDEN_HOUR.coolAmbient,
-    coolAmbientIntensity: GOLDEN_HOUR.coolAmbientIntensity,
-    elevationDeg: GOLDEN_HOUR.elevationDeg,
-    night: 0.1,
-    windowWarm: '#ffc27a',
+    ...NIGHT_HOUR,
+    sun: '#78888a',
+    fillSky: '#5f7370',
+    fillGround: '#2c3634',
+    coolAmbient: '#36443f',
+    coolAmbientIntensity: 2.5,
+    groundScale: 0.42,
   },
 
   /**
-   * London: overcast silver-grey. The key comes down and cools toward
-   * daylight-through-cloud, the fill comes up until shadows are direction
-   * without contrast, and the sun sits higher because an overcast sky has no
-   * rake to give. Windows carry a little more than schiedam's — a grey
-   * afternoon is when the lights are already on inside.
+   * London: slate. Neutral, sootier, the least blue of the five — a cold that
+   * is grey rather than a cold that is a colour.
    */
   'london-deptford': {
-    sun: '#d3dae2',
-    sunIntensity: 2.5,
-    fillSky: '#a4b1bd',
-    fillGround: '#7e7d78',
-    fillIntensity: 2.5,
-    coolAmbient: '#5d6975',
-    coolAmbientIntensity: 0.7,
-    elevationDeg: 42,
-    groundScale: 0.74,
-    night: 0.26,
-    windowWarm: '#ffcb8c',
+    ...NIGHT_HOUR,
+    sun: '#818790',
+    sunIntensity: 2.2,
+    fillSky: '#666d74',
+    fillGround: '#2f3134',
+    fillIntensity: 4.9,
+    coolAmbient: '#3b4045',
+    elevationDeg: 10,
+    groundScale: 0.46,
   },
 
   /**
-   * Paris: late golden, lower and warmer than schiedam so the mansards throw
-   * their length across the courtyard rings — the roofscape is the subject and
-   * the shadow is what shows it.
+   * Paris: zinc. The roofscape is the subject and zinc is what it is made of,
+   * so the whole frame takes the roof's own colour after dark.
    */
   'paris-ourcq': {
-    sun: '#ffc98a',
-    sunIntensity: 4.9,
-    fillSky: '#8b9cb8',
-    fillGround: '#94836f',
-    fillIntensity: 1.85,
-    coolAmbient: '#4a5570',
-    coolAmbientIntensity: 0.55,
-    elevationDeg: 16,
-    groundScale: 0.96,
-    night: 0.22,
-    windowWarm: '#ffbf78',
+    ...NIGHT_HOUR,
+    sun: '#7f8ea3',
+    fillSky: '#69798f',
+    fillGround: '#31363f',
+    coolAmbient: '#3d4859',
+    coolAmbientIntensity: 2.3,
+    elevationDeg: 6,
+    groundScale: 0.38,
   },
 
   /**
-   * Tokyo: blue evening with warm interior spill. The sun is under the
-   * horizon — what is left is sky, so the key is a weak blue wash and the
-   * frame is carried by the windows. This is the hour the shitamachi grain was
-   * imported for: thousands of small lit boxes, close together.
+   * Tokyo: blue-grey. The hour the shitamachi grain was imported for —
+   * thousands of small lit boxes close together, against a sky that is still
+   * faintly blue. The bluest cold, and the one where the windows carry most.
    */
   'tokyo-kyojima': {
-    sun: '#8fa8cc',
-    sunIntensity: 2.2,
-    fillSky: '#54709c',
-    fillGround: '#3b4658',
-    fillIntensity: 4.2,
-    coolAmbient: '#3b4c6b',
-    coolAmbientIntensity: 1.8,
+    ...NIGHT_HOUR,
+    sun: '#7d90ad',
+    sunIntensity: 2.3,
+    fillSky: '#5e7391',
+    fillGround: '#2d3540',
+    fillIntensity: 5.2,
+    coolAmbient: '#374558',
+    coolAmbientIntensity: 2.6,
     elevationDeg: 8,
-    groundScale: 0.34,
-    night: 0.92,
-    windowWarm: '#ffb765',
-    // tokyo's streets run cooler than its interiors: mercury/led, not sodium
-    lampWarm: '#ffd9a8',
+    groundScale: 0.36,
   },
 
   /**
-   * Brooklyn: dusk into night. Darker than tokyo's blue hour and warmer in the
-   * glass — the reference frame's dark mass with lit windows. Red hook is low
-   * fabric, so the light that reads is the water reflecting the last of the
-   * sky and the windows against it.
+   * Brooklyn: cold charcoal. Almost no hue left — low industrial fabric read
+   * as mass and silhouette, with the water taking what little sky remains.
    */
   'brooklyn-redhook': {
-    sun: '#b08fa8',
-    sunIntensity: 1.9,
-    fillSky: '#5a6486',
-    fillGround: '#413b38',
-    fillIntensity: 3.6,
-    coolAmbient: '#3a415c',
-    coolAmbientIntensity: 1.7,
+    ...NIGHT_HOUR,
+    sun: '#787b80',
+    sunIntensity: 1.8,
+    fillSky: '#5c5f65',
+    fillGround: '#2b2c2f',
+    coolAmbient: '#36383d',
+    coolAmbientIntensity: 2.2,
     elevationDeg: 5,
-    groundScale: 0.3,
-    night: 1.0,
-    windowWarm: '#ffc07d',
-    // red hook's streets are old sodium — oranger than its windows
-    lampWarm: '#ffa955',
+    groundScale: 0.36,
   },
 }
 
@@ -396,6 +454,7 @@ const vec3 DIVERGENCE_COLORS[8] = vec3[8](${DIVERGENCE_COLORS_RGB.map(vec3).join
 const vec3 ROOF_TONES[5] = vec3[5](${ROOF_TONES.map(vec3).join(',')});
 const float DIVERGENCE_WEIGHTS[8] = float[8](${Array.from({ length: 8 }, (_, i) => DIVERGENCE_WEIGHT[i].toFixed(3)).join(',')});
 const float UNTOUCHED_DESATURATION = ${UNTOUCHED_DESATURATION.toFixed(3)};
+const float BASELINE_DESATURATION = ${BASELINE_DESATURATION.toFixed(3)};
 const float GROUND_FLOOR_DARKEN = ${GROUND_FLOOR_DARKEN.toFixed(3)};
 const float TRIM_LIGHTEN = ${TRIM_LIGHTEN.toFixed(3)};
 `

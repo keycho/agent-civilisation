@@ -104,7 +104,15 @@ export class StreetLights {
         uColor: { value: warm },
         // emits past the §56.1 threshold (1.15 linear) so the bloom pass
         // treats a lamp as an emitter, which is what it is
-        uIntensity: { value: 1.7 * strength },
+        /**
+         * §63.2: lamps are INFRASTRUCTURE, and warmth in this frame means the
+         * civilization is awake here — so a street lamp may not compete with a
+         * lit window. §56.1 set this at 1.7 sodium against a golden-hour city;
+         * against a dark one the same value read as snow across the plate. It
+         * is now a quarter of that, in the cold register, and the frame's
+         * bright points are agents again.
+         */
+        uIntensity: { value: 0.42 * strength },
         uSizeM: { value: 3.0 },
         /**
          * Screen-space floor, in units of view-z. Sized from the frame, not
@@ -116,7 +124,7 @@ export class StreetLights {
          * a point of light, which is what the reference is made of thousands
          * of.
          */
-        uMinScreen: { value: 0.0022 },
+        uMinScreen: { value: 0.0016 },
       },
       vertexShader: /* glsl */ `
         attribute float aSeed;

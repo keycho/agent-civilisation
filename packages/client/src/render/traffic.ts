@@ -59,8 +59,16 @@ const TRAFFIC_SPEED: Record<string, number> = {
  */
 const METRES_PER_CAR = 30
 
-const HEADLIGHT = '#fff0d2'
-const TAILLIGHT = '#ff4d2a'
+/**
+ * §63.4: amber is the only saturated colour anywhere, everything else is value
+ * rather than hue. §56.3 authored these warm-white and signal-red; red is a
+ * second saturated hue and it read as the loudest thing in a dark frame, so
+ * the direction is now carried by VALUE — a cool bright head and a dim amber
+ * tail — which still separates the two streams and stops the road out-shouting
+ * the buildings.
+ */
+const HEADLIGHT = '#dfe8f2'
+const TAILLIGHT = '#c07a2e'
 
 interface Corridor {
   /** render-space polyline: x, y, z triples */

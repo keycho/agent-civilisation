@@ -1,4 +1,4 @@
-import { CITY_HOUR, ENVIRONMENT, GOLDEN_HOUR, SUN_BEARING_DEG, VOID } from '@civ/core'
+import { CITY_HOUR, ENVIRONMENT, GOLDEN_HOUR, NIGHT_HOUR, SUN_BEARING_DEG, VOID } from '@civ/core'
 import {
   NoToneMapping,
   AmbientLight,
@@ -41,16 +41,12 @@ export function createEnvironment(scene: Scene, opts: EnvironmentOptions): {
   sky: Mesh
 } {
   /**
-   * §50.2: the hour is per city now. schiedam keeps §48.1's golden reference
-   * exactly; london, paris, tokyo and brooklyn have their own authored rigs.
-   * A chunk with no entry falls back to the global golden hour, so a newly
-   * imported city looks like schiedam until someone authors its hour.
+   * §63.2: the hour is per city and every one of them is cold and after dark.
+   * A chunk with no entry falls back to NIGHT_HOUR rather than to golden, so a
+   * newly imported city arrives in the register the product is in rather than
+   * in the one §48.1 left behind.
    */
-  const hour = (opts.chunkId ? CITY_HOUR[opts.chunkId] : undefined) ?? {
-    ...GOLDEN_HOUR,
-    night: 0,
-    windowWarm: '#ffc27a',
-  }
+  const hour = (opts.chunkId ? CITY_HOUR[opts.chunkId] : undefined) ?? NIGHT_HOUR
 
   /**
    * §47.1: the void goes dark. The surround is the terminal's own darkness —
