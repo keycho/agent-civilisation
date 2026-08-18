@@ -263,6 +263,23 @@ export function createBuildingMaterial(data: BuildingDataTexture): BuildingMater
         ao *= 1.0 - 0.08 * smoothstep(0.88, 1.0, vLocalY) * step(vRole, 0.5);
         base *= ao;
 
+        /**
+         * §56.3: light appears to bounce. The AO above is a darkening that
+         * assumes the ground takes light away, which is true at noon and wrong
+         * at dusk in a lit street: the pavement, the lamps and the shopfronts
+         * all throw warmth back up the first storey or two. Without it the
+         * base of every mass crushes to the same black and a dusk plate reads
+         * as silhouettes on a table.
+         *
+         * So a warm term rises where the AO falls, in metres rather than in
+         * fractions of height — bounce reaches about as far up a tower as up a
+         * terrace, which is what makes a tall building read as tall. Scaled by
+         * the authored hour, so nothing changes at golden hour where the key
+         * is already doing this job.
+         */
+        float bounceUp = 1.0 - smoothstep(0.0, 11.0, max(0.0, vFloorM - vSink));
+        base += vec3(0.052, 0.030, 0.014) * bounceUp * uNight;
+
         base = mix(base, uHighlightColor, vHighlight * 0.45);
 
         diffuseColor.rgb *= base;
@@ -373,6 +390,6 @@ export function createBuildingMaterial(data: BuildingDataTexture): BuildingMater
   }
 
   // force a recompile if the material is reused across chunks
-  material.customProgramCacheKey = () => 'civ-building-v5'
+  material.customProgramCacheKey = () => 'civ-building-v6'
   return material
 }

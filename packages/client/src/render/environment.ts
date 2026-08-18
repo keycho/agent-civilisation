@@ -103,9 +103,19 @@ export function createEnvironment(scene: Scene, opts: EnvironmentOptions): {
   // (§16.3, pushed by §48.1); normalBias up for the low incidence angle
   sun.shadow.bias = -0.0008
   sun.shadow.normalBias = 0.7
-  // §50.2: an overcast or after-sunset key throws no hard shadow — the
-  // penumbra widens and the bias relaxes with the sun's elevation
-  sun.shadow.radius = hour.elevationDeg > 30 ? 8.5 : 5.5
+  /**
+   * §50.2: an overcast or after-sunset key throws no hard shadow — the
+   * penumbra widens and the bias relaxes with the sun's elevation.
+   *
+   * §56.3 pushes that further at a dark hour. Once the key is under the
+   * horizon what is left is sky, and sky is an area source the size of the
+   * sky: there is no geometry left that could cast a crisp edge. A dusk plate
+   * still carrying golden-hour shadow edges reads as a daylight render someone
+   * turned the lights down on, which is exactly the failure §50.2 set out to
+   * fix and did not finish.
+   */
+  const duskSoften = 1 + 1.4 * Math.max(0, Math.min(1, (hour.night - 0.4) / 0.45))
+  sun.shadow.radius = (hour.elevationDeg > 30 ? 8.5 : 5.5) * duskSoften
   scene.add(sun)
   scene.add(sun.target)
 
