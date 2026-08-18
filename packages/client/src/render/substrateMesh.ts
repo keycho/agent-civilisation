@@ -69,6 +69,13 @@ export interface SubstrateView {
   heightAt(x: number, y: number): number
   /** §48.4: advances the water's moving glint; called once per frame */
   tick(time: number): void
+  /**
+   * §56.3: the water bodies and the level each one actually sits at. Already
+   * derived here (a canal is level, and its surface is the lowest ground the
+   * body touches), so the reflection cheat mirrors through the same plane the
+   * water is drawn on rather than guessing a datum and floating above it.
+   */
+  waterPlanes: Array<{ ring: Ring; level: number }>
 }
 
 /**
@@ -287,6 +294,7 @@ export function createSubstrateView(substrate: Substrate, halfExtentM: number): 
     tick(time) {
       if (waterMat) waterMat.uniforms.uTime.value = time
     },
+    waterPlanes: water,
   }
 }
 

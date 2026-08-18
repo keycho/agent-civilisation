@@ -55,6 +55,7 @@ import { createRoadMeshes } from './render/roadMesh.ts'
 import { StreetLights } from './render/streetLights.ts'
 import { Traffic } from './render/traffic.ts'
 import { createStreetTrees } from './render/streetTrees.ts'
+import { createWaterReflections } from './render/waterReflections.ts'
 import { ConstructionOverlay } from './render/scaffold.ts'
 import { createSubstrateView } from './render/substrateMesh.ts'
 import { createTrees } from './render/trees.ts'
@@ -176,6 +177,15 @@ const streetTrees = createStreetTrees(
   cityHour?.night ?? 0,
 )
 cityRoot.add(streetTrees)
+
+/** §56.3: the evidence of reflections — the lamps, mirrored into the water */
+const waterReflections = createWaterReflections(
+  streetLights.positions,
+  substrate.waterPlanes,
+  cityHour?.lampWarm ?? '#ffb765',
+  cityHour?.night ?? 0,
+)
+cityRoot.add(waterReflections)
 
 const construction = new ConstructionOverlay()
 cityRoot.add(construction.scaffold)
@@ -2654,6 +2664,11 @@ function civHome(): void {
   /** §56.2 capture switch: isolate the lamps from everything else in frame */
   setLamps(on: boolean) {
     streetLights.on = on
+  },
+  /** §56.3: how many lamps the water actually carries a reflection of */
+  reflectionCount: () => (waterReflections.userData.count as number) ?? 0,
+  setReflections(on: boolean) {
+    waterReflections.visible = on
   },
   /** §56.3: how many street trees this chunk's frontages earned */
   streetTreeCount: () => (streetTrees.userData.count as number) ?? 0,
