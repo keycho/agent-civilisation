@@ -282,7 +282,8 @@ export class PixelAgents {
       this.colour.set(a.colour)
       this.accents.setXYZ(i, this.colour.r, this.colour.g, this.colour.b)
       // idle is still AND dim; a followed agent is never dim
-      this.dims.setX(i, working || travelling || a.followed ? 1 : 0.55)
+      const lit = a.id === this.highlight ? 1.7 : working || travelling || a.followed ? 1 : 0.55
+      this.dims.setX(i, lit)
       this.matrix.makeTranslation(a.x, groundY + 0.4, -a.y)
       this.mesh.setMatrixAt(i, this.matrix)
       this.marks.push({ id: a.id, x: a.x, y: groundY + 0.4, z: -a.y, followed: a.followed })
@@ -294,6 +295,53 @@ export class PixelAgents {
     this.accents.needsUpdate = true
     this.dims.needsUpdate = true
   }
+
+  /**
+   * §59.2: one agent's sprite as a data URL, for the roster's thumbnail. Drawn
+   * from the same atlas the world uses with the same palette swap, so the row
+   * and the figure standing in the street are visibly the same person — which
+   * is the whole reason the roster carries a picture at all.
+   */
+  thumbnail(strategy: string, accent: string, scale = 3): string {
+    const key = `${strategy}|${accent}|${scale}`
+    const hit = this.thumbs.get(key)
+    if (hit) return hit
+    const c = document.createElement('canvas')
+    c.width = CELL * scale
+    c.height = CELL * scale
+    const g = c.getContext('2d')!
+    g.imageSmoothingEnabled = false
+    g.drawImage(
+      this.atlasCanvas,
+      0,
+      occupationRow(strategy) * CELL,
+      CELL,
+      CELL,
+      0,
+      0,
+      c.width,
+      c.height,
+    )
+    // the same magenta-is-a-slot rule the shader applies
+    const img = g.getImageData(0, 0, c.width, c.height)
+    const a = new Color(accent)
+    for (let i = 0; i < img.data.length; i += 4) {
+      if (img.data[i] > 150 && img.data[i + 2] > 150 && img.data[i + 1] < 90) {
+        img.data[i] = Math.round(a.r * 255)
+        img.data[i + 1] = Math.round(a.g * 255)
+        img.data[i + 2] = Math.round(a.b * 255)
+      }
+    }
+    g.putImageData(img, 0, 0)
+    const url = c.toDataURL('image/png')
+    this.thumbs.set(key, url)
+    return url
+  }
+
+  /** §59.2: hovering a roster row lights that agent up in the world */
+  highlight: string | null = null
+
+  private thumbs = new Map<string, string>()
 
   dispose(): void {
     this.mesh.geometry.dispose()

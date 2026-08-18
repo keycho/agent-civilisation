@@ -1939,53 +1939,149 @@ function lastPlanOf(id: string): string {
 }
 
 /**
- * §51.3: the crew pane lists everyone, not a top-8 — a stranger opening it is
- * looking for the roster, not a leaderboard. Working agents sort first, then
- * travelling, then idle; within a band, by what they have done this
- * generation. The chip carries the §51.3 identity colour.
+ * §59.2: the crew pane becomes a ROSTER.
+ *
+ * The old pane was a column of truncated one-liners and could not answer "who
+ * is this" — the operator's "agents page seems random" was exactly right. Each
+ * agent gets two lines now: the first is who they are (sprite, name,
+ * generation, occupation, identity chip), the second is what they are doing,
+ * IN FULL and wrapped, because a plan cut off at the pane edge is the thing
+ * that made the pane useless. A compact right column carries holdings, capital
+ * and the §20.5 effort bar.
+ *
+ * Grouped by status with counts in the header. Working is always expanded and
+ * sorted by the cinematic weight of what that agent is doing; travelling and
+ * idle collapse behind their counts, because forty-four idle agents are a
+ * number, not a list. The followed agent pins to the top expanded.
  */
+const crewOpen = { travelling: false, idle: false }
+let crewHover: string | null = null
+
+/** the live weight of what an agent is doing, for the working sort */
+function currentWeightOf(id: string): number {
+  for (let i = archive.length - 1; i >= 0; i--) {
+    const e = archive[i]
+    if (e.agentId === id) return e.cinematicWeight
+  }
+  return 0
+}
+
+function money(n: number | undefined): string {
+  if (n === undefined) return '—'
+  const a = Math.abs(n)
+  if (a >= 1e6) return `${(n / 1e6).toFixed(1)}m`
+  if (a >= 1e3) return `${Math.round(n / 1e3)}k`
+  return String(Math.round(n))
+}
+
+function crewRow(id: string, who: { name: string; strategy: string; colourIndex: number; generation: number }, status: string, expanded: boolean): string {
+  const tone = agentColourHex(who.strategy, who.colourIndex)
+  const d = agentCache.get(id)
+  const plan = d?.plan?.text ?? (lastPlanOf(id) || 'no plan on record')
+  const effort =
+    d?.effortBudget && d.effortBudget > 0
+      ? Math.min(1, (d.effortSpent ?? 0) / d.effortBudget)
+      : null
+  const thumb = pixelAgents.thumbnail(who.strategy, tone)
+  return (
+    `<div class="a ${status}${expanded ? ' pinned' : ''}" data-id="${escapeHtml(id)}">` +
+    `<img class="sprite" src="${thumb}" alt="" />` +
+    `<div class="who">` +
+    `<div class="l1"><span class="chip" style="background:${tone}"></span>` +
+    `<span class="nm" style="color:${tone}">${escapeHtml(who.name.toLowerCase())}</span>` +
+    `<span class="meta">gen ${who.generation} · ${escapeHtml(who.strategy)}</span></div>` +
+    `<div class="plan">${escapeHtml(plan)}</div>` +
+    `</div>` +
+    `<div class="stats">` +
+    `<div>${d?.holdings ? d.holdings.length : '·'} held</div>` +
+    `<div>${money(d?.capital)}</div>` +
+    (effort === null
+      ? '<div class="eff"></div>'
+      : `<div class="eff" title="effort spent"><i style="width:${Math.round(effort * 100)}%"></i></div>`) +
+    `</div></div>`
+  )
+}
+
 function renderCrew(): void {
   const gen = readouts?.generation ?? 0
-  const counts = new Map<string, number>()
-  for (const e of archive) {
-    if (e.generation !== gen || !e.agentId) continue
-    counts.set(e.agentId, (counts.get(e.agentId) ?? 0) + 1)
-  }
   const live = new Map<string, string>()
   for (const p of presence.positions()) live.set(p.id, p.activity)
-  const RANK = { working: 0, travelling: 1, idle: 2 }
-  const rows = [...roster.entries()]
-    .map(([id, who]) => ({ id, who, status: agentStatus(live.get(id)), n: counts.get(id) ?? 0 }))
-    .sort((a, b) => RANK[a.status] - RANK[b.status] || b.n - a.n || a.who.name.localeCompare(b.who.name))
-  el('crewMeta').textContent = `${rows.length} · gen ${gen}`
-  if (rows.length === 0) {
+  const bands: Record<string, Array<{ id: string; who: ReturnType<typeof roster.get> }>> = {
+    working: [],
+    travelling: [],
+    idle: [],
+  }
+  for (const [id, who] of roster) bands[agentStatus(live.get(id))].push({ id, who })
+  // §59.2: working sorts by the drama of what they are doing, not by name
+  bands.working.sort((a, b) => currentWeightOf(b.id) - currentWeightOf(a.id))
+  for (const k of ['travelling', 'idle'] as const) {
+    bands[k].sort((a, b) => (a.who?.name ?? '').localeCompare(b.who?.name ?? ''))
+  }
+
+  const total = bands.working.length + bands.travelling.length + bands.idle.length
+  el('crewMeta').textContent =
+    `working ${bands.working.length} · travelling ${bands.travelling.length} · idle ${bands.idle.length}`
+  if (total === 0) {
     el('crewList').innerHTML = '<span class="dim">no agents yet</span>'
     return
   }
-  let band = ''
-  el('crewList').innerHTML = rows
-    .map((r) => {
-      const head = r.status === band ? '' : `<div class="grp">${r.status}</div>`
-      band = r.status
-      const tone = agentColourHex(r.who.strategy, r.who.colourIndex)
-      return (
-        head +
-        `<div class="a ${r.status}" data-id="${r.id}"><span class="chip" style="background:${tone}"></span>` +
-        `<span class="st">${STATUS_GLYPH[r.status]}</span>` +
-        `<span class="nm" style="color:${tone}">${escapeHtml(r.who.name.split(' ')[0])}</span>` +
-        `<span class="plan">${escapeHtml(lastPlanOf(r.id) || `gen ${r.who.generation} · ${r.who.strategy}`)}</span>` +
-        `<span class="ct">${r.n || ''}</span></div>`
-      )
-    })
-    .join('')
+
+  const html: string[] = []
+  // the followed agent pins to the top, expanded
+  if (followId) {
+    const who = roster.get(followId)
+    if (who) {
+      askAgent(followId)
+      html.push('<div class="grp">following</div>')
+      html.push(crewRow(followId, who, agentStatus(live.get(followId)), true))
+    }
+  }
+  for (const band of ['working', 'travelling', 'idle'] as const) {
+    const list = bands[band].filter((r) => r.id !== followId && r.who)
+    const openBand = band === 'working' || crewOpen[band as 'travelling' | 'idle']
+    html.push(
+      `<div class="grp${band === 'working' ? '' : ' fold'}" data-band="${band}">` +
+        `${band} <span class="n">${list.length}</span>` +
+        (band === 'working' ? '' : `<span class="tw">${openBand ? '−' : '+'}</span>`) +
+        `</div>`,
+    )
+    if (!openBand) continue
+    for (const r of list) {
+      if (band === 'working') askAgent(r.id)
+      html.push(crewRow(r.id, r.who!, band, false))
+    }
+  }
+  el('crewList').innerHTML = html.join('')
+  void gen
 }
 
 el('crewList').addEventListener('click', (e) => {
+  const fold = (e.target as HTMLElement).closest('.grp.fold') as HTMLElement | null
+  if (fold) {
+    const band = fold.dataset.band as 'travelling' | 'idle'
+    crewOpen[band] = !crewOpen[band]
+    renderCrew()
+    return
+  }
   const row = (e.target as HTMLElement).closest('.a') as HTMLElement | null
   const id = row?.dataset.id
   if (!id) return
   showAgentCard(id)
   follow(id)
+})
+
+// §59.2: hovering a row lights that agent up in the world
+el('crewList').addEventListener('mousemove', (e) => {
+  const row = (e.target as HTMLElement).closest('.a') as HTMLElement | null
+  const id = row?.dataset.id ?? null
+  if (id !== crewHover) {
+    crewHover = id
+    pixelAgents.highlight = id
+  }
+})
+el('crewList').addEventListener('mouseleave', () => {
+  crewHover = null
+  pixelAgents.highlight = null
 })
 
 function toggleCrew(force?: boolean): void {
@@ -2014,6 +2110,17 @@ el('focusBtn').addEventListener('click', () => {
  */
 const agentCache = new Map<string, import('@civ/protocol').AgentDetail>()
 const asked = new Set<string>()
+
+/**
+ * §51.3/§59.2: ask the server about an agent once, then read the cache. Both
+ * the mini-card and the roster want holdings, capital and effort, and neither
+ * should re-ask on every hover or every roster repaint.
+ */
+function askAgent(id: string): void {
+  if (asked.has(id)) return
+  asked.add(id)
+  connection.send({ t: 'inspectAgent', agentId: id })
+}
 let hoverId: string | null = null
 const lastPointer: [number, number] = [0, 0]
 
@@ -2066,10 +2173,7 @@ canvas.addEventListener('pointermove', (e) => {
     return
   }
   hoverId = id
-  if (!asked.has(id)) {
-    asked.add(id)
-    connection.send({ t: 'inspectAgent', agentId: id })
-  }
+  askAgent(id)
   renderMiniCard(id, e.clientX, e.clientY)
 })
 canvas.addEventListener('pointerleave', () => {
