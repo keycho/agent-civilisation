@@ -24,7 +24,7 @@ import {
   withDuty,
   yieldPerTick,
 } from './economy.ts'
-import { type Agent, type MemoryEntry, type PlanSpec, type SitePlan, THIRD_USE, type World, floorArea } from './state.ts'
+import { type Agent, ESCALATION, type MemoryEntry, type PlanSpec, type SitePlan, THIRD_USE, type World, floorArea } from './state.ts'
 
 /**
  * §9. Async, may return null, carries a rationale on the action.
@@ -533,6 +533,39 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
           },
           score: s.develop * (1 + 0.5 * (group.length - 1)) * (s.maxPayback / Math.max(1, payback)),
         })
+
+        /**
+         * §58.2: and the ambitious reading of the same ground, offered
+         * alongside rather than instead. It competes on score like everything
+         * else, so it wins only where the site, the dynasty's capital and the
+         * agent's own appetite all say it should.
+         */
+        const tall = ambitiousLevels(area, funds, levels)
+        if (tall > levels) {
+          const tallCost = developmentCost(area, tall)
+          const tallUplift =
+            (area * tall * (ECONOMY.rentPerM2[purpose] ?? 0.1) * 1.1) / RATE_WINDOW_TICKS
+          const tallPayback = paybackWindows(tallCost, tallUplift)
+          // a tower is a long-horizon bet; the window it is judged against is
+          // the agent's own patience, widened by how much it wants density
+          if (tallPayback <= s.maxPayback * (1.8 + 1.4 * agent.traits.intensity)) {
+            options.push({
+              action: {
+                kind: 'develop',
+                parcelIds: group,
+                purpose,
+                levels: tall,
+                rationale: `${tall} levels on ${group.length > 1 ? `${group.length} assembled lots` : 'the cleared site'} — the site carries it`,
+              },
+              // §23.1: the intensifier's option, weighted by the intensifier
+              score:
+                s.develop *
+                (1 + 0.5 * (group.length - 1)) *
+                (0.45 + 1.35 * agent.traits.intensity) *
+                (s.maxPayback / Math.max(1, tallPayback)),
+            })
+          }
+        }
       }
     }
 
@@ -1068,6 +1101,57 @@ function clusterOwned(world: World, agent: Agent, ids: string[]): string[][] {
 
 function chooseLevels(intensity: number, appetite: number): number {
   return Math.max(2, Math.min(8, Math.round((2.2 + intensity * 5.5) * appetite)))
+}
+
+/**
+ * §58.2: how slender a mass may be, as height over the square root of its
+ * footprint. MEASURED, not chosen — across all 5,458 buildings in the eight
+ * imported chunks the ratio runs p50 0.99, p90 1.63, p99 3.13, and the tail
+ * above that is spires and one 81 m London point block on a 74 m2 base. 3.0
+ * is therefore the 99th percentile of what actually stands in these cities:
+ * an agent may build as slender as the top one percent of the real fabric,
+ * and no slenderer.
+ *
+ * The consequence is the point. Height needs GROUND — a 76 m2 schiedam lot
+ * carries seven levels however rich its owner is, a 600 m2 assembled site
+ * carries twenty-one. §58's "ground a dynasty spent generations gathering"
+ * falls out of the measurement rather than being asserted by a tier table.
+ */
+export const SLENDERNESS = 3.0
+
+/** the tallest mass this footprint may carry, before money is considered */
+export function siteCeiling(areaM2: number): number {
+  return Math.floor((SLENDERNESS * Math.sqrt(areaM2) - 1.2) / 3.4)
+}
+
+/**
+ * §58.2: the max-intensity branch. `chooseLevels` only ever asks what the
+ * NEXT floor is worth, and a scoring function that can only ask that can never
+ * decide to build a tower. This asks the other question — what is the most
+ * this site could carry? — and offers the answer alongside, to compete.
+ *
+ * Three gates, in order, and none of them authorial: the site (slenderness,
+ * measured above), the money (`developmentCost <= funds`, walked down until it
+ * fits), and then §23.1's own taste in the score. It can never propose LESS
+ * than the marginal reading, so it is strictly an addition to the option set.
+ *
+ * There is deliberately no generation term. The first version of this gated
+ * ambition on dynasty depth (8 levels at gen 1-2, 14 at gen 3-5, 28 at gen 6+)
+ * and measurement killed it: a season's median living lineage reaches
+ * generation 2 and the deepest single dynasty reaches 4, because a season
+ * turn rebuilds the world from the seed and resets every lineage to 1.
+ * Production agrees — every live chunk reports generation 1 or 2 at seasons
+ * 31 to 121. The third tier was unreachable and the second covered 13% of
+ * develop decisions; the branch fired 197 times in a full run and won zero.
+ * See docs/adapter-assumptions.md §58.
+ */
+function ambitiousLevels(area: number, funds: number, marginal: number): number {
+  if (!ESCALATION.on) return 0
+  let levels = siteCeiling(area)
+  if (levels <= marginal) return 0
+  // the tallest the money reaches, within what the ground will hold
+  while (levels > marginal && developmentCost(area, levels) > funds) levels--
+  return levels > marginal ? levels : 0
 }
 
 /**

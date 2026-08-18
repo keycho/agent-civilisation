@@ -191,6 +191,27 @@
       #log .e.high { color: var(--amber); background: var(--wash); }
       #log .e .n { color: var(--dimmer); }
       #log .e.high .n { color: var(--amber); opacity: 0.7; }
+      /*
+       * §58.3: a monument falling is the loudest line this feed has. §58 retired
+       * the untouchable class, so it can happen — once per landmark, and the
+       * world is permanently different afterwards. It stays in register (amber
+       * on the wash, still lowercase); what it gains is a rule down the gutter
+       * and one wash that decays, so it reads as the top of the scale rather
+       * than as a different language.
+       */
+      #log .e.monument {
+        color: var(--amber); background: var(--wash);
+        box-shadow: inset 2px 0 0 var(--amber);
+        animation: monumentSettle 3.2s ease-out 1;
+      }
+      #log .e.monument .n { color: var(--amber); opacity: 0.7; }
+      @keyframes monumentSettle {
+        0% { background: rgba(226, 165, 79, 0.3); }
+        100% { background: var(--wash); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #log .e.monument { animation: none; }
+      }
       /* §46.2: rows that know where they happened invite the click */
       #log .e.place { cursor: pointer; }
       #log .e.place:hover { color: var(--cream); background: var(--wash); }

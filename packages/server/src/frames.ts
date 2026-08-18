@@ -176,7 +176,14 @@ export function eventWire(sim: Simulation, e: WorldEvent): EventWire {
     cinematicWeight: e.cinematicWeight,
     x: at ? round(at[0]) : undefined,
     y: at ? round(at[1]) : undefined,
+    monument: monumentName(e),
   }
+}
+
+/** §58.3: the sim stamps the fact; the wire carries only the name. */
+function monumentName(e: WorldEvent): string | undefined {
+  const p = e.payload as { monument?: boolean; monumentName?: string } | undefined
+  return p?.monument ? (p.monumentName ?? 'a landmark') : undefined
 }
 
 function edgeHead(sim: Simulation, edgeId?: string): [number, number] | null {

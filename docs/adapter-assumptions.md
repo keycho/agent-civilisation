@@ -506,6 +506,95 @@ varies 23x across chunks (tokyo 16.2 events/s against maasland 0.69), so some
 chunks have gone quiet while others churn. The construction estimate rests on
 n=59 for tokyo; the schiedam construction sample is thin (n=7) and agrees.
 
+## §14 — §58 escalation, and the axis it was first keyed on
+
+Three findings, in the order they came back.
+
+**1. The generation axis has a range of about four, and a season resets it.**
+
+§58's first implementation gated ambition on dynasty depth: 8 levels at
+generations 1-2, 14 at 3-5, 28 at 6+, which is the natural reading of "ground
+a dynasty spent generations gathering". It fired the ambitious option 197
+times in a full schiedam run and won zero of them, and the untouched share
+came back bit-identical to the pre-escalation control (21.3%), which is what
+a mechanism that never executes looks like.
+
+The reason is structural rather than a constant being wrong. A season turn
+constructs a **new `WorldService` from the same seed** (`server/main.ts`
+`newSeason`), so every lineage resets to generation 1 with the buildings.
+Within one season the median living lineage reaches **generation 2** and the
+deepest single lineage reaches **4-5**; at 3x budget the deepest reaches 5.
+Production agrees and is the stronger evidence — every live chunk reports
+generation 1 or 2 while sitting at seasons 31 to 121, so tokyo has reset 120
+times without a dynasty ever getting past its second heir.
+
+So the third tier was unreachable, the second covered 13% of develop
+decisions, and 94% of the time the branch was reached the agent was in the
+tier where §58 deliberately changes nothing. **`gen 8` is not a horizon this
+world has.** The generation key was removed; it is recorded here rather than
+quietly dropped.
+
+**2. Slenderness, measured, replaces the tier table.**
+
+What survives is the branch itself: `chooseLevels` only ever asks what the
+next floor is worth, and a scoring function restricted to that question can
+never decide to build a tower. The ceiling on the ambitious option is now the
+site, and the site's limit came off the imported fabric — height over the
+square root of footprint, across all 5,458 buildings in the eight chunks:
+
+    p50 0.99    p90 1.63    p99 3.13    p99.9 9.46    max 10.46
+
+`SLENDERNESS = 3.0` is that p99: an agent may build as slender as the top one
+percent of what actually stands in these cities and no slenderer. The tail
+above it is spires and one 81 m London point block on a 74 m2 base.
+
+The consequence is the part worth having. A 76 m2 schiedam lot carries seven
+levels however rich its owner; 200 m2 carries twelve; 600 m2 of assembled
+ground carries twenty-one. **Height needs ground**, and it falls out of the
+measurement instead of being asserted. Capital is still the harder gate — a
+21-level building on 600 m2 costs about 22,000 against a measured end-of-run
+`availableFunds` of median 269 and max 2,672.
+
+**3. The delta §58 is answerable for: -1.1pp of untouched grey.**
+
+The §58.6 guard was pre-registered at a 25% floor before the mechanism
+existed, and **it failed at 21.3% with escalation absent** — across five seeds
+15.5/19.7/19.9/21.3/21.3, median 19.9%, none reaching the floor. The absolute
+level is therefore a pre-existing property of the economics and not
+attributable to §58. Only the delta is, and `escalation-watch.ts` measures it
+paired, both arms in one process against identical seeds via the §37.2 toggle
+idiom (`ESCALATION.on`):
+
+| seed | off | on | delta |
+|------|-----|----|-------|
+| seed-escalation-guard | 21.3% | 18.9% | -2.4pp |
+| spread-0 | 15.5% | 15.7% | +0.2pp |
+| spread-1 | 21.3% | 20.9% | -0.3pp |
+| spread-2 | 19.7% | 16.3% | -3.3pp |
+| spread-3 | 19.9% | 18.8% | -1.1pp |
+| **median** | **19.9%** | **18.8%** | **-1.1pp** |
+
+Escalation costs about one percentage point of grey and buys 5 of 72 agent
+builds above the marginal cap, topping out at 11 levels on 136-269 m2 sites.
+The guard stays red and stays at 25%; moving it to fit is the hill-climb §18
+exists to catch, and the number it would have to move to is set by economics
+§58 did not introduce.
+
+**§58.4, verified: the setback tower is selectable in every chunk.** One seed
+each, counting `agent_tower` selections at §16.1's 26 m threshold —
+schiedam 68/81, vlaardingen 20/39, maassluis 68/106, maasland 67/118,
+london 29/62, paris 45/61, brooklyn 24/55, tokyo 26/63. Tallest 42 m
+(london), 35-39 m elsewhere.
+
+**§58.2's capital-ceiling question, answered: the ceiling does not open, and
+syndication stays a live mechanism decision.** Ceiling watch on vlaardingen
+(the deepest ceiling of the five fabrics) at 3x budget with escalation live
+touches 3/43 and 1/43 across two seeds, inside — at the low end of — the
+4/43 and 2/43 the same instrument recorded before escalation existed. Both
+seeds reach generation 5. §41.3 asked whether the assets start trading by
+gen 8-10 in longer runs; finding 1 says that horizon does not exist, so the
+question cannot resolve the way §41.3 hoped. Unbuilt, as it was.
+
 ## Carried, not fixed
 
 - ~~UK tier-1 valuations~~ — done (build 10, §33.4): HM Land Registry UK HPI

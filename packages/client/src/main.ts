@@ -882,27 +882,47 @@ const CINEMATIC_COOLDOWN_S = 45
 let cinematicCooldown = 0
 
 function maybeCinematic(e: EventWire): void {
+  const monument = isMonumentCut(e)
   if (e.cinematicWeight < CINEMATIC_WEIGHT) return
-  if (cinematicCooldown > 0 || timelapse) return
-  // active viewers are exempt: following, a sheet open, or hands on the camera
+  // §58.3: a monument falling is not subject to the cooldown. The cooldown
+  // stops a busy generation turning into a slideshow; this can happen once per
+  // landmark in the whole life of a world, and it is the shot.
+  if ((cinematicCooldown > 0 && !monument) || timelapse) return
+  // active viewers are exempt: following, a sheet open, or hands on the camera.
+  // §58.3 does NOT override this — the rule is about never taking the camera
+  // off someone who is using it, and it holds however loud the world gets.
   if (followId || selectedAgentId !== null || selectedIndex !== null) return
   if (!document.body.classList.contains('ambient')) return
   if (mode !== 'city') return
   cinematicCooldown = CINEMATIC_COOLDOWN_S
   const line = e.rationale ?? e.type.replace(/_/g, ' ')
-  titleCard(`${line} · gen ${e.generation}`, 5000)
+  const hold = monument ? 8000 : 5000
+  titleCard(monument ? `${e.monument} is coming down · gen ${e.generation}` : `${line} · gen ${e.generation}`, hold)
   sound.swell()
-  // the pullback: hold whatever is on screen and rise off it for five seconds
+  // the pullback: hold whatever is on screen and rise off it for five seconds.
+  // §58.3 pushes in on a monument instead — the thing about to go is the
+  // subject, so the shot approaches it rather than retreating from it.
   director.takeControl()
   const at = e.x !== undefined && e.y !== undefined ? pointAt(e.x, e.y) : rig.target.clone()
-  rig.flyTo(at, Math.min(rig.limits.maxDistance, rig.distance * 1.9), {
-    polar: Math.max(rig.limits.minPolar + 0.1, rig.polar - 0.18),
-    duration: 5,
-  })
+  const seconds = monument ? 8 : 5
+  rig.flyTo(
+    at,
+    monument
+      ? Math.max(rig.limits.minDistance, rig.distance * 0.55)
+      : Math.min(rig.limits.maxDistance, rig.distance * 1.9),
+    {
+      polar: Math.max(rig.limits.minPolar + 0.1, rig.polar - 0.18),
+      duration: seconds,
+    },
+  )
+  // §40.1: the ghost, raised for the one moment it was written for — the
+  // wireframe of what stood here, drawn where it stood, while it comes down.
+  if (monument) ghost.held = true
   setTimeout(() => {
+    if (monument) ghost.held = false
     // release: the director resumes its own idle beats from here
     if (!followId && document.body.classList.contains('ambient')) director.enabled = true
-  }, 5200)
+  }, seconds * 1000 + 200)
 }
 
 /**
@@ -1374,6 +1394,17 @@ function severity(w: number): string {
   return w >= 50 ? 'high' : w >= 20 ? 'cream' : ''
 }
 
+/**
+ * §58.3: the sim stamps a monument falling on the wire rather than making the
+ * client re-derive it from a building it may not have loaded. Everything
+ * downstream — the loud row, the director cut, the ghost — reads this one
+ * field. `demolition_started` is the moment worth watching; the completion of
+ * the same monument carries the mark too and must not fire the cut twice.
+ */
+function isMonumentCut(e: EventWire): boolean {
+  return !!e.monument && e.type === 'demolition_started'
+}
+
 function feedKey(e: EventWire): string {
   return `${e.agentId ?? ''}|${e.type}|${e.rationale ?? e.type}`
 }
@@ -1386,6 +1417,13 @@ const feedHeld = (): boolean => feedHovered || feedPausedByKey
  * unfiltered, so world.log stays the world's at every zoom.
  */
 function queueFeedRow(e: EventWire): void {
+  // §58.3: a monument falling does not wait its turn behind the pace. The
+  // queue exists so routine traffic cannot flood twelve rows; this can happen
+  // once per landmark in the life of a world, so it renders on arrival.
+  if (e.monument) {
+    pushFeedRow(e, 1)
+    return
+  }
   // §60(d): weight now drives INCLUSION, not only colour. The old test here
   // was `severity(w) === ''`, i.e. anything under 20 — which the §57.1
   // measurement showed to be a fifth of live traffic, so four fifths still
@@ -1499,7 +1537,9 @@ function pushFeedRow(e: EventWire, times = 1, instant = false): void {
   // §46.2: rows carry their place — the feed says wilhelmina is clearing a
   // site; clicking goes there.
   const row = document.createElement('div')
-  row.className = `e ${severity(e.cinematicWeight)}${at ? ' place' : ''}`
+  // §58.3: a monument falling outranks the severity scale rather than topping it
+  const loud = e.monument ? ' monument' : ''
+  row.className = `e ${severity(e.cinematicWeight)}${at ? ' place' : ''}${loud}`
   if (at) {
     row.dataset.x = String(at[0])
     row.dataset.y = String(at[1])
@@ -3013,6 +3053,28 @@ function civHome(): void {
     },
   },
   /** §51.3 hooks for the capture rigs: what floats, who is followed, what colour */
+  /**
+   * §58.3 capture hook. A monument falling happens at most a handful of times
+   * in the life of a chunk — schiedam carries five landmarks, tokyo none — so
+   * waiting for one to make the a/b would mean waiting for the world. This
+   * pushes the same wire an actual landmark demolition produces through the
+   * same three paths (loud row, director cut, ghost) and returns nothing the
+   * live path does not already do.
+   */
+  monumentDemolition(name = 'the gasholder') {
+    const e: EventWire = {
+      id: lastEventId + 1,
+      type: 'demolition_started',
+      generation: readouts?.generation ?? 1,
+      cinematicWeight: 127,
+      rationale: `${name} comes down`,
+      monument: name,
+      x: rig.target.x,
+      y: -rig.target.z,
+    }
+    queueFeedRow(e)
+    maybeCinematic(e)
+  },
   /** §59.1: the sprite atlas, so the pixel art can be inspected as drawn */
   agentAtlas: () => pixelAgents.atlasCanvas,
   /** §59.1 capture switch, to isolate the figures from everything else */

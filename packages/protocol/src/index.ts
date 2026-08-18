@@ -101,6 +101,13 @@ export interface EventWire {
   /** where it happened, for §17's director; absent when it has no place */
   x?: number
   y?: number
+  /**
+   * §58.3: the name of the monument this event is bringing down, present only
+   * on the demolition of a landmark. The one payload fact the client cannot
+   * re-derive — it drives the feed's loudest line, the director cut and the
+   * §40.1 ghost at once, and the building it names may not be loaded.
+   */
+  monument?: string
 }
 
 export interface Readouts {

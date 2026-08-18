@@ -207,6 +207,14 @@ export const BOUNDARY = { gate: false }
  */
 export const THIRD_USE = { on: true }
 
+/**
+ * §58.2. The max-intensity branch is always on in the product. The escalation
+ * watch flips it off for its before-arm, the same way §37.2's does, so the
+ * "what did escalation cost the grey?" a/b runs against identical seeds in one
+ * process instead of against a remembered number from a different tree.
+ */
+export const ESCALATION = { on: true }
+
 export class World {
   /**
    * §20.2: an internal monotonic sequence number. Construction spans it, decay
@@ -453,17 +461,19 @@ export class World {
 
     for (const p of seed.parcels) this.parcels.set(p.id, { ...p })
     /**
-     * §42.2: the untouchable list, applied like the boundary gate — the parcel
-     * under an untouchable landmark leaves the developable set at load, so it
-     * never enters the market at all. The list is small and per-chunk; every
-     * other landmark stays acquirable, expensive and conversion-limited.
+     * §58.3: the four hand-authored untouchable anchors RETIRE.
+     *
+     * §42.2 took them out of the market entirely — the parcel under one left
+     * the developable set at load and never returned. That was a guarantee
+     * bought with authorial fiat, and it removed the single most dramatic
+     * thing this world can do. Landmarks stay expensive (2.2x to acquire, 3x
+     * to convert, §42.2's own gate) so taking one remains an achievement
+     * rather than an accident, but nothing is permanently protected.
+     *
+     * The `untouchable` flag is still carried on the building — the importer
+     * still marks these four, and §58.3 wants them to read as monuments when
+     * one falls. It no longer decides whether the ground can be bought.
      */
-    for (const b of this.buildings.values()) {
-      if (b.landmark?.untouchable && b.parcelId) {
-        const p = this.parcels.get(b.parcelId)
-        if (p) p.developable = false
-      }
-    }
     /**
      * §30.3: the boundary gate, applied once at load rather than checked at
      * nine read sites. The importer flags parcels within the boundary margin of

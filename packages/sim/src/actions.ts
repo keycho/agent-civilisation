@@ -280,6 +280,23 @@ interface EmitOptions {
   payload?: Record<string, unknown>
 }
 
+/** the ceiling the log stores weight in — §58.3's "maximum" is this number */
+export const MAX_CINEMATIC_WEIGHT = 127
+
+/**
+ * §58.3: a monument falling. §58 retires the untouchable class, so a landmark
+ * CAN now be taken — and the moment one is, it is the loudest thing this world
+ * has to say. It is not "a demolition, of a landmark, which scores a bit
+ * higher"; it is the top of the scale, above a season boundary, because it can
+ * only happen once per landmark and the world is permanently different after.
+ *
+ * The payload carries the name and the fact, so the client can write the card
+ * and raise the §40.1 ghost without a building lookup it may not have loaded.
+ */
+function monumentFalling(type: EventType, b: Building | undefined): boolean {
+  return !!b?.landmark && (type === 'demolition_started' || type === 'demolition_completed')
+}
+
 function emit(world: World, type: EventType, opts: EmitOptions): void {
   let weight = BASE_CINEMATIC_WEIGHT[type] + (opts.extraWeight ?? 0)
   // §17: weight is situational as well as typed. Replacing a pre-war building
@@ -294,6 +311,15 @@ function emit(world: World, type: EventType, opts: EmitOptions): void {
     // rides cinematic weight so the director and changelog favour it
     if (b.landmark) weight += 24
   }
+  let payload = opts.payload
+  if (monumentFalling(type, opts.building)) {
+    weight = MAX_CINEMATIC_WEIGHT
+    payload = {
+      ...payload,
+      monument: true,
+      monumentName: opts.building?.name ?? opts.building?.landmark?.class ?? 'a landmark',
+    }
+  }
   world.store.appendEvent({
     chunkId: world.chunkId,
     tick: world.tick,
@@ -302,9 +328,9 @@ function emit(world: World, type: EventType, opts: EmitOptions): void {
     buildingId: opts.building?.id,
     parcelId: opts.parcelId,
     edgeId: opts.edgeId,
-    cinematicWeight: Math.max(0, Math.min(127, weight)),
+    cinematicWeight: Math.max(0, Math.min(MAX_CINEMATIC_WEIGHT, weight)),
     rationale: opts.rationale,
-    payload: opts.payload,
+    payload,
   })
 }
 
