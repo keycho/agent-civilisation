@@ -20,24 +20,45 @@ export interface RigLimits {
   minPolar: number
   maxPolar: number
   /**
-   * §62.1: the rectangle the orbit target may occupy, as half-extents in
-   * metres about the origin — the plate's own footprint plus its margin. Was
-   * `panRadius`, a circle, which is the wrong shape for either plate: it cut
-   * the corners off the region a viewer may look at while letting the target
-   * out past the edge mid-side. The city plate is square and the §57.3 map is
-   * 2:1, so the bound has to be able to be both.
+   * §62.1/§65: the rectangle the orbit target may occupy, as a CENTRE and
+   * half-extents in metres — the city's own measured footprint plus a margin.
+   *
+   * Was `panRadius`, a circle about the origin, which is the wrong shape for
+   * either plate: it cut the corners off the region a viewer may look at while
+   * letting the target out past the edge mid-side. §62 made it a rectangle and
+   * left it centred on the origin, which §65 showed is not where the city is —
+   * brooklyn's centre is 52 m off it and london's 44 m, so the region a viewer
+   * could pan over was offset from the thing they were panning over.
    */
+  panCentreX: number
+  panCentreZ: number
   panHalfX: number
   panHalfZ: number
 }
 
 /**
- * §62.1: where the target is allowed to be — the plate's own footprint, so a
- * corner of the city is as reachable as its middle and no more.
+ * §62.1/§65: where the target is allowed to be.
+ *
+ * §62 bounded the target to the plate's footprint and called it done, and the
+ * §62.2 fuzz agreed for four seeds. Seed 11 found the hole: at the minimum
+ * distance, near-horizontal, with the target legally parked on the fabric's
+ * CORNER, the frame contains two street trees and a lamp against black. The
+ * target was on the city and the city was still not on screen, because a
+ * camera looking outward from an edge sees what is past the edge.
+ *
+ * So the bound is not the fabric — it is the fabric inset by how much ground
+ * this shot can see. `d * tan(fov/2)` is half the visible ground extent at the
+ * current distance, and requiring the target to sit that far inside the edge
+ * means the frame is filled with city wherever it is pointed. The inset is
+ * capped at the half-extent, so at the whole-city framing the target is pinned
+ * to the centre — which is what "the plate is always framed whole" means for
+ * the city, and is the same rule §57.3 gives the map.
  */
-function clampToPlate(v: Vector3, limits: RigLimits): void {
-  v.x = MathUtils.clamp(v.x, -limits.panHalfX, limits.panHalfX)
-  v.z = MathUtils.clamp(v.z, -limits.panHalfZ, limits.panHalfZ)
+function clampToPlate(v: Vector3, limits: RigLimits, inset: number): void {
+  const hx = Math.max(0, limits.panHalfX - inset)
+  const hz = Math.max(0, limits.panHalfZ - inset)
+  v.x = MathUtils.clamp(v.x, limits.panCentreX - hx, limits.panCentreX + hx)
+  v.z = MathUtils.clamp(v.z, limits.panCentreZ - hz, limits.panCentreZ + hz)
 }
 
 export interface LensConfig {
@@ -100,6 +121,8 @@ export class CameraRig {
     maxDistance: 2800,
     minPolar: 0.12,
     maxPolar: 1.32,
+    panCentreX: 0,
+    panCentreZ: 0,
     panHalfX: 520,
     panHalfZ: 520,
   }
@@ -221,8 +244,9 @@ export class CameraRig {
    * bands here, on every frame, whatever moved them.
    */
   private enforce(): void {
-    clampToPlate(this.desiredTarget, this.limits)
-    clampToPlate(this.target, this.limits)
+    const inset = this.visibleGroundHalf()
+    clampToPlate(this.desiredTarget, this.limits, inset)
+    clampToPlate(this.target, this.limits, inset)
     this.desiredDistance = MathUtils.clamp(
       this.desiredDistance,
       this.limits.minDistance,
@@ -346,7 +370,22 @@ export class CameraRig {
   }
 
   private clampTarget(): void {
-    clampToPlate(this.desiredTarget, this.limits)
+    clampToPlate(this.desiredTarget, this.limits, this.visibleGroundHalf())
+  }
+
+  /**
+   * Half the ground this shot can see, at the current distance and lens — the
+   * inset `clampToPlate` keeps the target away from the fabric's edge by.
+   */
+  private visibleGroundHalf(): number {
+    const t = MathUtils.clamp(
+      (this.desiredDistance - this.lens.streetDistance) /
+        (this.lens.cityDistance - this.lens.streetDistance),
+      0,
+      1,
+    )
+    const fov = MathUtils.lerp(this.lens.streetFov, this.lens.cityFov, easeInOutCubic(t))
+    return this.desiredDistance * Math.tan(((fov / 2) * Math.PI) / 180)
   }
 
   /**
@@ -388,11 +427,17 @@ export class CameraRig {
    */
   outOfBounds(): string[] {
     const out: string[] = []
-    const { panHalfX, panHalfZ } = this.limits
-    if (Math.abs(this.target.x) > panHalfX + 1e-3 || Math.abs(this.target.z) > panHalfZ + 1e-3) {
+    const { panCentreX, panCentreZ } = this.limits
+    const inset = this.visibleGroundHalf()
+    const panHalfX = Math.max(0, this.limits.panHalfX - inset)
+    const panHalfZ = Math.max(0, this.limits.panHalfZ - inset)
+    if (
+      Math.abs(this.target.x - panCentreX) > panHalfX + 1.0 ||
+      Math.abs(this.target.z - panCentreZ) > panHalfZ + 1.0
+    ) {
       out.push(
         `target (${this.target.x.toFixed(1)}, ${this.target.z.toFixed(1)}) outside ` +
-          `±${panHalfX.toFixed(0)} x ±${panHalfZ.toFixed(0)}`,
+          `(${panCentreX.toFixed(0)}, ${panCentreZ.toFixed(0)}) ±${panHalfX.toFixed(0)} x ±${panHalfZ.toFixed(0)}`,
       )
     }
     if (this.distance < this.limits.minDistance - 1e-3 || this.distance > this.limits.maxDistance + 1e-3) {

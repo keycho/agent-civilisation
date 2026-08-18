@@ -26,6 +26,7 @@ import {
 import type { BuildingDetail, EventWire, Frame, Hello, Readouts, ScrubResult } from '@civ/protocol'
 import { FRAME_INTERVAL_MS } from '@civ/protocol'
 import {
+  Box3,
   BufferAttribute,
   Color,
   BufferGeometry,
@@ -82,13 +83,78 @@ scene.add(cityRoot)
 // travels over the socket, and every viewer already has the same copy.
 const { seed, items, statics, chunks, entry, servers } = await loadChunk()
 
-const radius =
-  Math.max(
-    seed.chunk.localBounds.maxX - seed.chunk.localBounds.minX,
-    seed.chunk.localBounds.maxY - seed.chunk.localBounds.minY,
-  ) / 2
+/**
+ * §65: where the city actually is, measured from the fabric rather than
+ * asserted from metadata.
+ *
+ * The measurement matters more than the change. `chunk.localBounds` turns out
+ * to be EXACTLY the building footprints' bounding box in every chunk —
+ * schiedam half 298x301 against metadata 299x301, london 416x419 against
+ * 416x420, brooklyn 399x376 against 399x377 — so the extent this replaces was
+ * not wrong, and the §65 hypothesis that the origin sits at a corner or a
+ * bbox-min is false: the fabric's centre is within 17 m of the origin in every
+ * chunk (schiedam 12,-17; london 2,6; brooklyn 1,2).
+ *
+ * Measuring it anyway, from the fabric, because a derived constant that
+ * happens to agree with a measurement is still a constant that can silently
+ * stop agreeing when an importer changes. The centre correction it buys is
+ * small and real.
+ *
+ * ROADS ARE NOT THE CITY, and that is the trap this function exists to name.
+ * The imported road graph runs far past the chunk — schiedam's nodes span
+ * ±1025x±987, brooklyn's ±1843x±1499 about a centre 818 m away — because the
+ * network continues into the region beyond the plate. A first version measured
+ * them and blew the plate out to 2247 m across, at which point the camera was
+ * genuinely aimed at empty ground: the extent grew, the plate mesh grew with
+ * it, and the box the framing was computed from was mostly nothing. The city
+ * is its buildings and the parcels they stand on.
+ */
+function measureCity(): { cx: number; cy: number; halfX: number; halfY: number } {
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+  const see = (x: number, y: number): void => {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return
+    if (x < minX) minX = x
+    if (x > maxX) maxX = x
+    if (y < minY) minY = y
+    if (y > maxY) maxY = y
+  }
+  for (const b of seed.buildings) for (const p of b.footprint) see(p[0], p[1])
+  for (const p of seed.parcels) for (const v of p.polygon) see(v[0], v[1])
+  // a chunk with no geometry at all is not a thing this product ships, but a
+  // silent Infinity would be a camera pointed at NaN rather than a loud fault
+  if (!Number.isFinite(minX)) {
+    const lb = seed.chunk.localBounds
+    return {
+      cx: (lb.minX + lb.maxX) / 2,
+      cy: (lb.minY + lb.maxY) / 2,
+      halfX: (lb.maxX - lb.minX) / 2,
+      halfY: (lb.maxY - lb.minY) / 2,
+    }
+  }
+  return {
+    cx: (minX + maxX) / 2,
+    cy: (minY + maxY) / 2,
+    halfX: (maxX - minX) / 2,
+    halfY: (maxY - minY) / 2,
+  }
+}
 
-// the plate stops just past the chunk, so the world reads as an object
+const CITY = measureCity()
+
+/**
+ * The plate stops just past the city, so the world reads as an object.
+ *
+ * The plate mesh is built around the local origin and the substrate heightfield
+ * is sampled in that frame, so moving it to the fabric's centre would misalign
+ * the terrain under the buildings. It reaches far enough from the ORIGIN to
+ * cover a city that is not centred on it instead — which is `|centre| + half`,
+ * and at the measured offsets (12-17 m) is within a few metres of what the
+ * metadata already gave.
+ */
+const radius = Math.max(Math.abs(CITY.cx) + CITY.halfX, Math.abs(CITY.cy) + CITY.halfY)
 const HALF_EXTENT = radius + 22
 const substrate = createSubstrateView(seed.substrate, HALF_EXTENT)
 cityRoot.add(substrate.group)
@@ -440,7 +506,20 @@ function acceptReadouts(r: Readouts): void {
 // ---------------------------------------------------------------------------
 
 const rig = new CameraRig(innerWidth / innerHeight)
-rig.limits.panHalfX = HALF_EXTENT
+
+/**
+ * §65: the middle of the city, in render space, measured rather than assumed.
+ * Local (x, y) becomes world (x, ground, -y), so the sign on z follows.
+ * EVERY home framing, every reset and the §62 clamp are anchored here — the
+ * origin is a coordinate, not a place, and on brooklyn it is 52 m from the
+ * city it was standing in for.
+ */
+const CITY_CENTRE = new Vector3(CITY.cx, substrate.groundY, -CITY.cy)
+
+rig.limits.panCentreX = CITY_CENTRE.x
+rig.limits.panCentreZ = CITY_CENTRE.z
+rig.limits.panHalfX = CITY.halfX + 22
+rig.limits.panHalfZ = CITY.halfY + 22
 rig.limits.panHalfZ = HALF_EXTENT
 
 /**
@@ -492,8 +571,15 @@ const FRAME_MARGIN = 1.22
  * sitting in the frame.
  */
 function frameThePlate(aspect: number, azimuth = CITY_AZIMUTH, polar = CITY_POLAR): number {
+  /**
+   * §65: the span being framed is the CITY's, not the plate mesh's. Those were
+   * the same number while the plate was sized from `chunk.localBounds`, and
+   * that number was wrong — the plate mesh has since grown to cover a city the
+   * metadata understated, and framing the mesh would now pull back further
+   * than the city needs and shrink it in frame. What has to fit is the city.
+   */
   const spread = Math.abs(Math.cos(azimuth)) + Math.abs(Math.sin(azimuth))
-  const widthM = 2 * HALF_EXTENT * spread
+  const widthM = 2 * Math.max(CITY.halfX, CITY.halfY) * spread
   const depthOnScreenM = widthM * Math.cos(polar)
   const needVertical = Math.max(depthOnScreenM, widthM / aspect) * FRAME_MARGIN
   return rig.distanceToFrame(needVertical)
@@ -503,7 +589,7 @@ const CITY_FRAMING = frameThePlate(innerWidth / innerHeight)
 // or the last thing a viewer can do before the map takes over is still a crop
 rig.limits.maxDistance = CITY_FRAMING * 1.35
 rig.distance = CITY_FRAMING
-rig.target.set(0, substrate.groundY, 0)
+rig.target.copy(CITY_CENTRE)
 
 /**
  * §36.1: arriving from a chunk switch flies in rather than cutting — the
@@ -513,19 +599,19 @@ rig.target.set(0, substrate.groundY, 0)
 const arriving = sessionStorage.getItem('tf-arrive') === '1'
 sessionStorage.removeItem('tf-arrive')
 if (arriving) {
-  rig.flyTo(new Vector3(0, substrate.groundY, 0), CITY_FRAMING * 1.6, {
+  rig.flyTo(CITY_CENTRE.clone(), CITY_FRAMING * 1.6, {
     azimuth: CITY_AZIMUTH + 0.8,
     polar: 0.34,
     duration: 0.01,
   })
   rig.update(0.05)
-  rig.flyTo(new Vector3(0, substrate.groundY, 0), CITY_FRAMING, {
+  rig.flyTo(CITY_CENTRE.clone(), CITY_FRAMING, {
     azimuth: CITY_AZIMUTH,
     polar: CITY_POLAR,
     duration: 2.8,
   })
 } else {
-  rig.flyTo(new Vector3(0, substrate.groundY, 0), CITY_FRAMING, {
+  rig.flyTo(CITY_CENTRE.clone(), CITY_FRAMING, {
     azimuth: CITY_AZIMUTH,
     polar: CITY_POLAR,
     duration: 0.01,
@@ -624,6 +710,8 @@ function toGlobe(): void {
   // §62.1: on the map the plate IS the map, so the target is bounded by the
   // map's own 2:1 footprint. Pinning it to the origin instead would make the
   // dive impossible, which is how the invariant would have leaked back out.
+  rig.limits.panCentreX = 0
+  rig.limits.panCentreZ = 0
   rig.limits.panHalfX = globe.halfWidth
   rig.limits.panHalfZ = globe.halfHeight
   frameGlobeHome(2.0)
@@ -665,15 +753,17 @@ function toCity(): void {
   cityRoot.visible = true
   rig.limits.minDistance = 40
   rig.limits.maxDistance = frameThePlate(innerWidth / innerHeight) * 1.35
-  rig.limits.panHalfX = HALF_EXTENT
-  rig.limits.panHalfZ = HALF_EXTENT
-  rig.flyTo(new Vector3(0, substrate.groundY, 0), CITY_FRAMING * 1.55, {
+  rig.limits.panCentreX = CITY_CENTRE.x
+  rig.limits.panCentreZ = CITY_CENTRE.z
+  rig.limits.panHalfX = CITY.halfX + 22
+  rig.limits.panHalfZ = CITY.halfY + 22
+  rig.flyTo(CITY_CENTRE.clone(), CITY_FRAMING * 1.55, {
     azimuth: CITY_AZIMUTH + 0.7,
     polar: 0.36,
     duration: 0.01,
   })
   rig.update(0.05)
-  rig.flyTo(new Vector3(0, substrate.groundY, 0), CITY_FRAMING, {
+  rig.flyTo(CITY_CENTRE.clone(), CITY_FRAMING, {
     azimuth: CITY_AZIMUTH,
     polar: CITY_POLAR,
     duration: 2.6,
@@ -2678,7 +2768,7 @@ function toggleAmbient(): void {
     // §46.4: an ambient return presents the framed view before the director
     // resumes its cuts — the same rule as first load
     director.enabled = false
-    rig.flyTo(new Vector3(0, substrate.groundY, 0), frameThePlate(innerWidth / innerHeight), {
+    rig.flyTo(CITY_CENTRE.clone(), frameThePlate(innerWidth / innerHeight), {
       azimuth: CITY_AZIMUTH,
       polar: CITY_POLAR,
       duration: 1.6,
@@ -3224,7 +3314,7 @@ function civHome(opts: { snap?: boolean } = {}): void {
   if (followId) follow(null)
   director.takeControl()
   rig.home(
-    new Vector3(0, substrate.groundY, 0),
+    CITY_CENTRE.clone(),
     frameThePlate(innerWidth / innerHeight),
     CITY_AZIMUTH,
     CITY_POLAR,
@@ -3242,6 +3332,20 @@ function civHome(opts: { snap?: boolean } = {}): void {
    */
   /** §63.5/§62.2: the flat map itself, for the acceptance and fuzz harnesses */
   mapView: globe,
+  /**
+   * §65: the local->world helper and three's Box3, so a harness can measure
+   * where the city ACTUALLY is rather than trusting metadata about where it
+   * ought to be. §21.4's rule applied to geometry: assert against what was
+   * emitted. `cityRoot` and `Vector3` are already on this surface below.
+   */
+  pointAt,
+  three: { Box3, Vector3 },
+  /** §63.4: where the world readouts think their sites are, in world space */
+  siteMarkPoints: () =>
+    [...agentSite.entries()].slice(0, 20).map(([id, at]) => {
+      const p = pointAt(at[0], at[1])
+      return { id, local: at, world: [+p.x.toFixed(1), +p.z.toFixed(1)] }
+    }),
   /** §57.2 acceptance: what this session has actually watched happen */
   get watched() {
     return watched
@@ -3263,6 +3367,12 @@ function civHome(opts: { snap?: boolean } = {}): void {
   plate: {
     halfExtent: HALF_EXTENT,
     groundY: substrate.groundY,
+    /** §65: the measured city, which is what the camera is actually anchored on */
+    city: {
+      centre: [CITY.cx, CITY.cy],
+      half: [CITY.halfX, CITY.halfY],
+      world: [CITY_CENTRE.x, CITY_CENTRE.z],
+    },
     /** the map is its own plate, 2:1, and must not be lost either */
     get map() {
       return { halfWidth: globe.halfWidth, halfHeight: globe.halfHeight }

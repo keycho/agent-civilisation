@@ -595,6 +595,67 @@ seeds reach generation 5. §41.3 asked whether the assets start trading by
 gen 8-10 in longer runs; finding 1 says that horizon does not exist, so the
 question cannot resolve the way §41.3 hoped. Unbuilt, as it was.
 
+## §15 — §65, where the city is, and one wrong measurement on the way
+
+The operator's hypothesis was that the camera targets the chunk's local-frame
+origin while the plate's geometry is not centred on it — origin at a corner,
+or at a bounding-box min — so every reset aims correctly at the wrong point.
+
+**The hypothesis is false, and the data says so precisely.** `chunk.localBounds`
+IS the building footprints' bounding box, to the metre, in every chunk:
+
+| chunk | metadata half | footprint half | footprint centre |
+|-------|---------------|----------------|------------------|
+| schiedam | 299 x 301 | 298 x 301 | (12, -17) |
+| london | 416 x 420 | 416 x 419 | (2, 6) |
+| brooklyn | 399 x 377 | 399 x 376 | (1, 2) |
+
+The fabric's centre is within 17 m of the origin everywhere. And the symptom
+did not reproduce: five cities at six viewports from 1280x800 to 3440x1440, on
+an untouched first load with nothing snapped, framed the city centred every
+time (`tools/watch/probe-frame.mjs`).
+
+**One measurement of mine was wrong and produced a table that looked like
+confirmation.** A first pass measured the SCENE GRAPH's bounding box and
+reported the metadata understating the city by 19-146 m. The scene graph
+includes the road meshes and the plate itself, so it was measuring the plate,
+not the city. Acting on it — deriving the extent from every coordinate in the
+seed — blew the plate out to 2247 m across, because the imported road graph
+runs far past the chunk: schiedam's nodes span ±1025 x ±987, brooklyn's
+±1843 x ±1499 about a centre 818 m away. At that point the camera really was
+aimed at empty ground, by my own hand. **Roads are not the city.** The extent
+is measured from footprints and parcels, which agree with each other and with
+the metadata.
+
+**What the interactive verification did find is real, and it is the operator's
+symptom.** §62's target bound was the fabric's footprint, and the §62.2 fuzz
+agreed for four seeds. Seed 11 found the hole: at the minimum distance,
+near-horizontal, with the target legally parked on the fabric's CORNER, the
+frame contains two street trees and a lamp against black. The target was on
+the city and the city was still not on screen, because a camera looking
+outward from an edge sees what is past the edge.
+
+So the bound is not the fabric — it is the fabric inset by how much ground the
+shot can see, `distance * tan(fov/2)`, capped at the half-extent. At street
+level that is ~15 m of inset and a viewer may roam almost the whole city; at
+the whole-city framing it exceeds the half-extent and the target pins to the
+centre, which is what "the plate is always framed whole" means for the city
+and is the same rule §57.3 gives the map.
+
+  seed 11, 6 sequences   before: 1/6 sequences violate, worst coverage 3.55%
+                         after:  0/6, worst 8.88%
+
+The centre and extent now come from the measured fabric anyway, and the
+§62 clamp carries a centre rather than assuming the origin. It buys a 12-17 m
+correction that nothing visibly depended on — kept because a constant that
+happens to agree with a measurement is still a constant that can stop
+agreeing when an importer changes.
+
+**§63.4's readouts attach correctly.** Every mark falls inside the fabric box
+and the local-to-world transform is exact (`local (192.29, 245.69)` renders at
+`world (192.3, -245.7)`). A readout over apparently empty ground is a site
+being CLEARED, which is what the feed line beside it says.
+
 ## Carried, not fixed
 
 - ~~UK tier-1 valuations~~ — done (build 10, §33.4): HM Land Registry UK HPI

@@ -68,13 +68,22 @@ await page.evaluate(
     // §57.4 lets a zoom-out past the city's maximum hand over to the flat map,
     // which is product behaviour and not a violation — so the assertion is
     // against whichever plate is on screen. Both must stay findable.
+    /**
+     * §65: the box asserted against is the CITY's measured fabric, not the
+     * plate mesh. Framing the mesh was the older claim and it is weaker — a
+     * viewer can have the plate on screen and the city off it.
+     */
     const plateNow = () => {
       if (civ.plate.mode === 'city') {
-        const h = civ.plate.halfExtent
-        return { y: civ.plate.groundY, half: { x: h, z: h } }
+        const c = civ.plate.city
+        return {
+          y: civ.plate.groundY,
+          centre: { x: c.world[0], z: c.world[1] },
+          half: { x: c.half[0], z: c.half[1] },
+        }
       }
       const { halfWidth: x, halfHeight: z } = civ.plate.map
-      return { y: 0, half: { x, z } }
+      return { y: 0, centre: { x: 0, z: 0 }, half: { x, z } }
     }
     window.__fuzz = { worst: 1, violations: [], frames: 0, modeFlips: 0 }
     let lastMode = civ.plate.mode
@@ -87,7 +96,7 @@ await page.evaluate(
         requestAnimationFrame(tick)
         return // the transition itself flies; judge it once it has landed
       }
-      const { y: groundY, half } = plateNow()
+      const { y: groundY, half, centre } = plateNow()
       /**
        * How much of the FRAME is city — measured by casting a grid of viewport
        * samples at the ground plane and asking which land on the plate.
@@ -111,7 +120,7 @@ await page.evaluate(
           if (t <= 0) continue
           const gx = cam.position.x + dir.x * t
           const gz = cam.position.z + dir.z * t
-          if (Math.abs(gx) <= half.x && Math.abs(gz) <= half.z) hit++
+          if (Math.abs(gx - centre.x) <= half.x && Math.abs(gz - centre.z) <= half.z) hit++
         }
       }
       const onScreen = hit / total
