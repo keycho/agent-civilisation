@@ -274,6 +274,54 @@ await page.evaluate(
       requestAnimationFrame(tick)
     }
     requestAnimationFrame(tick)
+
+    /**
+     * §72.3: the same checks, run over a TRANSITION, by stepping the rig
+     * instead of waiting for it.
+     *
+     * The fuzz above is per-frame and looks like it covers transitions, but it
+     * cannot: it is driven by requestAnimationFrame, the rig's damping is
+     * dt-driven with dt clamped to 50 ms, and under a software renderer at
+     * ~1 fps a move takes minutes of wall clock and is sampled a handful of
+     * times near its endpoints. Worse, every harness that settles before
+     * measuring is looking at a state `enforce()` has already finished
+     * correcting — which is exactly how a bound that was wrong on every
+     * distance-changing path stayed invisible through four camera blocks.
+     *
+     * So: drive `rig.update(1/60)` directly and assert on every step. The rig
+     * is deterministic and the renderer is not in the loop.
+     */
+    window.__stepFuzz = (steps) => {
+      const out = { steps: 0, worst: 1, worstClearance: Infinity, violations: [] }
+      for (let i = 0; i < steps; i++) {
+        civ.rig.update(1 / 60)
+        out.steps++
+        const onScreen = window.__coverage()
+        if (onScreen < out.worst) out.worst = onScreen
+        const clear = civ.rig.eyeClearance()
+        if (clear < out.worstClearance) out.worstClearance = clear
+        const bad = civ.rig.outOfBounds()
+        if (onScreen < minOn) bad.push(`city fills ${(onScreen * 100).toFixed(2)}% of the frame`)
+        if (bad.length && out.violations.length < 8) {
+          out.violations.push({
+            step: i,
+            why: bad,
+            d: Math.round(civ.rig.distance),
+            polar: +civ.rig.polar.toFixed(3),
+            target: [+civ.rig.target.x.toFixed(1), +civ.rig.target.z.toFixed(1)],
+          })
+        }
+      }
+      return out
+    }
+
+    /** the fabric's own corner: where §65.2's bound is load-bearing */
+    window.__corner = () => {
+      const [hx, hy] = civ.plate.city.half
+      const [cx, cy] = civ.plate.city.centre
+      return [cx + hx * 0.98, cy + hy * 0.98]
+    }
+
     window.__fuzzReset = () => {
       window.__fuzz = {
       worst: 1,
@@ -392,6 +440,68 @@ console.log(
 )
 console.log(`  sequences with a violating frame: ${failures.length}/${SEQUENCES}`)
 console.log(`  §57.4 city<->map handovers seen: ${modeFlips}`)
+
+// ---------------------------------------------------------------------------
+// §72.3: director-driven states, stepped through the transition
+// ---------------------------------------------------------------------------
+/**
+ * Every framing the director composes, aimed at the fabric's corner, driven
+ * from the whole-plate view each shot starts from — and asserted on every step
+ * of the way in rather than once it has arrived.
+ */
+const DIRECTOR_SHOTS = [
+  { name: 'road', d: 280, p: 0.7 },
+  { name: 'assembly', d: 330, p: 0.72 },
+  { name: 'demolition', d: 300, p: 0.62 },
+  { name: 'construction', d: 175, p: 0.88 },
+  { name: 'agent', d: 118, p: 0.97 },
+  { name: 'district', d: 640, p: 0.58 },
+  { name: 'before / after', d: 520, p: 0.64 },
+]
+const stepped = []
+for (const shot of DIRECTOR_SHOTS) {
+  const r = await page.evaluate(
+    ({ d, p }) => {
+      const civ = window.civ
+      civ.plate.home(true)
+      const [x, y] = window.__corner()
+      civ.rig.flyTo(civ.pointAt(x, y), d, { polar: p, duration: 3.2 })
+      return window.__stepFuzz(600)
+    },
+    shot,
+  )
+  stepped.push({ ...shot, ...r })
+}
+// ...and home, which is the move back out
+const homeStep = await page.evaluate(() => {
+  const civ = window.civ
+  const [x, y] = window.__corner()
+  civ.rig.flyTo(civ.pointAt(x, y), 118, { polar: 0.97, duration: 1 })
+  civ.rig.settle()
+  civ.plate.home(false)
+  return window.__stepFuzz(600)
+})
+// labelled for what it is: the move OUT, and its first steps are still the
+// street state it was given, so a violation at step 0 belongs to that state
+stepped.push({ name: 'home (from street)', d: 0, p: 0, ...homeStep })
+
+const steppedBad = stepped.filter((r) => r.violations.length)
+console.log(
+  `\n§72.3 director-driven, stepped through the transition — ${stepped.length} framings, ` +
+    `${stepped.reduce((a, r) => a + r.steps, 0)} steps asserted`,
+)
+for (const r of stepped) {
+  console.log(
+    `  ${r.name.padEnd(16)} worst coverage ${(r.worst * 100).toFixed(1).padStart(5)}%   ` +
+      `least headroom ${
+        Number.isFinite(r.worstClearance) ? `${r.worstClearance.toFixed(0)} m` : 'open ground'
+      }   ${r.violations.length ? `${r.violations.length} VIOLATING STEPS` : 'clean'}`,
+  )
+  for (const v of r.violations.slice(0, 2)) {
+    console.log(`      step ${v.step}: ${v.why.join('; ')} (d=${v.d} polar=${v.polar})`)
+  }
+}
+console.log(`  framings with a violating step: ${steppedBad.length}/${stepped.length}`)
 
 // ---------------------------------------------------------------------------
 // §62.4: `0` recovers from any state, including a deliberately bad one

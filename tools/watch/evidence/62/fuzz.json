@@ -1,10 +1,10 @@
 {
-  "seed": 5,
-  "sequences": 10,
-  "totalFrames": 652,
-  "worstOverall": 0.5555555555555556,
-  "worstBuilt": 0.125,
-  "worstClearance": 0,
+  "seed": 1,
+  "sequences": 4,
+  "totalFrames": 255,
+  "worstOverall": 0.3333333333333333,
+  "worstBuilt": 0.1111111111111111,
+  "worstClearance": 2171.17251651432,
   "modeFlips": 0,
   "bars": {
     "MIN_ON": 0.4,
@@ -12,17 +12,83 @@
     "HOME_MIN_ON": 0.6,
     "HOME_RADIUS": 0.05
   },
-  "failures": [],
+  "failures": [
+    {
+      "sequence": 1,
+      "seed": 1,
+      "inputs": [
+        {
+          "kind": "wheel",
+          "delta": 2067
+        },
+        {
+          "kind": "orbit",
+          "x0": 564,
+          "y0": 419,
+          "dx": -299,
+          "dy": 580
+        },
+        {
+          "kind": "pan",
+          "x0": 784,
+          "y0": 583,
+          "dx": 890,
+          "dy": 450
+        },
+        {
+          "kind": "orbit",
+          "x0": 767,
+          "y0": 265,
+          "dx": -621,
+          "dy": -153
+        },
+        {
+          "kind": "pan",
+          "x0": 893,
+          "y0": 332,
+          "dx": -587,
+          "dy": 111
+        }
+      ],
+      "worst": 0.3333333333333333,
+      "violations": [
+        {
+          "at": 5,
+          "why": [
+            "city fills 33.33% of the frame"
+          ],
+          "d": 2094,
+          "polar": 1.295,
+          "target": [
+            -42.4,
+            -39.4
+          ]
+        },
+        {
+          "at": 7,
+          "why": [
+            "city fills 38.89% of the frame"
+          ],
+          "d": 2153,
+          "polar": 1.157,
+          "target": [
+            -34.6,
+            -31.6
+          ]
+        }
+      ]
+    }
+  ],
   "bad": {
     "mode": "city",
-    "d": 40,
-    "polar": 1.052,
+    "d": 69,
+    "polar": 1.055,
     "target": [
-      113.5,
-      -233.8
+      -57.4,
+      -54.3
     ],
-    "azimuth": -1.398,
-    "coverage": 0.5277777777777778
+    "azimuth": -2.489,
+    "coverage": 0.4444444444444444
   },
   "home": {
     "mode": "city",
@@ -41,72 +107,30 @@
     {
       "file": "contact/seq-00.png",
       "sequence": 0,
-      "step": 3,
+      "step": 1,
       "tiles": 0.6944444444444444,
-      "built": 0.20833333333333334
+      "built": 0.19444444444444445
     },
     {
       "file": "contact/seq-01.png",
       "sequence": 1,
-      "step": 2,
-      "tiles": 0.8888888888888888,
-      "built": 0.7013888888888888
+      "step": 1,
+      "tiles": 0.75,
+      "built": 0.125
     },
     {
       "file": "contact/seq-02.png",
       "sequence": 2,
-      "step": 1,
-      "tiles": 1,
-      "built": 0.9930555555555556
+      "step": 3,
+      "tiles": 0.6944444444444444,
+      "built": 0.16666666666666666
     },
     {
       "file": "contact/seq-03.png",
       "sequence": 3,
       "step": 2,
-      "tiles": 0.6111111111111112,
-      "built": 0.4375
-    },
-    {
-      "file": "contact/seq-04.png",
-      "sequence": 4,
-      "step": 2,
-      "tiles": 0.6388888888888888,
-      "built": 0.4027777777777778
-    },
-    {
-      "file": "contact/seq-05.png",
-      "sequence": 5,
-      "step": 2,
-      "tiles": 0.8333333333333334,
-      "built": 0.4305555555555556
-    },
-    {
-      "file": "contact/seq-06.png",
-      "sequence": 6,
-      "step": 0,
-      "tiles": 0.9166666666666666,
-      "built": 0.7569444444444444
-    },
-    {
-      "file": "contact/seq-07.png",
-      "sequence": 7,
-      "step": 6,
-      "tiles": 1,
-      "built": 0.9861111111111112
-    },
-    {
-      "file": "contact/seq-08.png",
-      "sequence": 8,
-      "step": 6,
-      "tiles": 0.8333333333333334,
-      "built": 0.5277777777777778
-    },
-    {
-      "file": "contact/seq-09.png",
-      "sequence": 9,
-      "step": 3,
-      "tiles": 0.6944444444444444,
-      "built": 0.4930555555555556
+      "tiles": 0.75,
+      "built": 0.22916666666666666
     }
   ]
 }

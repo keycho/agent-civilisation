@@ -281,9 +281,24 @@ export class CameraRig {
    * bands here, on every frame, whatever moved them.
    */
   private enforce(): void {
-    const inset = this.visibleGroundHalf()
-    clampToPlate(this.desiredTarget, this.limits, inset)
-    clampToPlate(this.target, this.limits, inset)
+    /**
+     * §72.3: each state is bounded by the ground ITS OWN distance can see.
+     *
+     * Both were clamped with the inset for `desiredDistance` — the distance the
+     * shot is arriving at, not the one the camera is at. During a move those
+     * are different numbers, so a fly-in let the live target sit almost on the
+     * fabric's edge while the eye was still far enough out to see well past it.
+     * That is the black wedge in the reported production frame, and the §62.2
+     * fuzz could not find it because the fuzz SETTLES before it measures and a
+     * settled state is one this method has already finished correcting.
+     *
+     * The pitch ceiling four lines down was already written this way —
+     * `maxPolarFor(this.distance)` for the live state. The plate inset was not.
+     * Measured shortfall before the fix: 10-40 m on every distance-changing
+     * path, 0 m on a constant-distance follow, which is the mechanism isolated.
+     */
+    clampToPlate(this.desiredTarget, this.limits, this.visibleGroundHalfAt(this.desiredDistance))
+    clampToPlate(this.target, this.limits, this.visibleGroundHalfAt(this.distance))
     this.desiredDistance = MathUtils.clamp(
       this.desiredDistance,
       this.limits.minDistance,
@@ -468,15 +483,19 @@ export class CameraRig {
   }
 
   private clampTarget(): void {
-    clampToPlate(this.desiredTarget, this.limits, this.visibleGroundHalf())
+    clampToPlate(this.desiredTarget, this.limits, this.visibleGroundHalfAt(this.desiredDistance))
   }
 
   /**
-   * Half the ground this shot can see, at the current distance and lens — the
-   * inset `clampToPlate` keeps the target away from the fabric's edge by.
+   * Half the ground a shot AT `distance` can see — the inset `clampToPlate`
+   * keeps a target that far inside the fabric's edge by.
+   *
+   * §72.3: takes the distance rather than reading `desiredDistance` off the
+   * rig. The fault this had was not a wrong formula, it was a formula answering
+   * for the wrong camera, and a parameter is how that stops being possible.
    */
-  private visibleGroundHalf(): number {
-    return this.desiredDistance * Math.tan(((this.fovAt(this.desiredDistance) / 2) * Math.PI) / 180)
+  private visibleGroundHalfAt(distance: number): number {
+    return distance * Math.tan(((this.fovAt(distance) / 2) * Math.PI) / 180)
   }
 
   /** the lens at a given distance — the same ramp `apply` uses to set it */
@@ -546,7 +565,10 @@ export class CameraRig {
   outOfBounds(): string[] {
     const out: string[] = []
     const { panCentreX, panCentreZ } = this.limits
-    const inset = this.visibleGroundHalf()
+    // §72.3: the report is about where the camera IS, so it asks at the live
+    // distance. Reading the desired one is what let the invariant call every
+    // step of every path legal while up to 46% of the frame was off the plate.
+    const inset = this.visibleGroundHalfAt(this.distance)
     const panHalfX = Math.max(0, this.limits.panHalfX - inset)
     const panHalfZ = Math.max(0, this.limits.panHalfZ - inset)
     if (

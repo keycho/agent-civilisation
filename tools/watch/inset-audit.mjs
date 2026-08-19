@@ -83,6 +83,16 @@ await page.evaluate(() => {
     let black = 0
     let off = 0
     let tot = 0
+    /**
+     * How far past the fabric's edge the frame's ground footprint actually
+     * reaches, in metres. `black`/`off` are shares of the frame and answer "how
+     * much of the picture is not city"; this answers "does the bound hold",
+     * which is a different question with a different unit. A perspective
+     * frustum meets the ground in a TRAPEZOID that runs away from the camera,
+     * and `d * tan(fov/2)` is the half-width of a square — so the two can
+     * disagree, and this is what says by how much.
+     */
+    let reach = -Infinity
     for (let iy = 0; iy < N; iy++) {
       for (let ix = 0; ix < N; ix++) {
         tot++
@@ -99,9 +109,14 @@ await page.evaluate(() => {
         const pz = cam.position.z + scratch.z * t
         if (Math.abs(px) > he || Math.abs(pz) > he) black++
         if (Math.abs(px - cx) > hx || Math.abs(pz - cz) > hz) off++
+        // a ray that lands absurdly far away is grazing the horizon; it says
+        // nothing useful about the bound and would swamp the maximum
+        if (Math.abs(px - cx) < hx * 40 && Math.abs(pz - cz) < hz * 40) {
+          reach = Math.max(reach, Math.abs(px - cx) - hx, Math.abs(pz - cz) - hz)
+        }
       }
     }
-    return { black: black / tot, off: off / tot }
+    return { black: black / tot, off: off / tot, reach: reach === -Infinity ? 0 : reach }
   }
 
   /**
@@ -124,6 +139,7 @@ await page.evaluate(() => {
         polar: rig.polar,
         black: s.black,
         off: s.off,
+        reach: s.reach,
         oob: rig.outOfBounds().length,
       })
     }
@@ -206,15 +222,27 @@ for (const p of paths) {
   const maxOff = Math.max(...trace.map((r) => r.off))
   const shortfall = Math.max(...trace.map((r) => Math.max(0, r.need - r.used)))
   const worstSlack = Math.min(...trace.map((r) => Math.min(r.slackX, r.slackZ) - r.need))
+  const maxReach = Math.max(...trace.map((r) => r.reach))
+  const reachAtRest = trace[trace.length - 1].reach
   const oob = trace.filter((r) => r.oob > 0).length
   const blackAtRest = trace[trace.length - 1].black
-  rows.push({ label: p.label, maxBlack, maxOff, shortfall, worstSlack, oob, blackAtRest })
+  rows.push({
+    label: p.label,
+    maxBlack,
+    maxOff,
+    shortfall,
+    worstSlack,
+    maxReach,
+    reachAtRest,
+    oob,
+    blackAtRest,
+  })
 }
 await browser.close()
 
 console.log(`\n§65.2 inset audit — ${CHUNK}, ${STEPS} rig steps per path\n`)
 console.log(
-  '  path                        max black   at rest   max off-fabric   inset shortfall   worst slack   oob steps',
+  '  path                        max black   at rest   inset shortfall   worst slack   reach past edge   at rest   oob',
 )
 for (const r of rows) {
   console.log(
@@ -222,9 +250,11 @@ for (const r of rows) {
       r.blackAtRest * 100
     )
       .toFixed(1)
-      .padStart(7)}%   ${(r.maxOff * 100).toFixed(1).padStart(13)}%   ${r.shortfall
+      .padStart(7)}%   ${r.shortfall.toFixed(0).padStart(14)}m   ${r.worstSlack
       .toFixed(0)
-      .padStart(14)}m   ${r.worstSlack.toFixed(0).padStart(10)}m   ${String(r.oob).padStart(9)}`,
+      .padStart(10)}m   ${r.maxReach.toFixed(0).padStart(14)}m   ${r.reachAtRest
+      .toFixed(0)
+      .padStart(7)}m   ${String(r.oob).padStart(3)}`,
   )
 }
 const worst = rows.reduce((a, b) => (b.maxBlack > a.maxBlack ? b : a))
@@ -235,7 +265,10 @@ console.log(
   `  'inset shortfall' is how much more ground the live camera sees than the bound was computed for.`,
 )
 console.log(
-  `  'worst slack' is (edge distance - ground the shot can see); negative means the frame reaches past the fabric.`,
+  `  'worst slack' is (edge distance - ground the shot can see); negative means the bound itself is violated.`,
+)
+console.log(
+  `  'reach past edge' is how far the frame's ground footprint ACTUALLY runs past the fabric box, in metres.`,
 )
 await writeFile(`${OUT}/inset-audit.json`, JSON.stringify({ chunk: CHUNK, rows }, null, 2))
 console.log(`  ${OUT}/inset-audit.json`)
