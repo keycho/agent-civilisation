@@ -32,6 +32,12 @@
  * of the same seed running privately in tabs.
  */
 import { BASE_CINEMATIC_WEIGHT, type WorldSeed, THROUGHPUT } from '@civ/core'
+import {
+  WORLD_STATE_VERSION,
+  type WorldState,
+  decodeWorldState,
+  encodeWorldState,
+} from '@civ/sim'
 import { DurableStore } from '@civ/persistence'
 import {
   type ClientMessage,
@@ -106,16 +112,21 @@ interface ChunkHost {
 const hosts = new Map<string, ChunkHost>()
 const single = () => (hosts.size === 1 ? [...hosts.values()][0] : null)
 
-function newSeason(host: Pick<ChunkHost, 'id' | 'seed'>, season: number): WorldService {
+function newSeason(
+  host: Pick<ChunkHost, 'id' | 'seed'>,
+  season: number,
+  resumeFrom?: WorldState,
+): WorldService {
   return new WorldService({
     seed: host.seed,
     store,
     throughput: THROUGHPUT_INDEX,
     season,
+    resumeFrom,
     rngSeed: `${RNG_SEED}-${host.id}-${season}`,
     onSaturated: (ended, reason) => {
       console.log(`\n[${host.id}] season ${ended} ended on ${reason}; turning over`)
-      turnSeason(host.id, ended + 1)
+      void turnSeason(host.id, ended)
     },
   })
 }
@@ -124,9 +135,22 @@ function newSeason(host: Pick<ChunkHost, 'id' | 'seed'>, season: number): WorldS
  * The turn itself. Everyone watching is told, then handed the new world — a
  * `hello` is exactly the message for "here is the world as it is now".
  */
-function turnSeason(id: string, next: number): void {
+async function turnSeason(id: string, ended: number): Promise<void> {
   const host = hosts.get(id)
   if (!host) return
+  /**
+   * §72.1: the season number comes from the database, not from `ended + 1`.
+   *
+   * A process-local increment is what made every deploy restart at 1 and
+   * collide with the log the last one left. `turnSeason` on the store is an
+   * atomic bump of a persisted per-chunk sequence, and it drops the saved
+   * state in the same statement — a new season starts from the seed, and the
+   * blob from the season before it must not be resumable into.
+   */
+  const next = await store.turnSeason(id).catch((e) => {
+    console.error('[season] could not turn durably; staying in-process', e)
+    return ended + 1
+  })
   host.world = newSeason(host, next)
   // §23.6: the new world starts with viewers at 0 and the count is only
   // re-stamped on connect/disconnect — the audience does not empty because
@@ -166,6 +190,23 @@ const ROSTER = await resolveChunkIds()
 const boot = { constructing: null as string | null, done: false }
 
 async function constructHosts(): Promise<void> {
+  /**
+   * §72.1: before a single event is appended, move the id allocator above
+   * everything the durable table already holds.
+   *
+   * `events.id` came from an in-memory counter that started at 1 on every boot,
+   * and the flush swallowed conflicts — so after a redeploy every event the new
+   * world wrote collided with a row from the previous one and vanished, for as
+   * long as it took the counter to pass the old total. This one read is the fix,
+   * and it has to happen here, ahead of construction, because constructing a
+   * world appends.
+   */
+  const cursor = await store.loadEventCursor().catch((e) => {
+    console.error('[resume] could not read the event cursor', e)
+    return 1
+  })
+  console.log(`  events resume at id ${cursor}`)
+
   for (const id of ROSTER) {
     boot.constructing = id
     const t0 = Date.now()
@@ -185,13 +226,45 @@ async function constructHosts(): Promise<void> {
     }
     const seed = JSON.parse(raw) as WorldSeed
     const host: ChunkHost = { id, seed, world: null as unknown as WorldService, sockets: new Set() }
-    host.world = newSeason(host, 1)
+    /**
+     * §72.1: resume, do not restart. `resumePoint` creates the chunk's row at
+     * season 1 if it has never run, and otherwise hands back whatever the last
+     * process left — season and world alike.
+     */
+    let resume: WorldState | undefined
+    let season = 1
+    try {
+      const point = await store.resumePoint(id)
+      season = point.season
+      if (point.state) {
+        resume = decodeWorldState(point.state)
+        // a blob written by an older build is refused rather than guessed at,
+        // and refusing it means this chunk begins a new season instead
+        if (resume.v !== WORLD_STATE_VERSION || resume.chunkId !== id) {
+          console.log(
+            `  [${id}] saved state is v${resume.v} for '${resume.chunkId}'; ` +
+              `this build reads v${WORLD_STATE_VERSION} — beginning a fresh season instead`,
+          )
+          resume = undefined
+          season = await store.turnSeason(id)
+        }
+      }
+    } catch (e) {
+      console.error(`[resume] ${id} could not be resumed; founding instead`, e)
+      resume = undefined
+    }
+    host.world = newSeason(host, season, resume)
     hosts.set(id, host)
     // §64.2: claim this chunk's genesis if nobody has, then read back whatever
     // was recorded — which on every boot after the first is the original
     void store.loadGenesis(id)
     console.log(
-      `# ${seed.chunk.name}: ${seed.buildings.length} baseline buildings (${((Date.now() - t0) / 1000).toFixed(1)}s)`,
+      `# ${seed.chunk.name}: ${seed.buildings.length} baseline buildings ` +
+        `(${((Date.now() - t0) / 1000).toFixed(1)}s) — ` +
+        (resume
+          ? `resumed season ${season} at ${resume.decisionsIssued.toLocaleString()} decisions, ` +
+            `${resume.agents.length} agents`
+          : `season ${season}, founding`),
     )
     // let queued /health requests answer between constructions
     await new Promise((r) => setImmediate(r))
@@ -582,11 +655,64 @@ http.listen(PORT, () =>
   ),
 )
 
+/**
+ * §72.1: the world is written down, not only its narration.
+ *
+ * Every SAVE_EVERY_MS each hosted chunk captures itself and upserts one row.
+ * The interval is the width of what a crash costs in simulated history, the
+ * same way `flushMs` is for the log — and it is a whole minute rather than a
+ * second because a capture is the world in one blob and a world that is
+ * expensive to save gets saved rarely, which is the failure this is fixing.
+ * Measured at ~415 KiB gzipped for a chunk with 988 buildings.
+ */
+const SAVE_EVERY_MS = Number(process.env.SAVE_EVERY_MS ?? 60_000)
+let saving = false
+
+async function saveWorlds(why: string): Promise<void> {
+  if (saving || !boot.done) return
+  saving = true
+  const t0 = Date.now()
+  let bytes = 0
+  try {
+    for (const host of hosts.values()) {
+      const state = host.world.capture()
+      const blob = encodeWorldState(state)
+      bytes += blob.byteLength
+      await store.saveWorldState(
+        host.id,
+        state.season,
+        state.tick,
+        state.firstEventId,
+        state.decisionsIssued,
+        blob,
+      )
+    }
+    if (why !== 'tick') {
+      console.log(
+        `  saved ${hosts.size} world${hosts.size === 1 ? '' : 's'} (${(bytes / 1024 / 1024).toFixed(1)} MiB, ` +
+          `${((Date.now() - t0) / 1000).toFixed(1)}s) on ${why}`,
+      )
+    }
+  } catch (e) {
+    console.error('[save] world state not written', e)
+  } finally {
+    saving = false
+  }
+}
+
+const saveTimer = setInterval(() => void saveWorlds('tick'), SAVE_EVERY_MS)
+saveTimer.unref?.()
+
 // registered before the boot loop so a mid-boot SIGTERM still drains
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.on(sig, () => {
-    console.log(`\n${sig}: draining the write-behind journal…`)
-    void store.close().then(() => process.exit(0))
+    console.log(`\n${sig}: saving worlds, then draining the write-behind journal…`)
+    clearInterval(saveTimer)
+    // §72.1: the world first. A log flushed past a world that was never written
+    // resumes into a state its own history has run ahead of.
+    void saveWorlds(sig)
+      .then(() => store.close())
+      .then(() => process.exit(0))
   })
 }
 

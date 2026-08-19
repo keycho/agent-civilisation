@@ -20,6 +20,7 @@ import {
   findDistricts,
 } from './divergence.ts'
 import { NAME_POOLS } from './names.ts'
+import { type SimCapture, type WorldState, captureWorld, restoreWorld } from './persist.ts'
 import {
   EFFORT_COST,
   type Agent,
@@ -57,6 +58,15 @@ export interface SimulationOptions {
   /** §20.4: snapshots key on event ordinal. Write one every N events. */
   snapshotEveryEvents?: number
   onSnapshot?: (s: SnapshotSignal) => void
+  /**
+   * §72.1: resume a captured world instead of founding a new one.
+   *
+   * Taken in the constructor rather than as a `restore()` call afterwards, on
+   * purpose: founding a population APPENDS 58 `agent_born` events, and those
+   * would be written to the durable log for agents that are about to be thrown
+   * away. A world that resumes must not emit a birth it did not have.
+   */
+  resumeFrom?: WorldState
 }
 
 
@@ -115,7 +125,8 @@ export class Simulation {
     recomputeLandValues(this.world)
     recomputeYields(this.world)
 
-    this.spawnAgents(opts.agentCount ?? 58)
+    if (opts.resumeFrom) this.restore(opts.resumeFrom)
+    else this.spawnAgents(opts.agentCount ?? 58)
     this.lastReport = divergenceReport(this.world)
   }
 
@@ -133,6 +144,34 @@ export class Simulation {
 
   get report(): DivergenceReport {
     return this.lastReport
+  }
+
+  /**
+   * §72.1: the simulation's own state, which is not all on the world.
+   *
+   * Four things live here rather than there and all four matter across a
+   * restart: the sim's rng (separate from the world's, and the one that samples
+   * among scored options), the heir serial (a collision renames a dynasty), the
+   * districted-buildings set (§60(d) — losing it re-announces every district
+   * as newly formed at weight 90), and the snapshot cursor.
+   */
+  capture(season: number, firstEventId = 0): WorldState {
+    const sim: SimCapture = {
+      rng: this.rng.save(),
+      firstEventId,
+      nextHeirSerial: this.nextHeirSerial,
+      districted: this.districtedBuildings,
+      lastSnapshotEventCount: this.lastSnapshotEventCount,
+    }
+    return captureWorld(this.world, season, sim)
+  }
+
+  private restore(s: WorldState): void {
+    restoreWorld(this.world, s)
+    this.rng.load(s.simRng)
+    this.nextHeirSerial = s.serials.heir
+    this.districtedBuildings = new Set(s.districted)
+    this.lastSnapshotEventCount = s.lastSnapshotEventCount
   }
 
   private spawnAgents(count: number): void {
@@ -506,9 +545,15 @@ export class Simulation {
     }
   }
 
-  /** §20.4: snapshots key on event ordinal. */
+  /**
+   * §20.4: snapshots key on event ordinal.
+   *
+   * §72.1: the ordinal is the event ID, not the in-memory log's length. Those
+   * agreed only while the log started empty at 1 and nothing was removed from
+   * it; a store rejoining a durable table does neither.
+   */
   private maybeSnapshot(): void {
-    const count = this.world.store.eventCount()
+    const count = this.world.store.nextEventId()
     if (count - this.lastSnapshotEventCount < this.snapshotEvery) return
     this.lastSnapshotEventCount = count
     this.lastReport = divergenceReport(this.world)

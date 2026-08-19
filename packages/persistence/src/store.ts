@@ -61,6 +61,34 @@ export interface WorldStore {
   eventCount(): number
 
   /**
+   * §72.1: the id the next event will be given.
+   *
+   * §20.4's ordinals used `eventCount()` — the in-memory log's LENGTH — for
+   * both the snapshot key and the season's origin. Those agreed only while the
+   * log started empty at id 1 and nothing was ever removed from it. A store
+   * that rejoins a durable table starts its allocator high and hydrates a
+   * window of old rows, and under that a length is neither monotonic with the
+   * ids nor comparable across a restart. The id is both.
+   */
+  nextEventId(): number
+
+  /**
+   * §72.1: put already-written events back into memory, with the ids they were
+   * written under.
+   *
+   * Two jobs, both required for a world to resume rather than restart. It moves
+   * the id allocator above everything the durable table already holds, which is
+   * the fix for ids restarting at 1 and colliding; and it refills the recent
+   * window `observe()` reads, because §60's decision input includes the last
+   * 180 ticks of the log and a world that resumes with an empty one makes
+   * different decisions for its first 180 ticks.
+   *
+   * Never used on the write path. A store that is given an id it has already
+   * issued must say so rather than accept it.
+   */
+  hydrate(events: WorldEvent[]): void
+
+  /**
    * §64.2: when this chunk's world first existed, in epoch milliseconds.
    *
    * Not process start — a deploy restarts the process and a season turn

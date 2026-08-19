@@ -50,6 +50,8 @@ export class DurableStore implements WorldStore {
   private pendingSnapshots: Snapshot[] = []
   private timer: ReturnType<typeof setInterval> | null = null
   private flushing = false
+  /** §72.1: the next flush is re-sending a batch that already failed once */
+  private retrying = false
   private ready: Promise<void>
 
   readonly durability: 'postgres' | 'memory'
@@ -133,6 +135,24 @@ export class DurableStore implements WorldStore {
       create table if not exists genesis (
         chunk_id text primary key,
         at       timestamptz not null default now()
+      )`
+    /**
+     * §72.1: where a world goes when the process stops.
+     *
+     * `season` here is the monotonic sequence the spec asks for — one row per
+     * chunk, incremented on a turn, never reset. It is deliberately in the same
+     * row as the state blob so that "which season is this" and "what was the
+     * world doing" cannot disagree: one upsert writes both.
+     */
+    await sql`
+      create table if not exists worlds (
+        chunk_id       text primary key,
+        season         int not null default 1,
+        tick           bigint not null default 0,
+        first_event_id bigint not null default 0,
+        decisions      bigint not null default 0,
+        saved_at       timestamptz not null default now(),
+        state          bytea
       )`
     await sql`create index if not exists events_building on events (building_id)`
     await sql`
@@ -229,6 +249,54 @@ export class DurableStore implements WorldStore {
     return this.memory.eventCount()
   }
 
+  hydrate(events: WorldEvent[]): void {
+    this.memory.hydrate(events)
+  }
+
+  nextEventId(): number {
+    return this.memory.nextEventId()
+  }
+
+  /**
+   * §72.1: move the id allocator above everything the durable table already
+   * holds, before a single event is written.
+   *
+   * `events.id` is a `bigint primary key` filled from an in-memory counter that
+   * started at 1 on every boot, and the flush said `on conflict (id) do
+   * nothing` — so after a redeploy every event the new world wrote collided
+   * with a row from the previous one and was silently dropped, for as long as
+   * it took the counter to pass the old total. Reading `max(id)` once at boot
+   * is the whole fix, and it must happen before `constructHosts` builds
+   * anything, because construction itself appends.
+   */
+  async loadEventCursor(): Promise<number> {
+    if (!this.sql) return this.memory.cursor
+    await this.ready
+    const rows = await this.sql<Array<{ max: string | null }>>`select max(id) from events`
+    const next = Number(rows[0]?.max ?? 0) + 1
+    this.memory.seekTo(next)
+    return next
+  }
+
+  /**
+   * §72.1: the tail of a season's log, oldest first, for a resuming world to
+   * observe against.
+   *
+   * §60's decision input includes `store.events({ sinceTick: tick - 180 })`, so
+   * the recent log is a simulation input and not only a spectator's feed. A
+   * world that resumes with an empty one is a world making its first 180 ticks
+   * of decisions blind.
+   */
+  async loadRecentEvents(chunkId: string, season: number, limit = 4000): Promise<WorldEvent[]> {
+    if (!this.sql) return []
+    await this.ready
+    const rows = await this.sql<Array<Record<string, unknown>>>`
+      select * from events
+      where chunk_id = ${chunkId} and season = ${season}
+      order by id desc limit ${limit}`
+    return rows.map(rowToEvent).reverse()
+  }
+
   private readonly genesis = new Map<string, number>()
 
   genesisAt(chunkId: string): number {
@@ -259,6 +327,100 @@ export class DurableStore implements WorldStore {
       console.error('[genesis] could not read', chunkId, err)
       return this.memory.genesisAt(chunkId)
     }
+  }
+
+  // -- §72.1: resume ---------------------------------------------------------
+
+  /**
+   * The season this chunk is on, and the world it was in the middle of.
+   *
+   * Called once per chunk at boot, before anything is constructed. The row is
+   * created at season 1 if this chunk has never run; otherwise whatever the
+   * last process left is returned untouched. Nothing here ever writes a lower
+   * season than it read — that is what "monotonic sequence, never reset to 1"
+   * has to mean if a redeploy is going to stop starting the world over.
+   */
+  async resumePoint(
+    chunkId: string,
+  ): Promise<{ season: number; firstEventId: number; state: Uint8Array | null }> {
+    if (!this.sql) return { season: 1, firstEventId: 0, state: null }
+    await this.ready
+    const rows = await this.sql<
+      Array<{ season: number; first_event_id: string; state: Uint8Array | null }>
+    >`
+      insert into worlds (chunk_id, season) values (${chunkId}, 1)
+      on conflict (chunk_id) do update set chunk_id = excluded.chunk_id
+      returning season, first_event_id, state`
+    const r = rows[0]
+    let season = r?.season ?? 1
+    /**
+     * The migration case, and the invariant it protects: a season number is
+     * used by exactly one world.
+     *
+     * A chunk can have a log without having a saved state — every deploy before
+     * §72.1 was exactly that, and so is any future boot where the blob is lost
+     * or refused. Reusing season 1 there would start a second world under a
+     * number the first one already wrote snapshots under, and those keys are
+     * `(chunk_id, season, event_ordinal)` — which is the collision this block
+     * exists to end, not to move somewhere else. So when there is history but
+     * no state, the world begins ABOVE everything the log has seen.
+     */
+    if (!r?.state) {
+      const seen = await this.sql<Array<{ max: number | null }>>`
+        select max(season) as max from events where chunk_id = ${chunkId}`
+      const highest = seen[0]?.max ?? 0
+      if (highest >= season) {
+        season = highest + 1
+        await this.sql`
+          update worlds set season = ${season}, first_event_id = 0, tick = 0
+          where chunk_id = ${chunkId}`
+      }
+    }
+    return {
+      season,
+      firstEventId: r?.state ? Number(r?.first_event_id ?? 0) : 0,
+      state: r?.state ?? null,
+    }
+  }
+
+  /**
+   * Turn the season for this chunk and return the new number.
+   *
+   * The increment happens in the database rather than in the process, so two
+   * processes racing on the same chunk cannot both decide they are season 5.
+   * The state blob is dropped in the same statement: a new season starts from
+   * the seed, and a stale blob from the season before it is exactly the thing
+   * that must not be resumed into.
+   */
+  async turnSeason(chunkId: string): Promise<number> {
+    if (!this.sql) return this.season + 1
+    await this.ready
+    const rows = await this.sql<Array<{ season: number }>>`
+      insert into worlds (chunk_id, season) values (${chunkId}, 2)
+      on conflict (chunk_id) do update
+        set season = worlds.season + 1, state = null, tick = 0, first_event_id = 0
+      returning season`
+    return rows[0]?.season ?? this.season + 1
+  }
+
+  /** Write the world's own state. One row per chunk; the newest wins. */
+  async saveWorldState(
+    chunkId: string,
+    season: number,
+    tick: number,
+    firstEventId: number,
+    decisions: number,
+    state: Uint8Array,
+  ): Promise<void> {
+    if (!this.sql) return
+    await this.ready
+    await this.sql`
+      insert into worlds (chunk_id, season, tick, first_event_id, decisions, saved_at, state)
+      values (${chunkId}, ${season}, ${tick}, ${firstEventId}, ${decisions}, now(), ${Buffer.from(state)})
+      on conflict (chunk_id) do update set
+        season = excluded.season, tick = excluded.tick,
+        first_event_id = excluded.first_event_id, decisions = excluded.decisions,
+        saved_at = excluded.saved_at, state = excluded.state`
   }
 
   // -- the spectator's side: asynchronous, durable ----------------------------
@@ -332,6 +494,20 @@ export class DurableStore implements WorldStore {
     this.flushing = true
     const events = this.pendingEvents
     const snapshots = this.pendingSnapshots
+    /**
+     * §72.1: `on conflict do nothing` on an append-only log is silent data loss
+     * wearing the clothes of idempotency. It stays only where a conflict is
+     * PROVABLY a retry of the same row, and this flag is that proof.
+     *
+     * A batch that failed part-way is put back below and re-sent; postgres
+     * inserts a multi-row statement atomically, so the only way a re-sent row
+     * can conflict is that it landed and the acknowledgement did not. Anything
+     * else — an id the allocator has issued twice, a second process writing the
+     * same chunk — is a fault, and on a first attempt it now raises instead of
+     * disappearing.
+     */
+    const retry = this.retrying
+    this.retrying = false
     this.pendingEvents = []
     this.pendingSnapshots = []
     try {
@@ -352,7 +528,10 @@ export class DurableStore implements WorldStore {
           // scalar type from an object and fails at the boundary
           payload: this.sql!.json((e.payload ?? {}) as Record<string, never>),
         }))
-        await this.sql`insert into events ${this.sql(chunk)} on conflict (id) do nothing`
+        // see `retry` above: a first attempt raises on conflict, a re-send does not
+        await (retry
+          ? this.sql`insert into events ${this.sql(chunk)} on conflict (id) do nothing`
+          : this.sql`insert into events ${this.sql(chunk)}`)
       }
       this.highWaterOrdinal = Math.max(
         this.highWaterOrdinal,
@@ -369,17 +548,32 @@ export class DurableStore implements WorldStore {
             ),
           )
         }
-        await this.sql`
-          insert into snapshots (chunk_id, season, event_ordinal, generation, tick, building_data, divergence_index, stats)
-          values (${s.chunkId}, ${s.season}, ${s.ordinal}, ${s.generation}, ${s.tick},
-                  ${Buffer.from(s.buildingData)}, ${s.divergenceIndex}, ${this.sql.json(s.stats)})
-          on conflict (chunk_id, season, event_ordinal) do nothing`
+        const row = [
+          s.chunkId,
+          s.season,
+          s.ordinal,
+          s.generation,
+          s.tick,
+          Buffer.from(s.buildingData),
+          s.divergenceIndex,
+          this.sql.json(s.stats),
+        ] as const
+        await (retry
+          ? this.sql`
+              insert into snapshots (chunk_id, season, event_ordinal, generation, tick, building_data, divergence_index, stats)
+              values (${row[0]}, ${row[1]}, ${row[2]}, ${row[3]}, ${row[4]}, ${row[5]}, ${row[6]}, ${row[7]})
+              on conflict (chunk_id, season, event_ordinal) do nothing`
+          : this.sql`
+              insert into snapshots (chunk_id, season, event_ordinal, generation, tick, building_data, divergence_index, stats)
+              values (${row[0]}, ${row[1]}, ${row[2]}, ${row[3]}, ${row[4]}, ${row[5]}, ${row[6]}, ${row[7]})`)
       }
     } catch (e) {
       // Put them back rather than dropping them; a dropped event is a hole in
-      // an append-only log, which is worse than a slow one.
+      // an append-only log, which is worse than a slow one. The next attempt is
+      // a RETRY, and only a retry is allowed to swallow a conflict.
       this.pendingEvents = events.concat(this.pendingEvents)
       this.pendingSnapshots = snapshots.concat(this.pendingSnapshots)
+      this.retrying = true
       this.onError(e)
     } finally {
       this.flushing = false
@@ -402,7 +596,19 @@ export class DurableStore implements WorldStore {
   async pruneSeasons(chunkId: string, keep: number): Promise<{ events: number; snapshots: number }> {
     if (!this.sql || keep < 1) return { events: 0, snapshots: 0 }
     await this.settle()
-    const cutoff = this.season - keep + 1
+    /**
+     * §72.1: retention can never reach a season the current world has not
+     * passed.
+     *
+     * It used to prune by season NUMBER against a counter that restarted at 1
+     * on every deploy, so a process that got to season 5 deleted the PREVIOUS
+     * deploy's season 1 along with its own. With `worlds.season` monotonic that
+     * cannot happen by construction, but the guarantee is asserted here rather
+     * than inferred from somewhere else: the cutoff is clamped below the
+     * running season, so the season being played and everything after it are
+     * out of reach whatever `keep` says.
+     */
+    const cutoff = Math.min(this.season - keep + 1, this.season)
     if (cutoff <= 1) return { events: 0, snapshots: 0 }
     return this.sql.begin(async (tx) => {
       // the one place this is set, and it is set for a single transaction

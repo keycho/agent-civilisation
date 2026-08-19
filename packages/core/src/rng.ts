@@ -11,6 +11,18 @@ export interface Rng {
   range(lo: number, hi: number): number
   pick<T>(items: readonly T[]): T
   chance(p: number): boolean
+  /**
+   * §72.1: the generator's whole state, so a world can be put back exactly
+   * where it was rather than approximately.
+   *
+   * A resumed world that re-seeds from the same string replays the stream from
+   * the beginning, which means the first decision after a restart repeats one
+   * already taken tens of thousands of decisions ago. mulberry32's state is a
+   * single u32, so carrying it costs one number and is the difference between
+   * resuming a world and restarting it with its furniture rearranged.
+   */
+  save(): number
+  load(state: number): void
 }
 
 /** FNV-1a. Turns any stable id into a seed. */
@@ -38,5 +50,9 @@ export function makeRng(seed: number | string): Rng {
   rng.range = (lo: number, hi: number) => lo + next() * (hi - lo)
   rng.pick = <T,>(items: readonly T[]): T => items[Math.floor(next() * items.length)]
   rng.chance = (p: number) => next() < p
+  rng.save = () => a
+  rng.load = (state: number) => {
+    a = state >>> 0
+  }
   return rng
 }

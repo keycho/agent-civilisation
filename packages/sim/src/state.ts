@@ -557,6 +557,28 @@ export class World {
     return n
   }
 
+  /**
+   * §72.1: the id serials, so a resumed world does not re-issue names it has
+   * already used. `ab-14` meaning two different buildings across a restart is
+   * the same class of fault as an event id colliding in the log, and it would
+   * surface as a spectator's building history splicing two structures.
+   */
+  captureSerials(): { building: number; node: number; edge: number; plan: number } {
+    return {
+      building: this.nextBuildingSerial,
+      node: this.nextNodeSerial,
+      edge: this.nextEdgeSerial,
+      plan: this.nextPlanSerial,
+    }
+  }
+
+  restoreSerials(s: { building: number; node: number; edge: number; plan: number }): void {
+    this.nextBuildingSerial = s.building
+    this.nextNodeSerial = s.node
+    this.nextEdgeSerial = s.edge
+    this.nextPlanSerial = s.plan
+  }
+
   newBuildingId(): string {
     return `ab-${this.nextBuildingSerial++}`
   }

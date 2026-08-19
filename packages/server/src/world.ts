@@ -2,7 +2,7 @@ import { BASE_CINEMATIC_WEIGHT, RATE_WINDOW_TICKS, THROUGHPUT, type WorldSeed } 
 import { DurableStore } from '@civ/persistence'
 import type { AgentIdentity, EventWire, Frame, Hello, MaterialiseSpec, Readouts, RoadEdgeWire } from '@civ/protocol'
 import { toBase64 } from '@civ/protocol'
-import { SaturationWatch, Simulation } from '@civ/sim'
+import { SaturationWatch, Simulation, type WorldState } from '@civ/sim'
 import {
   BuildingTexture,
   agentIdentity,
@@ -42,6 +42,13 @@ export interface WorldServiceOptions {
   onSaturated?: (season: number, reason: SeasonEndReason) => void
   /** existing store, so a new season keeps writing to the same log */
   store?: DurableStore
+  /**
+   * §72.1: resume this world instead of founding it. When set, the season's
+   * ordinal origin comes with it rather than from the current event count —
+   * `firstEventId` was captured when THIS season began, possibly in a previous
+   * process, and re-deriving it here would restart the scrub's range mid-season.
+   */
+  resumeFrom?: WorldState
 }
 
 /** §23.4: a season ends for one of two reasons and they are not the same news. */
@@ -83,8 +90,8 @@ export class WorldService {
 
   constructor(opts: WorldServiceOptions) {
     this.store = opts.store ?? new DurableStore({ url: opts.databaseUrl })
-    this.firstEventId = this.store.eventCount()
-    this.lastEventId = this.firstEventId
+    this.firstEventId = opts.resumeFrom?.firstEventId ?? this.store.nextEventId()
+    this.lastEventId = this.store.nextEventId()
     this.chunkId = opts.seed.chunk.id
     this.season = opts.season ?? 1
     this.onSaturated = opts.onSaturated
@@ -102,6 +109,7 @@ export class WorldService {
     this.sim = new Simulation(opts.seed, this.store, {
       agentCount: opts.agentCount ?? 58,
       seed: opts.rngSeed ?? 'world-1',
+      resumeFrom: opts.resumeFrom,
       snapshotEveryEvents: opts.snapshotEveryEvents ?? 350,
       onSnapshot: ({ ordinal, generation, report }) => {
         this.pump()
@@ -131,21 +139,51 @@ export class WorldService {
     })
 
     this.texture = new BuildingTexture(opts.seed.buildings.map((b) => b.id))
+    /**
+     * §72.1: a resumed world has to re-materialise what it already built.
+     *
+     * The texture is seeded from the BASELINE ids, and everything an agent put
+     * up got its slot from `pendingGeometry` as it was built. A resumed world's
+     * agent-built stock is back in the simulation but has never been through
+     * that queue in this process, so without this it would have no slot, no
+     * geometry on the client, and no place in the data texture — a city that
+     * resumed with two hundred of its buildings invisible.
+     *
+     * Pushed in `buildings` insertion order, which the capture preserves, so
+     * the slots come out where they were. That matters beyond tidiness: §20.4's
+     * scrub compares texture bytes across ordinals, and a reshuffle would make
+     * every snapshot taken before the restart disagree with every one after it.
+     */
+    if (opts.resumeFrom) {
+      for (const b of this.sim.world.buildings.values()) {
+        if (b.source !== 'real_world') this.sim.world.pendingGeometry.push(b.id)
+      }
+    }
     for (const b of this.sim.world.buildings.values()) this.known.add(b.id)
     this.pump()
     // the founding population arrives in `hello`, not as a birth
     this.bornSinceFrame = []
     this.lastBroadcastBytes = this.texture.bytes.slice()
-    this.store.putSnapshot({
-      chunkId: this.chunkId,
-      season: this.season,
-      ordinal: 0,
-      generation: 1,
-      tick: 0,
-      buildingData: this.texture.bytes.slice(),
-      divergenceIndex: 0,
-      stats: {},
-    })
+    // §72.1: only a world that is BEGINNING writes the season's ordinal-0
+    // snapshot. A resumed one would be writing a second row under a key the
+    // season already has, which is the collision this block exists to end.
+    if (!opts.resumeFrom) {
+      this.store.putSnapshot({
+        chunkId: this.chunkId,
+        season: this.season,
+        ordinal: 0,
+        generation: 1,
+        tick: 0,
+        buildingData: this.texture.bytes.slice(),
+        divergenceIndex: 0,
+        stats: {},
+      })
+    }
+  }
+
+  /** §72.1: this world, whole, for the store. */
+  capture(): WorldState {
+    return this.sim.capture(this.season, this.firstEventId)
   }
 
   get throughput(): number {
@@ -275,7 +313,7 @@ export class WorldService {
       tick: this.sim.world.tick,
       decisions: this.sim.decisionsIssued,
       // §22.3: this season's log, which is what the scrub travels
-      eventCount: Math.max(0, this.store.eventCount() - this.firstEventId),
+      eventCount: Math.max(0, this.store.nextEventId() - this.firstEventId),
     }
   }
 

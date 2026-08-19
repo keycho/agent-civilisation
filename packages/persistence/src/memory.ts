@@ -34,6 +34,58 @@ export class MemoryStore implements WorldStore {
     return id
   }
 
+  /**
+   * §72.1: reinstate written history, ids and all, and move the allocator past
+   * it.
+   *
+   * One store spans every hosted chunk (§44.5) and their events interleave in
+   * one id sequence, so the windows arrive out of order — chunk B's window
+   * begins BELOW where chunk A's ended. The first version rejected that as a
+   * collision and killed the second chunk's boot. The invariant it was reaching
+   * for is not "ids arrive ascending"; it is "no id is ever used twice", and
+   * that is what is checked here.
+   *
+   * The log is re-sorted by id afterwards because the ranked reads walk it
+   * backwards and assume write order. Boot-time only, a few thousand rows per
+   * chunk, and the alternative is a feed that replays out of sequence.
+   */
+  hydrate(events: WorldEvent[]): void {
+    if (events.length === 0) return
+    const seen = new Set(this.log.map((e) => e.id))
+    let added = 0
+    for (const e of events) {
+      if (seen.has(e.id)) continue
+      seen.add(e.id)
+      const event = Object.freeze({ ...e }) as WorldEvent
+      this.log.push(event)
+      if (event.buildingId) push(this.byBuilding, event.buildingId, event)
+      if (event.agentId) push(this.byAgent, event.agentId, event)
+      push(this.byChunk, event.chunkId, event)
+      this.nextId = Math.max(this.nextId, e.id + 1)
+      added++
+    }
+    if (!added) return
+    const byId = (a: WorldEvent, b: WorldEvent) => a.id - b.id
+    this.log.sort(byId)
+    for (const index of [this.byBuilding, this.byAgent, this.byChunk]) {
+      for (const arr of index.values()) arr.sort(byId)
+    }
+  }
+
+  /** §72.1: the id this store would issue next, so a resume can be checked. */
+  nextEventId(): number {
+    return this.nextId
+  }
+
+  get cursor(): number {
+    return this.nextId
+  }
+
+  /** §72.1: start issuing at `id` — for a store rejoining a durable table. */
+  seekTo(id: number): void {
+    this.nextId = Math.max(this.nextId, id)
+  }
+
   events(q: EventQuery = {}): WorldEvent[] {
     let source = this.log
     if (q.buildingId) source = this.byBuilding.get(q.buildingId) ?? []
