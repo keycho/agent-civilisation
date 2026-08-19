@@ -548,6 +548,7 @@ export class DurableStore implements WorldStore {
     if (!this.sql || this.flushing) return
     if (this.pendingEvents.length === 0 && this.pendingSnapshots.length === 0) return
     this.flushing = true
+    let ok = true
     const t0 = Date.now()
     const events = this.pendingEvents
     const snapshots = this.pendingSnapshots
@@ -639,6 +640,7 @@ export class DurableStore implements WorldStore {
       this.pendingEvents = events.concat(this.pendingEvents)
       this.pendingSnapshots = snapshots.concat(this.pendingSnapshots)
       this.retrying = true
+      ok = false
       this.onError(e)
     } finally {
       this.lastFlushMs = Date.now() - t0
@@ -662,8 +664,15 @@ export class DurableStore implements WorldStore {
      * time, so three quarters of the interval was available and unused. The
      * interval is the promise about how STALE the log may be (§22.4); it was
      * never meant to be a ceiling on how fast it may catch up.
+     *
+     * ONLY ON SUCCESS. The first version re-flushed unconditionally, and the
+     * test suite found what that does the moment the database is gone: a failed
+     * flush re-queues its batch, sees a queue over the threshold, and calls
+     * itself again immediately — 51,791 `CONNECTION_ENDED` errors in one suite
+     * run, a hot loop on the event loop and a log nobody can read. A failure
+     * waits for the interval, which is the backoff.
      */
-    if (this.pendingEvents.length > CATCH_UP_AT) void this.flush()
+    if (ok && this.pendingEvents.length > CATCH_UP_AT) void this.flush()
   }
 
   /**

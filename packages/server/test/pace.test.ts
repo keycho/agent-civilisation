@@ -83,13 +83,22 @@ test('§72.2: each throughput position runs at the rate written on it', async ()
 test('§72.2: the readout reports what the world did, not what it was asked', async () => {
   const store = new DurableStore()
   const world = new WorldService({ seed, store, season: 1, rngSeed: 'pace-readout', throughput: 2 })
+  /**
+   * Driven as fast as the machine will go rather than on the server's 100 ms
+   * interval, so simulated time runs far ahead of wall clock — which is exactly
+   * what makes this a discriminator. The measured rate is decisions per WALL
+   * second, so here it comes out far above the dial's 14; on the real loop the
+   * two coincide, and a test that ran there could not tell an echo of the dial
+   * from a measurement of the world.
+   */
   for (let i = 0; i < 200; i++) await world.advance(DT)
 
   const pace = world.readouts().pace
   assert.equal(pace.target, 14, 'the dial position is still reported, as a separate fact')
-  assert.ok(pace.decisionsPerSecond > 0, 'and the measured rate is populated')
   assert.ok(
-    Math.abs(pace.decisionsPerSecond - world.measuredRate) < 0.001,
-    'the wire carries the same measurement /health does',
+    pace.decisionsPerSecond > pace.target * 2,
+    `the readout is ${pace.decisionsPerSecond}/s against a dial of ${pace.target} — ` +
+      `driven this hard the world is far past its nominal rate, so a readout that ` +
+      `agreed with the dial would be echoing it rather than measuring anything`,
   )
 })
