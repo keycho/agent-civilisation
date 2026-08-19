@@ -257,6 +257,28 @@ function measureBuilt(): BuiltGrid {
 const BUILT = measureBuilt()
 
 /**
+ * §68.3: which baseline buildings sit in which cell, so "is anything lit near
+ * here" is a neighbourhood lookup rather than a scan of the whole chunk.
+ *
+ * Built once off the same grid the §66.3 occupancy uses. The grid stores a
+ * roofline per cell and cannot say WHICH building put it there, which is
+ * exactly what this question needs — a cell can be built and its building long
+ * since demolished.
+ */
+const BUILT_INDEX: number[][] = Array.from({ length: BUILT.cols * BUILT.rows }, () => [])
+seed.buildings.forEach((b, i) => {
+  let x = 0
+  let y = 0
+  for (const p of b.footprint) {
+    x += p[0]
+    y += p[1]
+  }
+  const c = Math.floor((x / b.footprint.length - BUILT.minX) / BUILT_CELL_M)
+  const r = Math.floor((y / b.footprint.length - BUILT.minY) / BUILT_CELL_M)
+  if (c >= 0 && r >= 0 && c < BUILT.cols && r < BUILT.rows) BUILT_INDEX[r * BUILT.cols + c].push(i)
+})
+
+/**
  * §66.3: the roofline at a WORLD point, or -Infinity where nothing stands.
  *
  * `pointAt` maps local (x, y) to world (x, groundY, -y), so the inverse the

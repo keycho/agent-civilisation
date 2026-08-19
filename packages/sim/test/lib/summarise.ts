@@ -128,6 +128,14 @@ export interface Summary {
   /** §18.2 */
   untouchedIds: string[]
   untouchedShare: number
+  /**
+   * §70.2: baseline stock that still reads as the world we left it — standing
+   * and no further than a renovation from its import. This is the bar; the
+   * untouched share above it is now reported as information.
+   */
+  standingUnconvertedShare: number
+  /** §70.2: the class histogram, so a failing fabric bar can name its cause */
+  divergenceCounts: Record<number, number>
   /** §34 step 3: observation-candidate appearances per baseline building */
   enumeratedByBuilding: Record<string, number>
   /** §21.3: divergence class per baseline building, for cross-seed entropy */
@@ -430,6 +438,8 @@ export async function runSeed(
     agentOrigin: r.agentOrigin,
     cleared: r.demolished,
     ...groundState(w),
+    standingUnconvertedShare: r.standingUnconvertedShare,
+    divergenceCounts: r.counts,
     clearToBuild:
       (eventCounts.construction_completed ?? 0) > 0
         ? (eventCounts.demolition_completed ?? 0) / (eventCounts.construction_completed ?? 1)

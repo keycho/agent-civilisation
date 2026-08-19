@@ -20,6 +20,16 @@ export type CameraIntent =
   | { kind: 'follow_demolition'; buildingId: string }
   | { kind: 'follow_road'; x: number; y: number }
   | { kind: 'follow_agent'; agentId: string }
+  /**
+   * §68.3: an assembly is not an agent shot.
+   *
+   * `parcels_assembled` mapped to `follow_agent`, and assembly is the commonest
+   * high-weight event this world produces — which is the actual reason seven of
+   * ten shots on the first director sheet were labelled `agent` at one framing.
+   * Consolidating three lots is a change to a BLOCK and wants to be seen at
+   * block scale; the agent doing it is incidental to the picture.
+   */
+  | { kind: 'follow_assembly'; x: number; y: number; agentId?: string }
   | { kind: 'district_pullback'; districtId: string }
   | { kind: 'before_after'; districtId: string; ordinalA: number; ordinalB: number }
 
@@ -51,11 +61,40 @@ export interface DirectorHooks {
    * returns. Absent or null, every idle beat drifts home.
    */
   idleSite?(): Vector3 | null
+  /**
+   * §68.3: how much standing city is around a point, 0..1.
+   *
+   * After §63 light IS the signal of activity, and the §66.3 director sheet's
+   * one unpostable frame was a correctly-chosen agent standing in an unlit part
+   * of the plate — a shot of nothing, taken because the ranking could not tell
+   * the difference. Every metric that tried to judge a frame's geometry came
+   * apart (§68.1); this does not try. It asks the one question the world can
+   * answer cheaply: is there anything here that would be lit.
+   */
+  litnessAt?(at: Vector3): number
 }
 
 const IDLE_BEFORE_RESUME_S = 12
 const MIN_SHOT_S = 7
 const MAX_SHOT_S = 16
+
+/**
+ * §68.3: how far an unlit subject falls in the ranking.
+ *
+ * A floor rather than a veto. Drama still wins — a demolition in a dark dock is
+ * a real event and the director should be allowed to take it — but between two
+ * comparable events the lit one is the one worth pointing a camera at, and a
+ * routine event in the dark should lose to a routine event in the light.
+ */
+const UNLIT_FLOOR = 0.3
+
+/**
+ * §68.3: the same intent twice running is one idea repeated. Seven of ten shots
+ * on the first director sheet were `agent` at exactly d=150 pitch 0.9 — not
+ * because the compositions were identical but because one kind owned the queue.
+ * A shot of the kind just taken has to be clearly better to win again.
+ */
+const REPEAT_PENALTY = 0.55
 
 export class CameraDirector {
   private queue: QueuedIntent[] = []
@@ -155,6 +194,17 @@ export class CameraDirector {
   enqueue(intent: CameraIntent, priority: number): void {
     const shot = this.compose(intent, priority)
     if (!shot) return
+    /**
+     * §68.3: rank on drama AND on whether there is anything to see.
+     *
+     * Both factors are applied here rather than inside `compose`, because
+     * compose answers "where would this shot stand" and this answers "is it
+     * worth standing there" — and only the second needs to know what the
+     * director just did.
+     */
+    const lit = this.hooks.litnessAt?.(shot.target) ?? 1
+    shot.priority *= UNLIT_FLOOR + (1 - UNLIT_FLOOR) * Math.max(0, Math.min(1, lit))
+    if (this.current && this.current.intent.kind === intent.kind) shot.priority *= REPEAT_PENALTY
     this.queue.push(shot)
     this.queue.sort((a, b) => b.priority - a.priority)
     if (this.queue.length > 8) this.queue.length = 8
@@ -258,39 +308,72 @@ export class CameraDirector {
     if (intent) this.enqueue(intent, e.cinematicWeight)
   }
 
+  /**
+   * §68.3: two shots of the same kind must not be the same frame.
+   *
+   * A counter rather than a random: the sequence is then reproducible, which
+   * matters because the acceptance for this is a contact sheet somebody looks
+   * at and a sheet that reshuffles between runs cannot be compared to the last
+   * one. The spread is deliberately wide enough to read as a different setup
+   * and narrow enough that a kind keeps its character.
+   */
+  private shotIndex = 0
+
+  private vary(distance: number, polar: number): { distance: number; polar: number } {
+    const n = this.shotIndex++
+    const d = [1, 0.78, 1.24, 0.9][n % 4]
+    const p = [0, -0.1, 0.07, -0.05][n % 4]
+    return { distance: distance * d, polar: Math.max(0.24, polar + p) }
+  }
+
   private compose(intent: CameraIntent, priority: number): QueuedIntent | null {
     switch (intent.kind) {
       case 'follow_construction':
       case 'follow_demolition': {
         const at = this.hooks.locateBuilding(intent.buildingId)
         if (!at) return null
+        /**
+         * §68.3: a demolition is a wider, higher shot than a construction.
+         * Something coming down is about the hole it leaves in the block, so
+         * the block has to be in frame; something going up is about the
+         * scaffold, which needs to be close enough to read as scaffold.
+         */
+        const falling = intent.kind === 'follow_demolition'
         return {
           intent,
           priority,
           target: at,
-          distance: 190,
-          polar: 0.86,
-          label: intent.kind === 'follow_construction' ? 'construction' : 'demolition',
+          ...this.vary(falling ? 300 : 175, falling ? 0.62 : 0.88),
+          label: falling ? 'demolition' : 'construction',
         }
       }
       case 'follow_road': {
         const at = this.hooks.locatePoint(intent.x, intent.y)
-        return { intent, priority, target: at, distance: 260, polar: 0.74, label: 'new road' }
+        return { intent, priority, target: at, ...this.vary(280, 0.7), label: 'new road' }
+      }
+      case 'follow_assembly': {
+        const at =
+          intent.agentId && (intent.x === 0 || intent.y === 0)
+            ? (this.hooks.locateAgent(intent.agentId) ?? this.hooks.locatePoint(intent.x, intent.y))
+            : this.hooks.locatePoint(intent.x, intent.y)
+        return { intent, priority, target: at, ...this.vary(330, 0.72), label: 'assembly' }
       }
       case 'follow_agent': {
         const at = this.hooks.locateAgent(intent.agentId)
         if (!at) return null
-        return { intent, priority, target: at, distance: 150, polar: 0.9, label: 'agent' }
+        // an agent is a person doing something: closer, and low enough that the
+        // street they are standing in is the subject rather than the roofscape
+        return { intent, priority, target: at, ...this.vary(118, 0.97), label: 'agent' }
       }
       case 'district_pullback': {
         const [x, y] = intent.districtId.split(':').map(Number)
         const at = this.hooks.locatePoint(x || 0, y || 0)
-        return { intent, priority, target: at, distance: 640, polar: 0.6, label: 'district' }
+        return { intent, priority, target: at, ...this.vary(640, 0.58), label: 'district' }
       }
       case 'before_after': {
         const [x, y] = intent.districtId.split(':').map(Number)
         const at = this.hooks.locatePoint(x || 0, y || 0)
-        return { intent, priority, target: at, distance: 520, polar: 0.66, label: 'before / after' }
+        return { intent, priority, target: at, ...this.vary(520, 0.64), label: 'before / after' }
       }
     }
   }
@@ -307,6 +390,12 @@ function intentFor(e: EventWire): CameraIntent | null {
         ? { kind: 'follow_road', x: e.x, y: e.y }
         : null
     case 'parcels_assembled':
+      return e.x !== undefined || e.agentId
+        ? { kind: 'follow_assembly', x: e.x ?? 0, y: e.y ?? 0, agentId: e.agentId }
+        : null
+    // an agent's own moment is a purchase — the one event that is about a
+    // person rather than about ground
+    case 'building_acquired':
       return e.agentId ? { kind: 'follow_agent', agentId: e.agentId } : null
     case 'district_formed':
       return { kind: 'district_pullback', districtId: `${e.x ?? 0}:${e.y ?? 0}` }

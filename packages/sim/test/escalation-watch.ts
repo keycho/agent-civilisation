@@ -1,7 +1,8 @@
 /**
  * §58.2: what the max-intensity branch actually does to a chunk.
  *
- * The pre-registered guard (escalation-guard.test.ts) answers one question —
+ * The pre-registered guard (§70.2's fabric-guard.test.ts, which replaced §58.6's
+ * escalation-guard) answers one question —
  * is there grey left? — and it answered it BEFORE this mechanism existed, at
  * 21.3%, already under its own 25% floor. So the absolute level is a
  * pre-existing property of the economics and the only thing §58 can be held

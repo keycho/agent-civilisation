@@ -16,6 +16,20 @@ export interface DivergenceReport {
   index: number
   /** unweighted share of baseline buildings with any divergence at all */
   touchedShare: number
+  /**
+   * §70.2: baseline stock that still reads as the world we left it — standing,
+   * and no further from its imported self than a renovation.
+   *
+   * This replaces §58.6's untouched floor, which measured the wrong quantity.
+   * §26.2's fear was uniform REDEVELOPMENT, not uniform activity: a renovated
+   * 1909 terrace is still a 1909 terrace and still supplies the contrast that
+   * lets change read, while a cleared lot supplies none. The divergence classes
+   * are monotonic and ordered by how far a building has moved from its import,
+   * so the line falls naturally between renovated (2) and converted (3) — past
+   * that point the building has changed purpose or massing and no longer reads
+   * as what was there.
+   */
+  standingUnconvertedShare: number
   counts: Record<number, number>
   agentOrigin: number
   demolished: number
@@ -33,6 +47,7 @@ export function divergenceReport(world: World): DivergenceReport {
   let weighted = 0
   let baselineCount = 0
   let touched = 0
+  let intact = 0
   let agentOrigin = 0
   let demolished = 0
   let replaced = 0
@@ -60,6 +75,13 @@ export function divergenceReport(world: World): DivergenceReport {
     const w = DIVERGENCE_WEIGHT[cls] ?? 0
     weighted += w
     if (cls > 0) touched++
+    /**
+     * §70.2: still reading as what was imported. The classes are ordered by how
+     * far a building has moved from its import and `raiseDivergence` keeps the
+     * maximum, so the line falls between renovated and converted — past that a
+     * building has changed purpose, massing or existence.
+     */
+    if (b.state === 'standing' && cls < DIVERGENCE.converted) intact++
     if (b.state === 'demolished') demolished++
 
     if (si >= 0) {
@@ -89,6 +111,7 @@ export function divergenceReport(world: World): DivergenceReport {
   return {
     index: baselineCount ? weighted / baselineCount : 0,
     touchedShare: baselineCount ? touched / baselineCount : 0,
+    standingUnconvertedShare: baselineCount ? intact / baselineCount : 0,
     counts,
     agentOrigin,
     demolished,
