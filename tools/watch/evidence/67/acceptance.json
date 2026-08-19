@@ -9,7 +9,7 @@
     {
       "name": "§66.1 the opening holds the framing for 8-10 s before the first intent",
       "pass": true,
-      "detail": "held 9.0 s from presentation, released 10.1 s after navigation (load included); sampler saw the release at +10.4 s"
+      "detail": "held 9.0 s from presentation, released 10.0 s after navigation (load included); sampler saw the release at +12.9 s"
     },
     {
       "name": "§66.1 and it is genuinely motionless, not merely slow",
@@ -19,7 +19,7 @@
     {
       "name": "§66.1 that first move is a slow move, not a cut",
       "pass": true,
-      "detail": "7.5 s to \"demolition\""
+      "detail": "7.5 s to \"assembly\""
     },
     {
       "name": "§66.2 `0` comes home from a bad state and turns ambient OFF",
@@ -39,12 +39,12 @@
     {
       "name": "§67.6 every row carries city, country, generation, diff, meter and working",
       "pass": true,
-      "detail": "{\"id\":\"tokyo-kyojima\",\"nm\":\"kyojima, tokyo\",\"cc\":\"jp\",\"gen\":\"g1\",\"diff\":\"6.5%\",\"act\":\"       ▇▇▇\",\"wk\":\"37 working\",\"sel\":false}"
+      "detail": "{\"id\":\"maassluis-haven\",\"nm\":\"haven, maassluis\",\"cc\":\"nl\",\"gen\":\"g1\",\"diff\":\"29.9%\",\"act\":\"       ▇▇▇\",\"wk\":\"11 working\",\"sel\":false}"
     },
     {
       "name": "§67.7 sorted by activity, busiest first",
       "pass": true,
-      "detail": "0.661 > 0.582 > 0.519 > 0.341 > 0.286 > 0.158 > 0.144 > 0.112"
+      "detail": "0.664 > 0.385 > 0.374 > 0.182 > 0.142 > 0.121 > 0.101 > 0.095"
     },
     {
       "name": "§67 the listing is full-frame",
@@ -58,12 +58,12 @@
     {
       "name": "§67.8 arrows move the selection",
       "pass": true,
-      "detail": "0 -> 1"
+      "detail": "0 -> 6"
     },
     {
       "name": "§67.8 enter dives into the selected world",
       "pass": true,
-      "detail": "london-deptford (wanted london-deptford)"
+      "detail": "maasland-dorp (wanted maasland-dorp)"
     },
     {
       "name": "§67.9 a click dives",
@@ -98,7 +98,7 @@
     {
       "name": "§69.16 the half below the listing is filled",
       "pass": true,
-      "detail": "premise 304 chars, 5 ticker rows, 447 px tall · 209,905 events · 5,096 buildings standing · 464 agents alive · 11 generations passed · 8/8 worlds answering"
+      "detail": "premise 304 chars, 5 ticker rows, 447 px tall · 360,384 events · 4,808 buildings standing · 464 agents alive · 18 generations passed · 8/8 worlds answering"
     },
     {
       "name": "§69.17 §68 canary: the batch is inside the fabric box and fills it",
