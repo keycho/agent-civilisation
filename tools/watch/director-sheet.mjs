@@ -12,9 +12,23 @@
  *
  * The frames the PRODUCT presents are the opening, the home framing, and every
  * shot the director composes. Those are the ones where "would you post this"
- * is a fair question, and this is the sheet of them: one frame from each of the
- * first N shots the director chooses, captured after it has settled, labelled
- * with the intent that caused it.
+ * is a fair question, and this is the sheet of them.
+ *
+ * §72.6: STEPPED, not waited on.
+ *
+ * The first version waited on `director.lastMove` changing and gave up after
+ * 180 seconds having seen one move. Shot pacing is `shotElapsed += dt` and the
+ * render loop clamps dt to 50 ms, so under this sandbox's software renderer at
+ * ~1 fps MIN_SHOT_S of 7 needs about 140 seconds of wall clock and MAX_SHOT_S
+ * of 16 needs 320. The instrument was measuring the frame rate, not the
+ * director — the same fault §68.4 found in the opening dwell and §72.3 found in
+ * the camera fuzz.
+ *
+ * So the director and the rig are STEPPED at a fixed 1/60 s, the way the inset
+ * audit steps the rig, and the page is only left to run in real time when the
+ * thing being waited for is the WIRE — events have to arrive before there is
+ * anything to compose. Deterministic where the client is deterministic, real
+ * where the world is.
  *
  *   node tools/watch/director-sheet.mjs [shots=10] [chunk]
  */
@@ -44,46 +58,92 @@ await page.evaluate(() => document.getElementById('watchBtn')?.click())
 
 const sheet = []
 
+/**
+ * The stepper. `director.update` and `rig.update` are both pure functions of
+ * dt, so driving them directly gives the director its shot clock in simulated
+ * seconds while the renderer sits out.
+ */
+await page.evaluate(() => {
+  const civ = window.civ
+  window.__stepDirector = (seconds) => {
+    const before = civ.director.lastMove?.at ?? 0
+    const steps = Math.round(seconds * 60)
+    for (let i = 0; i < steps; i++) {
+      civ.director.update(1 / 60, civ.readouts?.tick ?? 0)
+      civ.rig.update(1 / 60)
+      const now = civ.director.lastMove?.at ?? 0
+      if (now !== before) {
+        return { moved: true, after: i / 60, move: { ...civ.director.lastMove } }
+      }
+    }
+    return { moved: false, after: seconds, move: null }
+  }
+  /** run the rig on past a cut until the move has landed and the damping is done */
+  window.__settleShot = (seconds) => {
+    const steps = Math.round(seconds * 60)
+    for (let i = 0; i < steps; i++) civ.rig.update(1 / 60)
+    return {
+      d: Math.round(civ.rig.distance),
+      polar: +civ.rig.polar.toFixed(2),
+      animating: civ.rig.isAnimating,
+    }
+  }
+})
+
 // the opening is the product's first frame and belongs on this sheet
 await page.evaluate(() => window.civ.rig.settle())
 await page.screenshot({ path: `${OUT}/shots/00-opening.png` })
 sheet.push({ file: 'shots/00-opening.png', label: 'the opening — whole plate, held' })
 
 /**
- * Then one frame per director shot. The director stamps every move it issues
- * (§66.1's `lastMove`), so waiting on that stamp changing is waiting on the
- * decision itself rather than on a fixed number of seconds — which matters
- * because shot pacing runs on the render loop's clamped dt and this sandbox's
- * software renderer makes that much slower than wall clock.
+ * Then one frame per director shot. The wire is real time — events have to
+ * arrive before there is anything worth cutting to — so each round gives the
+ * socket a couple of seconds and then steps the director's clock forward until
+ * it decides, up to a generous simulated budget.
  */
-let seen = null
 for (let i = 1; i <= SHOTS; i++) {
-  const move = await page.evaluate(async (prev) => {
-    const t0 = performance.now()
-    while (performance.now() - t0 < 180000) {
-      const m = window.civ.director.lastMove
-      if (m && m.at !== prev) return m
-      await new Promise((r) => setTimeout(r, 300))
-    }
-    return null
-  }, seen)
-  if (!move) {
+  let moved = null
+  for (let round = 0; round < 8 && !moved; round++) {
+    // real time, for the world to happen in
+    await page.waitForTimeout(2200)
+    // simulated time, for the director to think in
+    const r = await page.evaluate(() => window.__stepDirector(20))
+    if (r.moved) moved = r.move
+  }
+  if (!moved) {
     console.log(`  the director issued no further shot after ${i - 1}`)
     break
   }
-  seen = move.at
   // let the move land before photographing it — a frame mid-fly is a frame of
   // the transition, and the transition is not what is being judged
-  await page.waitForTimeout(move.duration * 1000 + 1200)
+  const state = await page.evaluate((d) => window.__settleShot(d + 1.5), moved.duration)
   const file = `shots/${String(i).padStart(2, '0')}.png`
   await page.screenshot({ path: `${OUT}/${file}` })
-  const state = await page.evaluate(() => ({
-    d: Math.round(window.civ.rig.distance),
-    polar: +window.civ.rig.polar.toFixed(2),
-  }))
-  sheet.push({ file, label: `${move.label} · d=${state.d} · pitch ${state.polar}` })
-  console.log(`  ${i}/${SHOTS}  ${move.label} (${move.duration} s, d=${state.d})`)
+  sheet.push({ file, label: `${moved.label} · d=${state.d} · pitch ${state.polar}` })
+  console.log(
+    `  ${i}/${SHOTS}  ${moved.label} (${moved.duration} s, d=${state.d}, pitch ${state.polar})`,
+  )
 }
+
+/**
+ * §68.3's acceptance is not a count of draw calls, it is whether ten frames
+ * are ten ideas. Two shots of the same kind at the same distance and pitch are
+ * one idea photographed twice, and that is what the first sheet was: seven of
+ * ten labelled `agent` at d=150 pitch 0.9.
+ */
+const shots = sheet.slice(1)
+const setups = new Set(shots.map((t) => t.label))
+const kinds = new Map()
+for (const t of shots) {
+  const kind = t.label.split(' · ')[0]
+  kinds.set(kind, (kinds.get(kind) ?? 0) + 1)
+}
+const commonest = [...kinds.entries()].sort((a, b) => b[1] - a[1])[0]
+console.log(
+  `\n  §68.3 variety — ${setups.size}/${shots.length} distinct setups, ` +
+    `${kinds.size} intent kinds` +
+    (commonest ? `, commonest '${commonest[0]}' ${commonest[1]}/${shots.length}` : ''),
+)
 
 const tiles = sheet
   .map(

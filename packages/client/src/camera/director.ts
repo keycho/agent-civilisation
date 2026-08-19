@@ -96,6 +96,9 @@ const UNLIT_FLOOR = 0.3
  */
 const REPEAT_PENALTY = 0.55
 
+/** §72.6: how many cuts back the repeat penalty remembers */
+const RECENT_SHOTS = 5
+
 export class CameraDirector {
   private queue: QueuedIntent[] = []
   private current: QueuedIntent | null = null
@@ -204,11 +207,52 @@ export class CameraDirector {
      */
     const lit = this.hooks.litnessAt?.(shot.target) ?? 1
     shot.priority *= UNLIT_FLOOR + (1 - UNLIT_FLOOR) * Math.max(0, Math.min(1, lit))
-    if (this.current && this.current.intent.kind === intent.kind) shot.priority *= REPEAT_PENALTY
     this.queue.push(shot)
-    this.queue.sort((a, b) => b.priority - a.priority)
+    /**
+     * §72.6: the QUEUE CAP is where the diversity is won or lost.
+     *
+     * Ranking at dequeue was not enough and the sheet said so — it went from
+     * seven of ten `agent` to eight of ten `assembly`. The reason is this line:
+     * the queue holds eight and was truncated by BASE priority, so with
+     * assemblies arriving at 42 a minute at weight 60 and demolitions at 16 a
+     * minute at weight 50, every demolition was pushed out of the queue before
+     * the dequeue ever saw it. A preference among what survived could not
+     * matter, because nothing else survived.
+     *
+     * So the cap ranks by the same recency-adjusted score the cut does. Once a
+     * few assemblies have been shown, an incoming assembly is worth less than a
+     * demolition that has been waiting, and it is the assembly that gets
+     * dropped.
+     */
+    this.queue.sort((a, b) => this.effective(b) - this.effective(a))
     if (this.queue.length > 8) this.queue.length = 8
   }
+
+  /**
+   * §72.6: what this shot is worth GIVEN WHAT THE DIRECTOR HAS JUST SHOWN.
+   *
+   * The repeat penalty was applied once, at enqueue, and only against the shot
+   * currently running. That cannot hold against an event type that wins on both
+   * axes at once, and `parcels_assembled` does: measured on the wire it is 42
+   * of the 73 intent-bearing events a minute, and at weight 60 it also outranks
+   * every other intent except a district. One multiplication by 0.55 does not
+   * change that ordering, so the sheet went from seven of ten labelled `agent`
+   * to seven of ten labelled `assembly` — the same failure at a new name.
+   *
+   * So the penalty compounds over the last few cuts and is applied at DEQUEUE,
+   * where the recent history is current. Five assemblies in a row take an
+   * assembly from 60 to 3 and a demolition at 50 wins. The moment something
+   * else has been shown the assembly is back near the top, which is the
+   * behaviour wanted: not a quota, a preference for the thing not just seen.
+   */
+  private effective(shot: QueuedIntent): number {
+    let repeats = 0
+    for (const kind of this.recent) if (kind === shot.intent.kind) repeats++
+    return shot.priority * REPEAT_PENALTY ** repeats
+  }
+
+  /** the kinds of the last few cuts, most recent first */
+  private recent: string[] = []
 
   /** User input cancels the queue and takes control (§17). */
   takeControl(): void {
@@ -242,10 +286,23 @@ export class CameraDirector {
     const canCut = this.shotElapsed >= MIN_SHOT_S
     const mustCut = this.shotElapsed >= MAX_SHOT_S
     if ((canCut && this.queue.length > 0) || mustCut || !this.current) {
-      const next = this.queue.shift()
+      // §72.6: ranked against what has just been shown, not against what was
+      // in the queue when this arrived
+      let best = -1
+      let bestScore = -Infinity
+      for (let i = 0; i < this.queue.length; i++) {
+        const score = this.effective(this.queue[i])
+        if (score > bestScore) {
+          bestScore = score
+          best = i
+        }
+      }
+      const next = best >= 0 ? this.queue.splice(best, 1)[0] : undefined
       if (next) {
         this.current = next
         this.shotElapsed = 0
+        this.recent.unshift(next.intent.kind)
+        if (this.recent.length > RECENT_SHOTS) this.recent.length = RECENT_SHOTS
         // §66.1: the move out of the opening is slow, so the first thing the
         // camera does in front of a stranger is travel rather than cut
         const slow = this.firstMovePending
