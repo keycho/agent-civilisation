@@ -133,7 +133,8 @@ export interface Summary {
    * and no further than a renovation from its import. This is the bar; the
    * untouched share above it is now reported as information.
    */
-  standingUnconvertedShare: number
+  greyShare: number
+  greyLost: { gone: number; repurposed: number; taller: number }
   /**
    * §72.5: how much taller the inherited city got, which is a different
    * question from how many buildings expansion touched.
@@ -470,7 +471,8 @@ export async function runSeed(
     agentOrigin: r.agentOrigin,
     cleared: r.demolished,
     ...groundState(w),
-    standingUnconvertedShare: r.standingUnconvertedShare,
+    greyShare: r.greyShare,
+    greyLost: r.greyLost,
     divergenceCounts: r.counts,
     expansion: expansionOf(w),
     structuralClasses: (() => {

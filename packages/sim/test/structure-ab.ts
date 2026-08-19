@@ -54,12 +54,16 @@ for (const chunk of CHUNKS) {
     ).join('  ')
     console.log(
       `  ${(on ? 'structure' : 'flat cap ').padEnd(10)} ` +
-        `§70.2 bar ${pct(s.standingUnconvertedShare).padStart(6)}   ` +
+        `§73.3 grey ${pct(s.greyShare).padStart(6)}   ` +
         `standing ${pct(s.standingShare).padStart(6)}   ` +
-        `untouched ${pct(s.untouchedShare).padStart(6)}   ` +
+        `touched ${pct(1 - s.untouchedShare).padStart(6)}   ` +
         `divergence ${pct(s.divergenceIndex).padStart(6)}`,
     )
     console.log(`             classes: ${classes}`)
+    console.log(
+      `             grey lost to: ${s.greyLost.gone} gone, ${s.greyLost.repurposed} repurposed, ` +
+        `${s.greyLost.taller} more than half again as tall`,
+    )
     console.log(
       `             floors added to inherited stock: ${s.expansion.levelsAdded} across ` +
         `${s.expansion.touched} buildings (mean ${s.expansion.meanAdded.toFixed(2)}, ` +

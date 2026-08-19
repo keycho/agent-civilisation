@@ -24,11 +24,13 @@ import {
   DIVERGENCE_LABEL,
   PURPOSE_INDEX,
   pointInRing,
+  VOID,
 } from '@civ/core'
 import type { BuildingDetail, EventWire, Frame, Hello, Readouts, ScrubResult } from '@civ/protocol'
 import { FRAME_INTERVAL_MS } from '@civ/protocol'
 import {
   Box3,
+  Fog,
   BufferAttribute,
   Color,
   BufferGeometry,
@@ -819,6 +821,18 @@ rig.limits.panHalfX = CITY.halfX + 22
 // undid it — the Z bound was the plate's, not the fabric's, so a pan north or
 // south could walk further off the city than the same pan east or west
 rig.limits.panHalfZ = CITY.halfY + 22
+/**
+ * §73.2: the ground fades to the void past the same box, so the plate stops
+ * reading as empty ground and starts reading as the darkness the city sits in.
+ * Aimed at the fabric rather than at the plate's own extent, because the
+ * boundary a viewer sees as "the city stops" is the fabric's.
+ */
+substrate.aimVoidFade(
+  rig.limits.panCentreX,
+  rig.limits.panCentreZ,
+  rig.limits.panHalfX,
+  rig.limits.panHalfZ,
+)
 /** §66.3: the eye is not allowed inside the fabric it is looking at */
 rig.ceilingNear = ceilingNear
 
@@ -3402,6 +3416,7 @@ function siteOrdinal(x: number, y: number): string {
   const k = (Math.round(x) * 73856093) ^ (Math.round(y) * 19349663)
   return (k >>> 0).toString(16).slice(-4).padStart(4, '0')
 }
+
 function updateSiteMarks(): void {
   const host = el('siteMarks')
   const wanted: Array<{ id: string; x: number; y: number; live: boolean }> = []
@@ -3511,6 +3526,26 @@ renderer.setAnimationLoop(() => {
   }
 
   if (scene.fog && 'near' in scene.fog) {
+    /**
+     * §73.2, FIRST ATTEMPT, FALSIFIED — kept as a note rather than as code.
+     *
+     * The call was distance fog reaching full value before the fabric's edge,
+     * so an oblique edge shot reads as the city fading out rather than the
+     * world stopping. I bound `fog.far` to the distance at which the view
+     * leaves the fabric box and photographed both arms from identical cameras
+     * (tools/watch/fog-ab.mjs). It dims the CITY, on every framing including
+     * the opening, where the whole plate lost most of its light.
+     *
+     * The reason is geometric and it rules the whole approach out rather than
+     * this tuning of it: from a camera near an edge, the void is not further
+     * away than the city — they are at the SAME distance. A term keyed on
+     * distance cannot separate "past the fabric" from "far across the fabric",
+     * so any setting strong enough to close the void closes the city with it.
+     *
+     * What can separate them is POSITION, and that is where the fade went: the
+     * substrate darkens to the void as it leaves the fabric box. Buildings are
+     * inside the box by construction, so it cannot reach them.
+     */
     scene.fog.near = rig.distance * 0.8
     scene.fog.far = rig.distance * 2.1
   }
@@ -3684,6 +3719,11 @@ function civHome(opts: { snap?: boolean } = {}): void {
    * emitted. `cityRoot` and `Vector3` are already on this surface below.
    */
   pointAt,
+  /** §73.2: the a/b arm, so before and after are the same camera */
+  setVoidFade(on: boolean) {
+    substrate.setVoidFade(on)
+  },
+  voidFade: () => substrate.voidFadeState(),
   three: { Box3, Matrix4, Vector3 },
   /** §63.4: where the world readouts think their sites are, in world space */
   siteMarkPoints: () =>

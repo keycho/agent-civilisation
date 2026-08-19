@@ -29,7 +29,28 @@ export interface DivergenceReport {
    * that point the building has changed purpose or massing and no longer reads
    * as what was there.
    */
-  standingUnconvertedShare: number
+  /**
+   * §73.3: the grey, restated on MAGNITUDE rather than on incidence.
+   *
+   * §70.2's line was "standing and no further than a renovation", which is a
+   * class comparison — and the classes record WHETHER something happened, not
+   * how much. §72.5 bounded how far a structure can be expanded and the number
+   * did not move by a tenth of a percent, because a terrace at 2→3 storeys and
+   * one at 2→7 both read as `expanded`. A bar that cannot see the fix is not
+   * measuring the thing the fix is about.
+   *
+   * So: a baseline building is grey while it still STANDS, still serves the
+   * PURPOSE it was imported with, and is within 50% of its ORIGINAL HEIGHT.
+   * A terrace grown from two floors to three is grey; at two to four it is not.
+   * That is what the eye does with it, and it is what §26.2 was reaching for.
+   */
+  greyShare: number
+  /**
+   * §73.3: where the grey goes, condition by condition, as counts of baseline
+   * stock. A bar that only reports its own value says nothing about which of
+   * its three clauses is binding, and that is the first thing anyone asks.
+   */
+  greyLost: { gone: number; repurposed: number; taller: number }
   counts: Record<number, number>
   agentOrigin: number
   demolished: number
@@ -42,12 +63,21 @@ export interface DivergenceReport {
 
 const SECTOR_GRID = 4
 
+/**
+ * §73.3: how far a baseline building's height may move and still read as
+ * itself. Half again — a two-storey terrace at three storeys, a four at six.
+ */
+const GREY_HEIGHT_BAND = 0.5
+
 export function divergenceReport(world: World): DivergenceReport {
   const counts: Record<number, number> = {}
   let weighted = 0
   let baselineCount = 0
   let touched = 0
-  let intact = 0
+  let grey = 0
+  let gone = 0
+  let repurposed = 0
+  let taller = 0
   let agentOrigin = 0
   let demolished = 0
   let replaced = 0
@@ -58,6 +88,8 @@ export function divergenceReport(world: World): DivergenceReport {
   )
   const sectorWeighted = new Float64Array(SECTOR_GRID * SECTOR_GRID)
   const sectorCount = new Float64Array(SECTOR_GRID * SECTOR_GRID)
+  // §73.3: the import, for the two comparisons the grey line makes against it
+  const baseline = new Map(world.seed.buildings.map((b) => [b.id, b]))
 
   for (const b of world.buildings.values()) {
     const c = centroid(b.footprint)
@@ -76,12 +108,25 @@ export function divergenceReport(world: World): DivergenceReport {
     weighted += w
     if (cls > 0) touched++
     /**
-     * §70.2: still reading as what was imported. The classes are ordered by how
-     * far a building has moved from its import and `raiseDivergence` keeps the
-     * maximum, so the line falls between renovated and converted — past that a
-     * building has changed purpose, massing or existence.
+     * §73.3: three conditions, all on the thing itself rather than on a record
+     * of what was done to it. Standing, same purpose, and no more than half
+     * again as tall as it was imported.
+     *
+     * Height rather than levels because that is what the frame shows — a
+     * building whose storeys were subdivided has not changed the skyline, and
+     * one that gained three metres of parapet has. The baseline height comes
+     * from the seed rather than from `designLevels * 3.2`, so it is the
+     * imported measurement and not a reconstruction of it.
      */
-    if (b.state === 'standing' && cls < DIVERGENCE.converted) intact++
+    const base = baseline.get(b.baselineId ?? b.id)
+    const standing = b.state === 'standing'
+    const tall = base ? Math.abs(b.heightM - base.heightM) > base.heightM * GREY_HEIGHT_BAND : false
+    const moved = base ? b.purpose !== base.purpose : false
+    if (standing && !tall && !moved) grey++
+    // counted in order of finality, so each building is charged to one clause
+    else if (!standing) gone++
+    else if (moved) repurposed++
+    else taller++
     if (b.state === 'demolished') demolished++
 
     if (si >= 0) {
@@ -111,7 +156,8 @@ export function divergenceReport(world: World): DivergenceReport {
   return {
     index: baselineCount ? weighted / baselineCount : 0,
     touchedShare: baselineCount ? touched / baselineCount : 0,
-    standingUnconvertedShare: baselineCount ? intact / baselineCount : 0,
+    greyShare: baselineCount ? grey / baselineCount : 0,
+    greyLost: { gone, repurposed, taller },
     counts,
     agentOrigin,
     demolished,

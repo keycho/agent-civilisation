@@ -190,8 +190,19 @@ export const VOID = {
   skyTop: '#1a1712',
   /** the chrome's own near-black at the horizon, so the plate sits on the page */
   skyBottom: '#0d0c0a',
-  /** distance fog sinks into the same dark rather than into white */
-  fog: '#131110',
+  /**
+   * §73.2: the fog sinks into exactly what is beyond the fabric, not into
+   * something near it.
+   *
+   * This was `#131110` against a horizon of `#0d0c0a` — six values lighter,
+   * which is invisible on its own and is a SEAM where the plate ends: fogged
+   * geometry faded to one near-black and the void behind it was another, so
+   * the fabric's edge drew itself as a tonal step. §63.3's lesson in the other
+   * direction — anything authored in the world's own value range disappears
+   * into it — cuts both ways, and a fog that does not match its own backdrop is
+   * the version that shows.
+   */
+  fog: '#0d0c0a',
 } as const
 
 /**

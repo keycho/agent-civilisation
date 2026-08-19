@@ -1,5 +1,6 @@
 import {
   ENVIRONMENT,
+  VOID,
   type Ring,
   type Substrate,
   type SubstrateSurface,
@@ -14,9 +15,12 @@ import {
   DoubleSide,
   Group,
   Mesh,
+  type Material,
   MeshLambertMaterial,
   PlaneGeometry,
   ShaderMaterial,
+  Vector2,
+  type WebGLProgramParametersWithUniforms,
 } from 'three'
 
 /**
@@ -76,6 +80,16 @@ export interface SubstrateView {
    * water is drawn on rather than guessing a datum and floating above it.
    */
   waterPlanes: Array<{ ring: Ring; level: number }>
+  /** §73.2: point the void fade at the fabric box the camera is bounded by */
+  aimVoidFade(centreX: number, centreZ: number, halfX: number, halfZ: number): void
+  /** §73.2: the a/b arm — off restores the plate as visibly empty ground */
+  setVoidFade(on: boolean): void
+  voidFadeState(): {
+    on: boolean
+    half: [number, number] | null
+    band: number
+    materials: number
+  }
 }
 
 /**
@@ -85,7 +99,7 @@ export interface SubstrateView {
  * simulates water, it just stops the canal being the flattest thing in the
  * frame.
  */
-function waterMaterial(): ShaderMaterial {
+function waterMaterial(u: VoidUniforms): ShaderMaterial {
   return new ShaderMaterial({
     side: DoubleSide,
     transparent: false,
@@ -94,6 +108,9 @@ function waterMaterial(): ShaderMaterial {
       uShallow: { value: new Color(ENVIRONMENT.water) },
       uDeep: { value: new Color(ENVIRONMENT.waterDeep) },
       uTime: { value: 0 },
+      // §73.2: water is ground too, and a canal running bright out of the
+      // fabric is the same hard boundary the land fade exists to close
+      ...u,
     },
     vertexShader: /* glsl */ `
       varying vec3 vWorld;
@@ -107,6 +124,11 @@ function waterMaterial(): ShaderMaterial {
       uniform vec3 uShallow;
       uniform vec3 uDeep;
       uniform float uTime;
+      uniform vec2 uVoidCentre;
+      uniform vec2 uVoidHalf;
+      uniform float uVoidBand;
+      uniform vec3 uVoidColour;
+      uniform float uVoidOn;
       varying vec3 vWorld;
       void main() {
         vec3 toCam = normalize(cameraPosition - vWorld);
@@ -120,10 +142,124 @@ function waterMaterial(): ShaderMaterial {
         float w3 = sin((vWorld.x + vWorld.z) * 0.29 + uTime * 0.35);
         float glint = pow(max(0.0, w1 * w2 * w3), 10.0) * (0.35 + 0.65 * grazing);
         base += vec3(1.0, 0.92, 0.75) * glint * 0.38;
-        gl_FragColor = vec4(base, 1.0);
+        float voidX = max(0.0, abs(vWorld.x - uVoidCentre.x) - uVoidHalf.x);
+        float voidZ = max(0.0, abs(vWorld.z - uVoidCentre.y) - uVoidHalf.y);
+        float voidT = smoothstep(0.0, uVoidBand, max(voidX, voidZ)) * uVoidOn;
+        gl_FragColor = vec4(mix(base, uVoidColour, voidT), 1.0);
       }
     `,
   })
+}
+
+/**
+ * §73.2: the substrate fades to the void as it leaves the fabric.
+ *
+ * §72.3 measured the frame reaching 100-290 m past the fabric with the inset
+ * bound satisfied, and §73.2 declined to close that geometrically — insetting
+ * ~250 m at street level against a 520 m half-extent would put the docks out of
+ * reach at eye level, and the oblique street shot at the water is one of the
+ * best compositions this product has. The fault is not that the camera sees
+ * past the fabric. It is that past the fabric there is nothing, which §24.3
+ * flagged and nothing had addressed.
+ *
+ * The first fix tried was distance fog closing before the fabric's edge, and
+ * the a/b falsified it: from a camera near an edge the void is not further away
+ * than the city — they are at the SAME distance — so any distance term strong
+ * enough to close the void closes the city with it. The opening lost most of
+ * its light.
+ *
+ * POSITION separates them and distance cannot. This fades the ground toward the
+ * void colour by how far OUTSIDE the fabric box a fragment lies, so the plate
+ * stops being visibly empty ground and becomes darkness the city sits in.
+ * Buildings are inside the box by construction, so this can never reach them —
+ * which is the property the distance version could not have.
+ */
+export interface VoidFade {
+  /** fabric centre and half-extents, in world x/z */
+  centre: [number, number]
+  half: [number, number]
+  /** metres past the box over which the ground reaches the void colour */
+  band: number
+  colour: string
+}
+
+const VOID_FADE_BAND = 110
+
+/**
+ * The uniforms are created ONCE and shared by every ground material, rather
+ * than read back out of each compiled shader.
+ *
+ * The first version aimed the fade by walking the materials and writing into
+ * `shader.uniforms` — and `onBeforeCompile` has not run at that point, because
+ * nothing has rendered yet. Every write was skipped and the half-extent stayed
+ * at its 1e9 default, which is a fade that never fades. The a/b's own state
+ * readout is what caught it; the frames alone looked plausible, which is
+ * exactly why a harness that only photographs is not enough.
+ */
+interface VoidUniforms {
+  uVoidCentre: { value: Vector2 }
+  uVoidHalf: { value: Vector2 }
+  uVoidBand: { value: number }
+  uVoidColour: { value: Color }
+  uVoidOn: { value: number }
+}
+
+function makeVoidUniforms(): VoidUniforms {
+  return {
+    uVoidCentre: { value: new Vector2(0, 0) },
+    uVoidHalf: { value: new Vector2(1e9, 1e9) },
+    uVoidBand: { value: VOID_FADE_BAND },
+    uVoidColour: { value: new Color(VOID.skyBottom) },
+    uVoidOn: { value: 1 },
+  }
+}
+
+function applyVoidFade(material: Material, u: VoidUniforms): void {
+  const m = material as Material & {
+    onBeforeCompile?: (shader: WebGLProgramParametersWithUniforms) => void
+    userData: Record<string, unknown>
+  }
+  m.onBeforeCompile = (shader) => {
+    shader.uniforms.uVoidCentre = u.uVoidCentre
+    shader.uniforms.uVoidHalf = u.uVoidHalf
+    shader.uniforms.uVoidBand = u.uVoidBand
+    shader.uniforms.uVoidColour = u.uVoidColour
+    shader.uniforms.uVoidOn = u.uVoidOn
+    shader.vertexShader = shader.vertexShader
+      .replace('void main() {', 'varying vec3 vVoidWorld;\nvoid main() {')
+      .replace(
+        '#include <worldpos_vertex>',
+        '#include <worldpos_vertex>\n  vVoidWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;',
+      )
+    // some materials compile without worldpos_vertex; give it one to hook
+    if (!shader.vertexShader.includes('vVoidWorld =')) {
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <project_vertex>',
+        '  vVoidWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;\n#include <project_vertex>',
+      )
+    }
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        'void main() {',
+        `uniform vec2 uVoidCentre;
+         uniform vec2 uVoidHalf;
+         uniform float uVoidBand;
+         uniform vec3 uVoidColour;
+         uniform float uVoidOn;
+         varying vec3 vVoidWorld;
+         void main() {`,
+      )
+      .replace(
+        '#include <dithering_fragment>',
+        `#include <dithering_fragment>
+         float voidX = max(0.0, abs(vVoidWorld.x - uVoidCentre.x) - uVoidHalf.x);
+         float voidZ = max(0.0, abs(vVoidWorld.z - uVoidCentre.y) - uVoidHalf.y);
+         float voidT = smoothstep(0.0, uVoidBand, max(voidX, voidZ)) * uVoidOn;
+         gl_FragColor.rgb = mix(gl_FragColor.rgb, uVoidColour, voidT);`,
+      )
+    m.userData.voidShader = shader
+  }
+  m.needsUpdate = true
 }
 
 /**
@@ -173,6 +309,10 @@ function quayBands(water: Array<{ ring: Ring; level: number }>): BufferGeometry 
  */
 export function createSubstrateView(substrate: Substrate, halfExtentM: number): SubstrateView {
   const group = new Group()
+  /** §73.2: every ground material carries the fade; one uniform switches it */
+  const voidU = makeVoidUniforms()
+  /** how many ground materials carry the fade, so the a/b can say it is wired */
+  let fadedCount = 0
   const groundY = meanElevation(substrate)
   const bound: Ring = [
     [-halfExtentM, -halfExtentM],
@@ -225,7 +365,10 @@ export function createSubstrateView(substrate: Substrate, halfExtentM: number): 
     pos.setZ(i, groundOrWater(pos.getX(i), pos.getY(i)) - groundY - PLATE_DROP)
   }
   plate.computeVertexNormals()
-  const base = new Mesh(plate, new MeshLambertMaterial({ color: new Color(ENVIRONMENT.ground) }))
+  const baseMat = new MeshLambertMaterial({ color: new Color(ENVIRONMENT.ground) })
+  applyVoidFade(baseMat, voidU)
+  fadedCount++
+  const base = new Mesh(plate, baseMat)
   base.rotation.x = -Math.PI / 2
   base.position.y = groundY
   base.receiveShadow = true
@@ -251,15 +394,21 @@ export function createSubstrateView(substrate: Substrate, halfExtentM: number): 
     if (!geo) continue
     const mesh =
       kind === 'water'
-        ? new Mesh(geo, (waterMat = waterMaterial()))
+        ? new Mesh(geo, (waterMat = waterMaterial(voidU)))
         : new Mesh(
             geo,
-            new MeshLambertMaterial({
-              color: new Color(COLOR[kind]),
-              side: DoubleSide,
-              vertexColors: true,
-            }),
+            (() => {
+              const mat = new MeshLambertMaterial({
+                color: new Color(COLOR[kind]),
+                side: DoubleSide,
+                vertexColors: true,
+              })
+              applyVoidFade(mat, voidU)
+              fadedCount++
+              return mat
+            })(),
           )
+    fadedCount += kind === 'water' ? 1 : 0
     mesh.receiveShadow = kind !== 'water'
     // A river polygon drawn over its own harbours is coplanar with itself. The
     // stagger separates them, and dropping depth writes for water makes the
@@ -294,6 +443,28 @@ export function createSubstrateView(substrate: Substrate, halfExtentM: number): 
     tick(time) {
       if (waterMat) waterMat.uniforms.uTime.value = time
     },
+    /**
+     * §73.2: aim the fade at the fabric box the camera is bounded by, rather
+     * than at the plate's own extent — the plate is deliberately larger, and
+     * the boundary that reads as "the city stops" is the fabric's, not the
+     * mesh's.
+     */
+    aimVoidFade(centreX, centreZ, halfX, halfZ) {
+      voidU.uVoidCentre.value.set(centreX, centreZ)
+      voidU.uVoidHalf.value.set(halfX, halfZ)
+    },
+    setVoidFade(on) {
+      voidU.uVoidOn.value = on ? 1 : 0
+    },
+    voidFadeState: () => ({
+      on: voidU.uVoidOn.value === 1,
+      half: [+voidU.uVoidHalf.value.x.toFixed(0), +voidU.uVoidHalf.value.y.toFixed(0)] as [
+        number,
+        number,
+      ],
+      band: VOID_FADE_BAND,
+      materials: fadedCount,
+    }),
     waterPlanes: water,
   }
 }
