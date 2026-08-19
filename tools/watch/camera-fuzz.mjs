@@ -45,14 +45,25 @@ const SERVER = process.env.CIV_SERVER ?? `ws://127.0.0.1:8820/ws/${CHUNK}`
  */
 const MIN_ON = 0.4
 /**
- * §66.3, third pass: the floor on how much of the frame is BUILDING.
+ * §66.3, third pass: how much of the frame is BUILDING — REPORTED, NOT A BAR.
  *
- * Set by measuring the sheet rather than chosen: the frames a person would post
- * and the frames they would not separate cleanly on this number where the tile
- * score does not separate them at all. Reported beside the tile score on every
- * run so the two can be seen to disagree when they do.
+ * Built to be a bar and falsified before it became one. The hypothesis was that
+ * the tile score counts ground-with-something-on-it while the eye judges screen
+ * area of standing geometry, so a floor on the latter would separate the frames
+ * worth posting from the frames that are not. Measured against the sheet it is
+ * ANTI-correlated: the two frames nobody would post — an empty olive yard with
+ * a silo, and a wall of grey planes — score 99% and 76%, while the best frame
+ * on the sheet scores 21%. Close to the ground at a shallow pitch, nearly every
+ * ray eventually passes under some roofline, whatever the picture looks like.
+ *
+ * It stays in the report because a number that disagrees with the tile score is
+ * worth seeing, and it does not become a floor, because putting a floor on a
+ * measurement that runs the wrong way is how a bar starts measuring the harness
+ * instead of the product. What the sheet actually separates on is LIGHT, which
+ * is a property of where the camera is rather than of how it is bounded — see
+ * docs/adapter-assumptions.md §19.
  */
-const MIN_BUILT = Number(process.env.CIV_MIN_BUILT ?? 0.12)
+const MIN_BUILT = Number(process.env.CIV_MIN_BUILT ?? 0)
 /** the home framing is a portrait of the city, and has to be filled by it */
 const HOME_MIN_ON = 0.6
 /** after `0`, the fabric's centroid must land this close to screen centre */

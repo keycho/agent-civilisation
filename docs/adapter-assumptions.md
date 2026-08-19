@@ -771,6 +771,51 @@ The §49 deviation itself still stands and is now stated on screen rather than
 only in a comment: migration is not on the wire, live chunk servers do not move
 agents, and the listing's migration line is labelled `replayed region run`.
 
+## §19 — §66.3, three metrics and what the sheet was actually separating on
+
+The operator's rule for §66.3 was "if any of them look like a frame you would
+not post, the numbers are still measuring the wrong thing." Applied twice more,
+it kept being right, and the third application falsified my own hypothesis
+rather than the product.
+
+| metric | what a ray counts as | worst frame | tracked the judgement? |
+|---|---|---|---|
+| bbox coverage | lands inside the fabric's bounding box | 41.4% | no — bare dock scored 100% |
+| built tiles | any ray in a viewport tile finds something standing | 55.6% | partly |
+| building area | the ray meets a wall or a roof (heightfield march) | 12.5% | **anti-correlated** |
+
+Building area was built to be the third bar and never became one. Measured
+against the sheet it runs the wrong way: the two frames nobody would post — an
+empty olive yard with a silo, and a wall of grey planes — score **99% and 76%**,
+while the best frame on the sheet scores **21%**. Close to the ground at a
+shallow pitch almost every ray eventually passes under some roofline, whatever
+the picture looks like. It is reported and not enforced; putting a floor on a
+measurement that runs backwards is how a bar starts measuring the harness.
+
+**What the sheet separates on is LIGHT.** Every unpostable frame across both
+rounds is the camera close to the ground in an unlit corner of the plate, and
+every good one has the night register's windows in it. No measure of the fabric
+can tell those apart, because a lit terrace and a dark yard at 40 m are the same
+geometry — the difference is where you are standing, not how the camera is
+bounded.
+
+That is a scope finding, not a calibration one. A viewer who pans into a dark
+dock and stops there has taken the camera and that frame is theirs; §17's rule
+is that input wins, and it wins here too. The frames the PRODUCT is answerable
+for are the opening, the home framing, and every shot the director composes, and
+those are now their own sheet (`tools/watch/director-sheet.mjs`), captured after
+each shot settles and labelled with the intent that caused it. The free-camera
+fuzz keeps its floor on the tile score, which is what it is good at — proving no
+legal state loses the city — and stops pretending to be a judgement of
+composition it cannot make.
+
+The director sheet answers the operator's question the way the fuzz sheet could
+not: every frame is a composed shot of work in progress at block scale —
+scaffold and crane against dark fabric, agent labels, lamps on the kerb — and
+they are frames you would post. The difference is not the camera's bounds. It is
+that the director aims at where something is HAPPENING, and where something is
+happening is lit.
+
 ## Carried, not fixed
 
 - ~~UK tier-1 valuations~~ — done (build 10, §33.4): HM Land Registry UK HPI
