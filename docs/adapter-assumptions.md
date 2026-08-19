@@ -840,6 +840,84 @@ are director-selection changes and §66 is about the camera:
    sequence read as filmed rather than sampled, and the ranking currently has
    nothing that discourages the same composition twice running.
 
+## §20 — §68, the frames of reference agree; the cities have been demolished
+
+A production paris frame showed pixel agents, scaffolds and worksite lights on
+bare plate ground with the building geometry off in a corner behind a hard
+diagonal edge, read as a coordinate disagreement: agents in one frame of
+reference, the batched building geometry in another.
+
+**Measured, it is not.** Four independent checks, none of which reproduces a
+displacement:
+
+| check | result |
+|---|---|
+| rendered batch bounds vs the fabric box the camera derives from (paris) | agree within **1.7 m** |
+| same, schiedam | 8.1 m, entirely the fabric box also containing parcels |
+| agents on the LOCAL wire standing on a baseline footprint | **78%**, zero offset beating every offset in ±400 m and every mirror |
+| agents on the PRODUCTION wire, same test | **79-81%**, zero offset winning again |
+
+The production seed is byte-identical to the committed one (`md5` matches), and
+production serves the current client bundle. `mass.ts` already applies the same
+`(x, height, -y)` flip that `pointAt` does, so the two paths were never in
+different conventions.
+
+**What the frame actually shows is a demolished city.** Reading the §16.2 data
+texture out of production's `hello` — one texel per building, progress in `r` —
+and laying it back over the seed footprints:
+
+| world | standing / baseline | cleared | agent-built | clear : build |
+|---|---|---|---|---|
+| maassluis-haven | **184/935 (20%)** | 751 | 130 | 5.8 : 1 |
+| maasland-dorp | 404/1050 (38%) | 646 | 121 | 5.3 : 1 |
+| brooklyn-redhook | 431/866 (50%) | 435 | 39 | 11.2 : 1 |
+| london-deptford | 431/791 (54%) | 360 | 74 | 4.9 : 1 |
+| paris-ourcq | 424/765 (55%) | 341 | 52 | 6.6 : 1 |
+| schiedam-havens | 515/936 (55%) | 421 | 55 | 7.7 : 1 |
+| tokyo-kyojima | 258/446 (58%) | 188 | 55 | 3.4 : 1 |
+| vlaardingen-westwijk | 460/690 (67%) | 230 | 58 | 4.0 : 1 |
+
+Every world has lost between a third and four fifths of its building stock and
+replaced between a twentieth and a third of what it cleared. Paris's standing
+share by cell shows the shape of it — a west-to-east gradient from 28% standing
+where the agents have been working to 100% where they have not:
+
+```
+100%  50%  65%  71%  96% 100%
+ 69%  88%  61%  47%  83%  87%
+ 59%  65% 100%  92%  81% 100%
+ 50%  28%  67%  62%  86% 100%
+ 30%  34%  67%  65%  81% 100%
+100%  42%  33%  79%  81% 100%
+```
+
+The frontier between worked and unworked land follows parcel and block edges,
+which on a fabric organised around a canal and a railway is a hard diagonal —
+which is the edge in the frame. The buildings "in the corner" are the part of
+paris the agents have not reached yet.
+
+**So the escalation is economic, not geometric: clearing runs 3-11x ahead of
+building.** The §58 escalation made agents more ambitious about assembly and
+demolition; nothing made them correspondingly quick to rebuild, and a viewer
+arriving mid-session is looking at a razed site rather than a city being
+remade. maassluis-haven at 20% standing is not a city any more.
+
+Two things are worth separating for whoever picks this up:
+
+1. it may be that demolition-then-a-long-gap is what the economics honestly
+   produces, in which case the fault is that nothing in the product says
+   "this lot is between buildings" — cleared land renders as bare substrate
+   and reads as missing geometry.
+2. or the rebuild rate is genuinely too low against the clear rate, and the
+   §21.1 capital constraint or the §57.1 pace is holding construction back
+   while demolition is cheap.
+
+Both are testable and neither is a transform. The §68 canary
+(`assertBatchMatchesFabric`, run at boot, reported on `civ.plate.batchFault`)
+now refuses to let a real displacement hide behind a passing §65 camera check —
+the class the report suspected cannot recur silently even though this instance
+was not it.
+
 ## Carried, not fixed
 
 - ~~UK tier-1 valuations~~ — done (build 10, §33.4): HM Land Registry UK HPI

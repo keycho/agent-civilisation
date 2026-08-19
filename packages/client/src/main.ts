@@ -34,6 +34,9 @@ import {
   Group,
   LineBasicMaterial,
   LineSegments,
+  Matrix4,
+  Mesh,
+  Object3D,
   Raycaster,
   Scene,
   Vector2,
@@ -78,6 +81,22 @@ const scene = new Scene()
 // §49: the world lives under one root so the globe can take the stage
 const cityRoot = new Group()
 scene.add(cityRoot)
+
+/**
+ * §68: every layer joins the city under a name.
+ *
+ * A production frame showed agents, scaffolds and worksite lights standing on
+ * bare ground with the buildings elsewhere, which is a question about which
+ * LAYER is in the wrong place — and the answer was unreachable, because the
+ * scene graph held nineteen anonymous Groups and Meshes and a harness could
+ * only report `Mesh#27`. Naming them costs one wrapper and turns "something is
+ * displaced" into "this is displaced".
+ */
+function addLayer<T extends Object3D>(obj: T, name: string): T {
+  obj.name = name
+  cityRoot.add(obj)
+  return obj
+}
 // The baseline is immutable and served as a static file (§5, §21.6): it never
 // travels over the socket, and every viewer already has the same copy.
 const { seed, items, statics, chunks, entry, servers } = await loadChunk()
@@ -290,7 +309,7 @@ function ceilingNear(wx: number, wz: number, radius: number): number {
 const radius = Math.max(Math.abs(CITY.cx) + CITY.halfX, Math.abs(CITY.cy) + CITY.halfY)
 const HALF_EXTENT = radius + 22
 const substrate = createSubstrateView(seed.substrate, HALF_EXTENT)
-cityRoot.add(substrate.group)
+addLayer(substrate.group, 'substrate')
 const env = createEnvironment(scene, { radius, groundY: substrate.groundY, chunkId: entry.id })
 
 const buildings = new BuildingRenderer(items, seed.buildings.length + BUILDING_SLOT_SPARE)
@@ -300,17 +319,75 @@ seed.buildings.forEach((b, i) => {
   buildings.data.set(i, 1, 0, PURPOSE_INDEX[b.purpose], 1)
 })
 buildings.flush()
+
+/**
+ * §68: the fabric box and the GEOMETRY THAT WAS EMITTED must agree.
+ *
+ * §65 derived the camera's box from the seed's footprints and asserted the
+ * camera against that box, which is correct as far as it goes and says nothing
+ * about whether the geometry the renderer actually built landed in the same
+ * place. A displacement anywhere between the footprint and the batched vertex —
+ * an origin, a sign, an offset applied on one path and not another — would move
+ * the city out from under a camera that was still passing every §65 invariant,
+ * and nothing would say so.
+ *
+ * So the batch's own vertices are measured once, at boot, against the box the
+ * camera is anchored on. This is a canary rather than a repair: it cannot fix a
+ * bad transform, it can only refuse to let one be silent.
+ */
+function assertBatchMatchesFabric(): string | null {
+  const box = new Box3()
+  buildings.group.updateMatrixWorld(true)
+  buildings.group.traverse((o) => {
+    const mesh = o as Mesh
+    const g = mesh.geometry
+    if (!g?.attributes?.position || g.attributes.position.count === 0) return
+    g.computeBoundingBox()
+    if (g.boundingBox) box.union(g.boundingBox.clone().applyMatrix4(mesh.matrixWorld))
+  })
+  if (box.isEmpty()) return null
+  // the fabric box also contains the parcels the buildings stand on, so it is
+  // legitimately a little larger; only a real displacement clears this
+  const TOLERANCE_M = 24
+  // local (x, y) becomes world (x, ground, -y), so the fabric's world centre is
+  // the measured local centre with the z sign turned over — the same one
+  // conversion `pointAt` makes for everything else in the world
+  const fx = [CITY.cx - CITY.halfX, CITY.cx + CITY.halfX]
+  const fz = [-CITY.cy - CITY.halfY, -CITY.cy + CITY.halfY]
+  const worst = Math.max(
+    Math.abs(box.min.x - fx[0]),
+    Math.abs(box.max.x - fx[1]),
+    Math.abs(box.min.z - fz[0]),
+    Math.abs(box.max.z - fz[1]),
+  )
+  batchBounds = {
+    x: [+box.min.x.toFixed(1), +box.max.x.toFixed(1)],
+    z: [+box.min.z.toFixed(1), +box.max.z.toFixed(1)],
+    worst: +worst.toFixed(1),
+  }
+  return worst > TOLERANCE_M
+    ? `§68: the rendered building batch and the fabric box disagree by ${worst.toFixed(1)} m. ` +
+        `batch x [${box.min.x.toFixed(1)}, ${box.max.x.toFixed(1)}] z [${box.min.z.toFixed(1)}, ${box.max.z.toFixed(1)}]; ` +
+        `fabric x [${fx[0].toFixed(1)}, ${fx[1].toFixed(1)}] z [${fz[0].toFixed(1)}, ${fz[1].toFixed(1)}]`
+    : null
+}
+
+/** §68: what the check measured, for the harness and for `civ` */
+let batchBounds: { x: [number, number]; z: [number, number]; worst: number } | null = null
+const batchFault = assertBatchMatchesFabric()
+if (batchFault) console.error(batchFault)
+
 // §42.1: the chunk wears its own material base — schiedam's identity row
 // keeps it exactly as built
 buildings.setCityMaterial(CITY_MATERIALS[seed.chunk.id] ?? CITY_MATERIAL_DEFAULT)
 // §50.3: the authored hour decides how much of the frame the windows carry
 const cityHour = CITY_HOUR[seed.chunk.id]
 buildings.setNight(cityHour?.night ?? 0.1, cityHour?.windowWarm ?? '#ffc27a')
-cityRoot.add(buildings.group)
+addLayer(buildings.group, 'buildings')
 
 const roads = createRoadMeshes(seed.roads.nodes, seed.roads.edges, substrate.heightAt, HALF_EXTENT)
-cityRoot.add(roads.baseline)
-cityRoot.add(roads.agent)
+addLayer(roads.baseline, 'roads.baseline')
+addLayer(roads.agent, 'roads.agent')
 
 // §42.2: linear landmarks — the petite ceinture reads as a cutting, not a road
 if (seed.landmarkLines?.length) {
@@ -318,13 +395,14 @@ if (seed.landmarkLines?.length) {
 }
 
 // §48.4: stylized canopy over green landcover, chunk-palette tinted
-cityRoot.add(
+addLayer(
   createTrees(
     seed.substrate.surfaces,
     substrate.heightAt,
     HALF_EXTENT,
     CITY_MATERIALS[seed.chunk.id] ?? CITY_MATERIAL_DEFAULT,
   ),
+  'trees',
 )
 
 // §50.2: at a dark hour the pale substrate out-albedos the city standing on
@@ -348,7 +426,7 @@ const streetLights = new StreetLights(
     warm: cityHour?.lampWarm ?? '#ffb765',
   },
 )
-cityRoot.add(streetLights.group)
+addLayer(streetLights.group, 'streetLights')
 
 /**
  * §56.3: traffic as light — the same reasoning about dimGround applies, and
@@ -362,7 +440,7 @@ const traffic = new Traffic(
   HALF_EXTENT,
   { night: cityHour?.night ?? 0 },
 )
-cityRoot.add(traffic.group)
+addLayer(traffic.group, 'traffic')
 
 /**
  * §56.3: street trees. After dimGround like the lights, for the same reason —
@@ -378,7 +456,7 @@ const streetTrees = createStreetTrees(
   CITY_MATERIALS[seed.chunk.id] ?? CITY_MATERIAL_DEFAULT,
   cityHour?.night ?? 0,
 )
-cityRoot.add(streetTrees)
+addLayer(streetTrees, 'streetTrees')
 
 /** §56.3: the evidence of reflections — the lamps, mirrored into the water */
 const waterReflections = createWaterReflections(
@@ -387,22 +465,22 @@ const waterReflections = createWaterReflections(
   cityHour?.lampWarm ?? '#ffb765',
   cityHour?.night ?? 0,
 )
-cityRoot.add(waterReflections)
+addLayer(waterReflections, 'waterReflections')
 
 const construction = new ConstructionOverlay()
-cityRoot.add(construction.scaffold)
-cityRoot.add(construction.siteMarks)
-cityRoot.add(construction.glow)
-cityRoot.add(construction.cranes)
+addLayer(construction.scaffold, 'construction.scaffold')
+addLayer(construction.siteMarks, 'construction.siteMarks')
+addLayer(construction.glow, 'construction.glow')
+addLayer(construction.cranes, 'construction.cranes')
 
 // §46.2: one frame of punctuation at the §16.5 staging endpoints
 const punctuation = new PunctuationLayer()
 punctuation.setGround(substrate.groundY)
-cityRoot.add(punctuation.dust)
-cityRoot.add(punctuation.flash)
+addLayer(punctuation.dust, 'punctuation.dust')
+addLayer(punctuation.flash, 'punctuation.flash')
 
 const agentMarkers = new AgentMarkers(200)
-cityRoot.add(agentMarkers.mesh)
+addLayer(agentMarkers.mesh, 'agentMarkers')
 
 /**
  * §36.2: the site tether. A thin line linking a working agent's marker to the
@@ -421,7 +499,7 @@ const tether = new LineSegments(
   new LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.35, depthWrite: false }),
 )
 tether.frustumCulled = false
-cityRoot.add(tether)
+addLayer(tether, 'tether')
 
 /**
  * §59.1: the city's agents are pixel people. §47.3a's floating light glyphs
@@ -430,7 +508,7 @@ cityRoot.add(tether)
  * has gone with it.
  */
 const pixelAgents = new PixelAgents(CITY_MATERIALS[seed.chunk.id] ?? CITY_MATERIAL_DEFAULT)
-cityRoot.add(pixelAgents.group)
+addLayer(pixelAgents.group, 'pixelAgents')
 
 /**
  * §49 deviation, still standing at §67: migration events are NOT on the wire.
@@ -1066,7 +1144,7 @@ canvas.addEventListener('wheel', (e) => {
 
 // §40.1: built once from the immutable baseline, held on `b`
 const ghost = new RealityGhost(seed.buildings, substrate.heightAt)
-cityRoot.add(ghost.lines)
+addLayer(ghost.lines, 'ghost')
 
 const sound = new WorldSound()
 el('soundBtn').addEventListener('click', () => {
@@ -3412,7 +3490,7 @@ function civHome(opts: { snap?: boolean } = {}): void {
    * emitted. `cityRoot` and `Vector3` are already on this surface below.
    */
   pointAt,
-  three: { Box3, Vector3 },
+  three: { Box3, Matrix4, Vector3 },
   /** §63.4: where the world readouts think their sites are, in world space */
   siteMarkPoints: () =>
     [...agentSite.entries()].slice(0, 20).map(([id, at]) => {
@@ -3457,6 +3535,15 @@ function civHome(opts: { snap?: boolean } = {}): void {
     builtAt: (wx: number, wz: number) => Number.isFinite(builtTopAt(wx, wz)),
     /** §66.3: the roofline at this world point, for a heightfield ray march */
     roofAt: builtTopAt,
+    /**
+     * §68: the rendered batch's own bounds and how far they sit from the box
+     * the camera is anchored on. Null before the check has run.
+     */
+    get batch() {
+      return batchBounds
+    },
+    /** §68: the fault message if the two disagree, or null */
+    batchFault,
     /** §66.3: the tallest roof anywhere in the fabric, to bound that march */
     tallest: (() => {
       let top = -Infinity
