@@ -482,3 +482,14 @@ export function resolveColor(
   }
   return out
 }
+
+/**
+ * §69.3: the tone of ground a building was taken off.
+ *
+ * Warmer and lighter than the substrate it sits on, so a cleared lot separates
+ * from the land at city framing without becoming a bright shape — the point is
+ * that the plan of the block survives the mass, not that a hole draws the eye.
+ * §63's night register desaturates everything on top of this, which is why it
+ * is picked warm enough to survive that.
+ */
+export const CLEARED_TONE = '#6b6151'

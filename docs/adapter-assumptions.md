@@ -957,6 +957,99 @@ missing DATA rather than as an error, which is the hardest kind to notice. The
 `/summary` shape is now the cheapest possible check — if `working` is absent,
 the server is behind the client.
 
+## §22 — §70, the clear-to-build lifecycle, and what the funding gate cost
+
+§69.2 called it: clearing was funded for the clearing step while building competed
+on score. Measured before touching anything, over the retained event store —
+21,081 cleared parcels, 47,567 assemblies:
+
+| measure | before |
+|---|---|
+| cleared parcels ever rebuilt | **19.2%** |
+| cleared parcels that ever START construction | 22.5% — and once started, **87% complete** |
+| assemblies that ever produce a building | 18.3% |
+| mean age of a still-empty lot | 8,974 ticks, against a **median rebuild wait of 510** |
+| demolitions : constructions, whole store | 22,597 : 7,590 |
+
+Three independent measures all landing at one-in-five, and the still-empty lots
+being seventeen times older than the median rebuild wait, says they are
+abandoned rather than queued. Assembly was ruled out as the explanation: if
+assemble-3-build-1 were the mechanic, most assemblies would produce a building
+and only 18.3% do.
+
+**The joint, confirmed in code:** `engine.ts` gated planned clearing on
+`demolitionCost(b) <= funds` — this building's clearing cost — while the
+unplanned redevelopment branch THREE LINES BELOW has always priced
+`demolitionCost(b) + potential.cost`. Two adjacent branches, one asking what the
+step costs and the other asking what the plan costs. The §29.2 comment above it
+said so outright: "execution is gated by funds alone." Clearing was cheap,
+unappraised and score-boosted 1.6x; building was expensive, payback-gated and
+unboosted.
+
+§70 prices the whole plan at the clearing decision — every building still
+standing on the plan's parcels cleared, plus the mass that replaces them, using
+the same `developableFootprint`/`areaOf`/`chooseLevels` arithmetic the develop
+branch will run, so the two cannot disagree.
+
+**The a/b, same seed, gate off then on:**
+
+| chunk | holes | standing | clear:build | divergence | touched |
+|---|---|---|---|---|---|
+| schiedam-havens | 18.6% -> **5.2%** | 77.4% -> **93.9%** | 3.50 -> **1.67** | 59.9 -> 64.2 | 84.9 -> 92.7 |
+| london-deptford | 12.3% -> **3.7%** | 85.0% -> **96.3%** | 2.70 -> **1.51** | 46.5 -> 51.1 | 68.0 -> 79.0 |
+| brooklyn-redhook | 11.6% -> **1.0%** | 81.1% -> **99.2%** | 4.49 -> **1.19** | 54.7 -> 58.3 | 78.1 -> 88.6 |
+
+Both §69.2 bars pass on every chunk. Note what did NOT happen: the world did not
+go inert. Divergence and touched-share rose everywhere, and schiedam cleared
+294 -> 132 while still building 84 -> 79. **The clearing that the gate removed
+was the clearing that led nowhere.**
+
+### the cost, which is real and is not mine to net off
+
+§70 spends the grey. Isolated on the same seed:
+
+| | control | funded |
+|---|---|---|
+| holes | 22.9% | 7.3% |
+| standing | 72.0% | 90.9% |
+| **untouched baseline** | **18.9%** | **8.3%** |
+
+§58.6's floor is 25%. It was already failing at 18.9% before §70 — and had
+never passed; §58's own measurement put it at 21.3% pre-escalation with a median
+of 19.9% across five seeds, so the floor may simply have been set above what this
+economy produces. §70 takes it to 8.3%, a further **-10.6pp attributable to the
+funding gate**.
+
+The mechanism is legible: an agent that can no longer afford to clear-and-build
+does something else with the capital — renovate, convert, expand — which touches
+buildings without demolishing them. More of the city is worked over and less of
+it is knocked down.
+
+This is a genuine tension between two pre-registered bars and neither constant
+has been moved. §69.2's bars now pass; §26.2's contrast argument says the
+untouched grey is what lets change read at all, and at 8.3% there is very little
+of it left. **Operator's call**, and the choices are visible: relax §58.6 to what
+the economy actually produces, or add a mechanism that protects a share of the
+fabric from being worked at all rather than from being demolished.
+
+## §23 — §69.3, cleared ground, and a layer that rendered correctly while reading as nothing
+
+A demolished lot rendered as nothing at all — no rubble tint ever shipped
+despite §57.2 asking for one. Cleared ground now carries a slab at the exact
+footprint, a hoarding line at head height, and four deterministic rubble blocks,
+with the cleared set read off the §16.2 data texture rather than from events,
+because a viewer arriving at a world that has been running for days has no event
+history for the four hundred demolitions that already happened.
+
+**The first cut drew the hoarding in the rubble tone and the a/b pair killed
+it.** The layer was correct — 2,443 slab triangles, 4,886 hoarding segments,
+1,880 rubble instances, all in the right places — and invisible: §63's night
+desaturation flattens a warm grey outline into the warm grey ground it is drawn
+on. Correct and unreadable is a failure. The hoarding moved to the chrome
+register (cream at 0.32, no depth write), which is how this product annotates the
+world everywhere else, and the lots now read as what they are: the plan of a
+block outliving its mass.
+
 ## Carried, not fixed
 
 - ~~UK tier-1 valuations~~ — done (build 10, §33.4): HM Land Registry UK HPI

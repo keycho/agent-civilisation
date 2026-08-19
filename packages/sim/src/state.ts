@@ -215,6 +215,15 @@ export const THIRD_USE = { on: true }
  */
 export const ESCALATION = { on: true }
 
+/**
+ * §70. Demolition on planned ground is funded for the WHOLE plan — clearance
+ * plus the construction that replaces it — rather than for the clearing step
+ * alone. Always on in the product; the §70 a/b flips it off for its before-arm
+ * so "what did the funding gate change?" is measured against an identical seed
+ * in one process rather than against a number remembered from another tree.
+ */
+export const FUNDED_PLAN = { on: true }
+
 export class World {
   /**
    * §20.2: an internal monotonic sequence number. Construction spans it, decay

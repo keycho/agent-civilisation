@@ -24,7 +24,7 @@ import {
   withDuty,
   yieldPerTick,
 } from './economy.ts'
-import { type Agent, ESCALATION, type MemoryEntry, type PlanSpec, type SitePlan, THIRD_USE, type World, floorArea } from './state.ts'
+import { type Agent, ESCALATION, FUNDED_PLAN, type MemoryEntry, type PlanSpec, type SitePlan, THIRD_USE, type World, floorArea } from './state.ts'
 
 /**
  * §9. Async, may return null, carries a rationale on the action.
@@ -440,7 +440,31 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
         if (
           sitePlan &&
           (sitePlan.kind === 'assemble' || sitePlan.kind === 'redevelop') &&
-          demolitionCost(b) <= funds
+          /**
+           * §70: FUNDED FOR THE WHOLE PLAN, not for the next step.
+           *
+           * This gate read `demolitionCost(b) <= funds` — the cost of knocking
+           * down THIS building — while the unplanned redevelopment branch three
+           * lines below has always priced `demolitionCost(b) + potential.cost`.
+           * Two adjacent branches, one asking what the step costs and the other
+           * asking what the plan costs, and the comment above said so plainly:
+           * "execution is gated by funds alone."
+           *
+           * Measured over 21,081 cleared parcels: 76% never even started
+           * construction, 81% were never rebuilt, and 82% of assemblies never
+           * produced a building. Clearing is cheap, unappraised and score-
+           * boosted; building is expensive, payback-gated and unboosted, so an
+           * agent could afford to flatten ground it could never afford to
+           * build on — and did, four times out of five.
+           *
+           * A lender does not release demolition finance without construction
+           * finance, because clearing an income-producing asset you cannot
+           * afford to replace destroys value. The gate now prices the same
+           * thing the plan will actually cost to finish.
+           */
+          (FUNDED_PLAN.on
+            ? sitePlanCost(world, sitePlan, obs.neighbourhood.intensity, s.intensityAppetite)
+            : demolitionCost(b)) <= funds
         ) {
           options.push({
             action: {
@@ -1097,6 +1121,38 @@ function clusterOwned(world: World, agent: Agent, ids: string[]): string[][] {
     groups.push(group)
   }
   return groups.sort((a, b) => b.length - a.length).slice(0, 3)
+}
+
+/**
+ * §70: what finishing this plan costs — every building still standing on it
+ * cleared, and the one that replaces them built.
+ *
+ * Deliberately the SAME arithmetic the develop branch will run when the ground
+ * is finally clear: `developableFootprint` over the plan's parcels, `areaOf`,
+ * `chooseLevels` on the same intensity and appetite. If the two ever diverge,
+ * an agent could pass the funding gate on one estimate and then fail the build
+ * on another, which is the bug this exists to prevent rather than a new one to
+ * introduce. A plan whose ground cannot be read as a footprint is priced at its
+ * clearance alone, which is the honest floor.
+ */
+function sitePlanCost(
+  world: World,
+  plan: SitePlan,
+  intensity: number,
+  appetite: number,
+): number {
+  let clearance = 0
+  const parcels: Parcel[] = []
+  for (const id of plan.parcelIds) {
+    const p = world.parcels.get(id)
+    if (!p) continue
+    parcels.push(p)
+    const standing = p.buildingId ? world.standing(p.buildingId) : null
+    if (standing) clearance += demolitionCost(standing)
+  }
+  const footprint = developableFootprint(parcels)
+  if (!footprint) return clearance
+  return clearance + developmentCost(areaOf(footprint), chooseLevels(intensity, appetite))
 }
 
 function chooseLevels(intensity: number, appetite: number): number {

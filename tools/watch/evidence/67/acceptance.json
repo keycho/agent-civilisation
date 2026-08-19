@@ -9,17 +9,17 @@
     {
       "name": "§66.1 the opening holds the framing for 8-10 s before the first intent",
       "pass": true,
-      "detail": "held 9.0 s from presentation, released 10.1 s after navigation (load included); sampler saw the release at +10.8 s"
+      "detail": "held 9.0 s from presentation, released 10.1 s after navigation (load included); sampler saw the release at +10.4 s"
     },
     {
       "name": "§66.1 and it is genuinely motionless, not merely slow",
       "pass": true,
-      "detail": "worst fabric-corner drift during the hold: 0.5 px"
+      "detail": "worst fabric-corner drift during the hold: 0.1 px"
     },
     {
       "name": "§66.1 that first move is a slow move, not a cut",
       "pass": true,
-      "detail": "7.5 s to \"construction\""
+      "detail": "7.5 s to \"demolition\""
     },
     {
       "name": "§66.2 `0` comes home from a bad state and turns ambient OFF",
@@ -39,12 +39,12 @@
     {
       "name": "§67.6 every row carries city, country, generation, diff, meter and working",
       "pass": true,
-      "detail": "{\"id\":\"tokyo-kyojima\",\"nm\":\"kyojima, tokyo\",\"cc\":\"jp\",\"gen\":\"g1\",\"diff\":\"34.1%\",\"act\":\"       ▇▇▇\",\"wk\":\"13 working\",\"sel\":false}"
+      "detail": "{\"id\":\"tokyo-kyojima\",\"nm\":\"kyojima, tokyo\",\"cc\":\"jp\",\"gen\":\"g1\",\"diff\":\"6.5%\",\"act\":\"       ▇▇▇\",\"wk\":\"37 working\",\"sel\":false}"
     },
     {
       "name": "§67.7 sorted by activity, busiest first",
       "pass": true,
-      "detail": "0.485 > 0.410 > 0.209 > 0.200 > 0.159 > 0.144 > 0.143 > 0.110"
+      "detail": "0.661 > 0.582 > 0.519 > 0.341 > 0.286 > 0.158 > 0.144 > 0.112"
     },
     {
       "name": "§67 the listing is full-frame",
@@ -98,7 +98,7 @@
     {
       "name": "§69.16 the half below the listing is filled",
       "pass": true,
-      "detail": "premise 304 chars, 5 ticker rows, 447 px tall · 322,429 events · 5,015 buildings standing · 464 agents alive · 15 generations passed · 8/8 worlds answering"
+      "detail": "premise 304 chars, 5 ticker rows, 447 px tall · 209,905 events · 5,096 buildings standing · 464 agents alive · 11 generations passed · 8/8 worlds answering"
     },
     {
       "name": "§69.17 §68 canary: the batch is inside the fabric box and fills it",

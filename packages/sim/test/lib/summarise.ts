@@ -88,6 +88,17 @@ export interface Summary {
   peakSector: number
   agentOrigin: number
   cleared: number
+  /**
+   * §70, pre-registered: what the ground looks like at the end of the run.
+   *
+   * `cleared` counts demolition EVENTS, which says how busy the agents were and
+   * nothing about what is standing. These two say what a viewer sees: how much
+   * of the chunk is a hole, and how much of the original city is still up.
+   */
+  clearedUnbuiltShare: number
+  standingShare: number
+  /** demolitions completed per construction completed — 3:1 before §70 */
+  clearToBuild: number
   generation: number
   /** §23.5: agent lifetimes ended, not generations */
   livesCompleted: number
@@ -257,6 +268,40 @@ export interface ChurnReport {
   intoNothingShare: number
 }
 
+/**
+ * §70: cleared-and-unbuilt ground, and what is left standing.
+ *
+ * A parcel counts as a hole when something was demolished on it and nothing
+ * stands there now. Counting demolished BUILDINGS instead would double-count an
+ * assembled site that cleared three lots to build one mass, which is exactly
+ * the case the ratio has to be able to forgive.
+ */
+function groundState(w: {
+  buildings: Map<string, { state: string; parcelId?: string; source: string }>
+  parcels: Map<string, unknown>
+}): { clearedUnbuiltShare: number; standingShare: number } {
+  const standingParcels = new Set<string>()
+  let standing = 0
+  let baseline = 0
+  for (const b of w.buildings.values()) {
+    if (b.source === 'real_world') baseline++
+    if (b.state === 'standing') {
+      standing++
+      if (b.parcelId) standingParcels.add(b.parcelId)
+    }
+  }
+  const holes = new Set<string>()
+  for (const b of w.buildings.values()) {
+    if (b.state !== 'demolished' || !b.parcelId) continue
+    if (!standingParcels.has(b.parcelId)) holes.add(b.parcelId)
+  }
+  const parcels = w.parcels.size || 1
+  return {
+    clearedUnbuiltShare: holes.size / parcels,
+    standingShare: baseline > 0 ? standing / baseline : 0,
+  }
+}
+
 export async function loadSeed(chunk = 'schiedam-havens'): Promise<WorldSeed> {
   const p = join(HERE, '..', '..', '..', 'client', 'public', 'world', `${chunk}.json`)
   return JSON.parse(await readFile(p, 'utf8')) as WorldSeed
@@ -384,6 +429,11 @@ export async function runSeed(
     peakSector: r.peakSector?.index ?? 0,
     agentOrigin: r.agentOrigin,
     cleared: r.demolished,
+    ...groundState(w),
+    clearToBuild:
+      (eventCounts.construction_completed ?? 0) > 0
+        ? (eventCounts.demolition_completed ?? 0) / (eventCounts.construction_completed ?? 1)
+        : (eventCounts.demolition_completed ?? 0),
     generation: w.generation,
     livesCompleted: w.livesCompleted,
     deepestLineage: w.deepestLineage,

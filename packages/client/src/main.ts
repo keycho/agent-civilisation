@@ -20,6 +20,7 @@ import {
   CITY_HOUR,
   CITY_MATERIALS,
   CITY_MATERIAL_DEFAULT,
+  CLEARED_TONE,
   DIVERGENCE_LABEL,
   PURPOSE_INDEX,
   pointInRing,
@@ -46,6 +47,7 @@ import {
 import { CameraDirector } from './camera/director.ts'
 import { CameraRig, attachRigControls } from './camera/rig.ts'
 import { TiltShiftPass } from './postfx/tiltShift.ts'
+import { ClearedGround } from './render/clearedGround.ts'
 import { RealityGhost } from './render/ghost.ts'
 import { WorldSound } from './audio/worldSound.ts'
 import {
@@ -411,6 +413,46 @@ buildings.setCityMaterial(CITY_MATERIALS[seed.chunk.id] ?? CITY_MATERIAL_DEFAULT
 const cityHour = CITY_HOUR[seed.chunk.id]
 buildings.setNight(cityHour?.night ?? 0.1, cityHour?.windowWarm ?? '#ffc27a')
 addLayer(buildings.group, 'buildings')
+
+/**
+ * §69.3: the ground a demolished building left behind.
+ *
+ * Built from the same baseline footprints the batch is, so a cleared lot keeps
+ * the exact plan of what stood on it rather than a box fitted to its bounds.
+ * Which lots are cleared is read off the §16.2 data texture rather than tracked
+ * from events: a viewer arriving at a world that has been running for days has
+ * no event history for the four hundred demolitions that already happened, and
+ * the texture is the state the renderer is already using to decide not to draw
+ * the building at all.
+ */
+const clearedGround = new ClearedGround(
+  seed.buildings.map((b) => ({ footprint: b.footprint, groundM: b.groundM })),
+  substrate.heightAt,
+  CLEARED_TONE,
+)
+addLayer(clearedGround.group, 'clearedGround')
+
+const clearedSet = new Set<number>()
+let clearedScanIn = 0
+
+/**
+ * A baseline slot whose progress has fallen to zero was demolished — the slots
+ * are seed order, and nothing else can put a baseline building at zero. Agent
+ * builds live in slots past the baseline count and start at zero having never
+ * existed, which is why this stops at the baseline: "never built" and "knocked
+ * down" are the same byte and only the baseline can tell them apart.
+ */
+function rescanCleared(dt: number): void {
+  clearedScanIn -= dt
+  if (clearedScanIn > 0) return
+  clearedScanIn = 0.5
+  const data = buildings.data.data
+  clearedSet.clear()
+  for (let i = 0; i < seed.buildings.length; i++) {
+    if (data[i * 4] === 0) clearedSet.add(i)
+  }
+  clearedGround.show(clearedSet)
+}
 
 const roads = createRoadMeshes(seed.roads.nodes, seed.roads.edges, substrate.heightAt, HALF_EXTENT)
 addLayer(roads.baseline, 'roads.baseline')
@@ -1133,9 +1175,28 @@ function renderTicker(): void {
     if (held?.text === s.lastEvent.text) continue
     tickerSeen.set(s.id, { text: s.lastEvent.text, weight: s.lastEvent.weight ?? 0, at: tickerClock++ })
   }
-  const rows = [...tickerSeen.entries()]
-    .sort((a, b) => b[1].at - a[1].at)
-    .slice(0, 5)
+  /**
+   * §69: deduped by ACTION, not by text.
+   *
+   * Eight worlds restarted together do the same thing at the same time, and the
+   * ticker showed five near-identical "assembling 3 adjacent lots, clearing 3"
+   * lines — technically five different worlds and visually one repeated
+   * sentence, which reads as a stuck feed rather than as a busy region. The
+   * verb is what makes a line worth reading, so the ticker keeps the most
+   * recent line per verb and lets the rest through underneath.
+   */
+  const verbOf = (text: string): string => {
+    const m = /\b(assembling|consolidating|clearing|demolition|construction|redevelop|develop|converting|renovat\w*|buying|acquir\w*)\b/.exec(
+      text,
+    )
+    return m ? m[1].replace(/ing$|ed$/, '') : text.split(' ').slice(0, 2).join(' ')
+  }
+  const byVerb = new Map<string, [string, { text: string; weight: number; at: number }]>()
+  for (const entry of [...tickerSeen.entries()].sort((a, b) => b[1].at - a[1].at)) {
+    const v = verbOf(entry[1].text)
+    if (!byVerb.has(v)) byVerb.set(v, entry)
+  }
+  const rows = [...byVerb.values()].sort((a, b) => b[1].at - a[1].at).slice(0, 5)
   el('worldsTicker').innerHTML = rows.length
     ? rows
         .map(
@@ -3409,6 +3470,7 @@ renderer.setAnimationLoop(() => {
   updateTethers()
   updateChip()
   updateSiteMarks()
+  rescanCleared(dt)
 
   // §59.1: the exact term that keeps a figure at or above 16 px — the lens
   // opens as the camera descends, so it is computed per frame rather than baked
