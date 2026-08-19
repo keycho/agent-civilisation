@@ -309,6 +309,9 @@
       body.worlds #railRight, body.worlds #railLeft,
       body.worlds #cards, body.worlds #titleCard, body.worlds #miniCard,
       body.worlds #siteMarks { display: none; }
+      /* the status line describes one world; on /earth most of it does not apply */
+      body.worlds #genN, body.worlds #ambient { display: none; }
+      body.worlds #worldCount { display: inline; }
       #worlds > .title { padding: 9px 16px; }
       #worlds > .body { flex: 1; overflow-y: auto; padding: 0; display: flex; flex-direction: column; }
       #worlds .row {
@@ -335,16 +338,49 @@
       #worlds .row.cold .act { color: var(--dimmer); }
       #worlds .row.cold .nm { color: var(--dim); }
       /*
-       * The one thing the map showed that a list would otherwise lose. It sits
-       * under the table rather than in it, because it is about the region and
-       * every row above it is about one world.
+       * §69: everything below the table. It takes the space the listing does
+       * not, so eight rows do not leave half a screen of void, and it reads top
+       * to bottom as: what this is, what the numbers are doing, what just
+       * happened, where the ground came from.
        */
-      #worldsMigration {
-        margin-top: auto; padding: 10px 16px; border-top: 1px solid var(--edge);
-        color: var(--dim);
+      #worldsBelow {
+        margin-top: auto; display: flex; flex-direction: column;
+        border-top: 1px solid var(--edge);
       }
+      #worldsPremise { padding: 14px 16px 10px; max-width: 78ch; }
+      #worldsPremise p { margin: 0 0 5px; color: var(--dim); }
+      #worldsPremise p:first-child { color: var(--cream); }
+      #worldsPremise .cta { color: var(--amber); margin-top: 8px; }
+      /* numbers that move are the cheapest evidence the thing is running */
+      #worldsTotals {
+        padding: 8px 16px; border-top: 1px solid var(--edge);
+        display: flex; flex-wrap: wrap; gap: 18px; color: var(--dim);
+      }
+      #worldsTotals b { color: var(--amber); font-weight: 400; }
+      #worldsTotals .stale { color: var(--dimmer); }
+      /* the last few high-weight events, across every world */
+      #worldsTicker { padding: 6px 16px 8px; border-top: 1px solid var(--edge); }
+      #worldsTicker .e { display: flex; gap: 9px; color: var(--dim); padding: 1px 0; }
+      #worldsTicker .e .w {
+        color: var(--dimmer); flex: 0 0 17ch;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      #worldsTicker .e .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      #worldsTicker .e .t { color: var(--cream); }
+      #worldsTicker .none { color: var(--dimmer); }
+      /*
+       * The one thing the map showed that a list would otherwise lose. It is
+       * about the region where every row above is about one world.
+       */
+      #worldsMigration { padding: 7px 16px; border-top: 1px solid var(--edge); color: var(--dim); }
       #worldsMigration b { color: var(--amber); font-weight: 400; }
       #worldsMigration .src { color: var(--dimmer); padding-left: 10px; }
+      #worldsCredits {
+        padding: 9px 16px 12px; border-top: 1px solid var(--edge);
+        display: flex; flex-direction: column; gap: 2px; color: var(--dimmer);
+      }
+      #worldsCredits a { color: var(--dim); }
+      #worldsCredits a:hover { color: var(--amber); }
 
       /*
        * §35.7: panes float at the edges and must not stack on each other. The
@@ -550,6 +586,11 @@
       <button id="chunkBtn" title="switch city (m)">—</button>
       <span class="sep">·</span>
       <span id="genN">gen 1</span>
+      <!--
+        §69: on /earth there is no generation — a generation belongs to one
+        world and there are eight. The slot says how many are mounted instead.
+      -->
+      <span id="worldCount" hidden></span>
       <span class="sep">·</span>
       <span id="link" class="connecting">connecting…</span>
       <span class="sep">·</span>
@@ -755,7 +796,32 @@
           <span class="diff">diff</span><span class="act">activity</span><span class="wk">working</span>
         </div>
         <div id="worldsList"></div>
-        <div id="worldsMigration"></div>
+        <!--
+          §69: the half of the frame under the listing. A picker with an empty
+          bottom half tells a stranger nothing about what they are picking. Four
+          things, in the §35 register and no other: what this is, numbers that
+          move, what just happened, and where the ground truth came from.
+        -->
+        <div id="worldsBelow">
+          <div id="worldsPremise">
+            <p>we forked earth.</p>
+            <p>eight real places, imported from open geographic data — real buildings, real
+              footprints, real construction years.</p>
+            <p>autonomous agents own them now. they buy, convert, demolish, rebuild, die, and
+              pass the land to their heirs. nobody controls them and nothing is scripted.</p>
+            <p class="cta">select a world.</p>
+          </div>
+          <div id="worldsTotals"></div>
+          <div id="worldsTicker"></div>
+          <div id="worldsMigration"></div>
+          <div id="worldsCredits">
+            <span>ground truth: openstreetmap (odbl) · 3dbag lidar heights · ahn elevation ·
+              hm land registry price paid (ogl v3) · etalab dvf</span>
+            <span>every figure on this page is simulated. the places are real; what has
+              happened to them is not.</span>
+            <span>built with <a href="https://claude.ai/code">@claudeai</a> · terrafork.dev</span>
+          </div>
+        </div>
       </div>
     </div>
 

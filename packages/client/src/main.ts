@@ -346,34 +346,61 @@ function assertBatchMatchesFabric(): string | null {
     if (g.boundingBox) box.union(g.boundingBox.clone().applyMatrix4(mesh.matrixWorld))
   })
   if (box.isEmpty()) return null
-  // the fabric box also contains the parcels the buildings stand on, so it is
-  // legitimately a little larger; only a real displacement clears this
-  const TOLERANCE_M = 24
+  /**
+   * CONTAINMENT, not edge equality.
+   *
+   * A first version compared the two boxes edge for edge and failed four of
+   * eight chunks — vlaardingen by 88 m — which is not displacement at all. The
+   * fabric box is the union of the footprints AND the parcels they stand on, so
+   * a single deep allotment or industrial plot legitimately pushes one edge far
+   * past the last building. What a displacement does instead is put part of the
+   * batch OUTSIDE the box, and that is what is asserted: the geometry must lie
+   * within the fabric the camera is aimed at, and must fill enough of it that a
+   * collapsed batch cannot pass by being trivially inside.
+   */
+  const TOLERANCE_M = 8
+  const FILLS_AT_LEAST = 0.6
   // local (x, y) becomes world (x, ground, -y), so the fabric's world centre is
   // the measured local centre with the z sign turned over — the same one
   // conversion `pointAt` makes for everything else in the world
   const fx = [CITY.cx - CITY.halfX, CITY.cx + CITY.halfX]
   const fz = [-CITY.cy - CITY.halfY, -CITY.cy + CITY.halfY]
-  const worst = Math.max(
-    Math.abs(box.min.x - fx[0]),
-    Math.abs(box.max.x - fx[1]),
-    Math.abs(box.min.z - fz[0]),
-    Math.abs(box.max.z - fz[1]),
+  // how far the batch pokes out of the fabric box, on its worst side
+  const outside = Math.max(
+    fx[0] - box.min.x,
+    box.max.x - fx[1],
+    fz[0] - box.min.z,
+    box.max.z - fz[1],
+    0,
+  )
+  const fills = Math.min(
+    (box.max.x - box.min.x) / Math.max(fx[1] - fx[0], 1e-6),
+    (box.max.z - box.min.z) / Math.max(fz[1] - fz[0], 1e-6),
   )
   batchBounds = {
     x: [+box.min.x.toFixed(1), +box.max.x.toFixed(1)],
     z: [+box.min.z.toFixed(1), +box.max.z.toFixed(1)],
-    worst: +worst.toFixed(1),
+    outside: +outside.toFixed(1),
+    fills: +fills.toFixed(3),
   }
-  return worst > TOLERANCE_M
-    ? `§68: the rendered building batch and the fabric box disagree by ${worst.toFixed(1)} m. ` +
-        `batch x [${box.min.x.toFixed(1)}, ${box.max.x.toFixed(1)}] z [${box.min.z.toFixed(1)}, ${box.max.z.toFixed(1)}]; ` +
-        `fabric x [${fx[0].toFixed(1)}, ${fx[1].toFixed(1)}] z [${fz[0].toFixed(1)}, ${fz[1].toFixed(1)}]`
-    : null
+  if (outside <= TOLERANCE_M && fills >= FILLS_AT_LEAST) return null
+  return (
+    `§68: the rendered building batch is not where the fabric box says the city is — ` +
+    (outside > TOLERANCE_M
+      ? `${outside.toFixed(1)} m of it lies outside the box. `
+      : `it fills only ${(fills * 100).toFixed(0)}% of the box. `) +
+    `batch x [${box.min.x.toFixed(1)}, ${box.max.x.toFixed(1)}] z [${box.min.z.toFixed(1)}, ${box.max.z.toFixed(1)}]; ` +
+    `fabric x [${fx[0].toFixed(1)}, ${fx[1].toFixed(1)}] z [${fz[0].toFixed(1)}, ${fz[1].toFixed(1)}]`
+  )
 }
 
 /** §68: what the check measured, for the harness and for `civ` */
-let batchBounds: { x: [number, number]; z: [number, number]; worst: number } | null = null
+let batchBounds: {
+  x: [number, number]
+  z: [number, number]
+  outside: number
+  fills: number
+} | null = null
 const batchFault = assertBatchMatchesFabric()
 if (batchFault) console.error(batchFault)
 
@@ -581,7 +608,18 @@ const connection = new Connection(serverUrl(), {
     observer.applyHello(h)
     for (const e of h.events) ingest(e)
     durability = h.durability
-    genesisMs = Date.now() - (h.uptimeSeconds ?? 0) * 1000
+    /**
+     * §69: ABSENT IS NOT ZERO.
+     *
+     * `?? 0` made a server that reports no uptime indistinguishable from a
+     * world born this instant: genesis landed on `Date.now()` and the status
+     * line read `up 0s` and then counted up from page load, which is exactly
+     * the thing uptime is not. A server that does not know when its world began
+     * leaves the readout as `up —`, which is true.
+     */
+    if (typeof h.uptimeSeconds === 'number' && h.uptimeSeconds > 0) {
+      genesisMs = Date.now() - h.uptimeSeconds * 1000
+    }
     el('uptime').textContent = sinceGenesis()
     acceptReadouts(h.readouts)
     bootAttached()
@@ -1037,10 +1075,76 @@ function renderWorlds(): void {
     set('act', s ? activityMeter(c.id, s.activityRate ?? 0, peak) : '··········')
     set('wk', s?.working === undefined ? '—' : `${s.working} working`)
   })
-  const reached = rows.filter((r) => r.s).length
-  el('worldsMeta').textContent =
-    `${reached}/${chunks.length} answering · arrows select · enter dive · [ ] cycle`
+  el('worldsMeta').textContent = 'arrows select · enter dive · [ ] cycle'
+  renderTotals()
+  renderTicker()
   renderMigrationLine()
+}
+
+const num = (n: number): string => n.toLocaleString('en-GB')
+
+/**
+ * §69: the aggregate across every world. Numbers that move are the cheapest
+ * evidence the thing is running, and the listing is the one place a viewer can
+ * see all eight at once.
+ *
+ * A field the servers do not report reads `—`, never `0`. The two are not the
+ * same claim and the difference is exactly what a stale deploy looks like: at
+ * the time of writing, production's chunk server predates `generation`,
+ * `eventCount` and `buildings` in /summary, so those columns are honestly
+ * blank there and populate the moment the server catches up. A count of zero
+ * would have said "this world has done nothing", which is a lie.
+ */
+function renderTotals(): void {
+  const seen = [...citySummaries.values()]
+  const sum = (pick: (s: CitySummary) => number | undefined): number | null => {
+    const vals = seen.map(pick).filter((v): v is number => typeof v === 'number')
+    return vals.length === seen.length && vals.length > 0 ? vals.reduce((a, b) => a + b, 0) : null
+  }
+  const cell = (label: string, v: number | null): string =>
+    v === null
+      ? `<span class="stale">${label} —</span>`
+      : `<span><b>${num(Math.round(v))}</b> ${label}</span>`
+  const gens = sum((s) => s.generation)
+  el('worldsTotals').innerHTML =
+    [
+      cell('events', sum((s) => s.eventCount)),
+      cell('buildings standing', sum((s) => s.buildings)),
+      cell('agents alive', sum((s) => s.agentCount)),
+      cell('generations passed', gens),
+      `<span class="stale">${seen.length}/${chunks.length} worlds answering</span>`,
+    ].join('')
+}
+
+/**
+ * §69: the world ticker — the last few high-weight things to happen anywhere.
+ *
+ * `/summary` carries one `lastEvent` per world rather than a stream, so this is
+ * the most recent line from each, ranked by the cinematic weight the feed
+ * already ranks by and held so a world that goes quiet does not drop out of the
+ * ticker the instant it stops talking.
+ */
+const tickerSeen = new Map<string, { text: string; weight: number; at: number }>()
+let tickerClock = 0
+function renderTicker(): void {
+  for (const s of citySummaries.values()) {
+    if (!s.lastEvent?.text) continue
+    const held = tickerSeen.get(s.id)
+    if (held?.text === s.lastEvent.text) continue
+    tickerSeen.set(s.id, { text: s.lastEvent.text, weight: s.lastEvent.weight ?? 0, at: tickerClock++ })
+  }
+  const rows = [...tickerSeen.entries()]
+    .sort((a, b) => b[1].at - a[1].at)
+    .slice(0, 5)
+  el('worldsTicker').innerHTML = rows.length
+    ? rows
+        .map(
+          ([id, e]) =>
+            `<div class="e"><span class="w">${escapeHtml(settlementLabel(id))}</span>` +
+            `<span class="t">${escapeHtml(e.text)}</span></div>`,
+        )
+        .join('')
+    : '<div class="none">no world has reported an event yet</div>'
 }
 
 /**
@@ -1071,6 +1175,8 @@ function worldsOpen(): boolean {
 function openWorlds(on: boolean): void {
   document.body.classList.toggle('worlds', on)
   el('chunkBtn').textContent = on ? '/earth' : placeName(entry.name)
+  // §69: a generation belongs to one world and /earth is looking at eight
+  el('worldCount').textContent = `${chunks.length} worlds`
   if (!on) {
     orderFrozen = null
     return
@@ -2679,6 +2785,10 @@ interface CitySummary {
   /** §40.6: summed cinematic weight over the recent window — watchability */
   heat?: number
   lastEvent?: { text: string; weight: number }
+  /** §69: the aggregate line's inputs, when the server is new enough to send them */
+  tick?: number
+  eventCount?: number
+  buildings?: number
 }
 const citySummaries = new Map<string, CitySummary>()
 const citySpark = new Map<string, number[]>()
@@ -3733,34 +3843,19 @@ function civHome(opts: { snap?: boolean } = {}): void {
 
 
 /**
- * §49.4, in §67's grammar: first load is boot -> the listing -> one beat ->
- * dive to the busiest world. The stage the map used to hold is the listing's
- * now, and it holds it for the same reason: a stranger should see that there
- * is more than one of these before being put inside one. Once per session — a
- * switch or a refresh mid-visit lands directly in its city, and the intro
- * never traps a returning viewer.
+ * §69: `/earth` is the homepage, and a homepage is a DESTINATION.
+ *
+ * §49.4 held the map for one beat and then dived to the busiest city, which was
+ * right when the map was a transition — nobody wants to be parked on a loading
+ * screen. The listing is not a transition. It holds indefinitely and moves only
+ * when the viewer moves it: arrows, enter, click, `[` `]`. §66.1's dwell rules
+ * then apply inside whichever world they chose.
+ *
+ * The auto-dive is deleted rather than lengthened. A homepage that navigates
+ * away on its own is a homepage a viewer cannot read.
  */
 const bareLoad = !new URLSearchParams(location.search).has('chunk')
 if (bareLoad && !arriving && !sessionStorage.getItem('tf-earth-seen')) {
   sessionStorage.setItem('tf-earth-seen', '1')
   openWorlds(true)
-  void pollSummaries().then(() => {
-    setTimeout(() => {
-      if (!worldsOpen()) return
-      // §40.6: the busiest city is the one with the most watchable work in
-      // it, not the one filing the most paperwork — heat is the summed
-      // cinematic weight of the recent window, and only falls back to the raw
-      // rate for a chunk too old to be serving it
-      let busiest = entry.id
-      let best = -1
-      for (const [id, s] of citySummaries) {
-        const score = s.heat ?? s.activityRate ?? 0
-        if (score > best) {
-          best = score
-          busiest = id
-        }
-      }
-      diveTo(busiest)
-    }, 2600)
-  })
 }

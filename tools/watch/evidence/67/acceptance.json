@@ -9,17 +9,17 @@
     {
       "name": "§66.1 the opening holds the framing for 8-10 s before the first intent",
       "pass": true,
-      "detail": "held 9.0 s from presentation, released 10.4 s after navigation (load included); sampler saw the release at +13.7 s"
+      "detail": "held 9.0 s from presentation, released 10.1 s after navigation (load included); sampler saw the release at +10.8 s"
     },
     {
       "name": "§66.1 and it is genuinely motionless, not merely slow",
       "pass": true,
-      "detail": "worst fabric-corner drift during the hold: 0.0 px"
+      "detail": "worst fabric-corner drift during the hold: 0.5 px"
     },
     {
       "name": "§66.1 that first move is a slow move, not a cut",
       "pass": true,
-      "detail": "7.5 s to \"agent\""
+      "detail": "7.5 s to \"construction\""
     },
     {
       "name": "§66.2 `0` comes home from a bad state and turns ambient OFF",
@@ -39,12 +39,12 @@
     {
       "name": "§67.6 every row carries city, country, generation, diff, meter and working",
       "pass": true,
-      "detail": "{\"id\":\"maasland-dorp\",\"nm\":\"dorp, maasland\",\"cc\":\"nl\",\"gen\":\"g2\",\"diff\":\"44.4%\",\"act\":\"      ▇▇▇▇\",\"wk\":\"2 working\",\"sel\":false}"
+      "detail": "{\"id\":\"tokyo-kyojima\",\"nm\":\"kyojima, tokyo\",\"cc\":\"jp\",\"gen\":\"g1\",\"diff\":\"34.1%\",\"act\":\"       ▇▇▇\",\"wk\":\"13 working\",\"sel\":false}"
     },
     {
       "name": "§67.7 sorted by activity, busiest first",
       "pass": true,
-      "detail": "0.214 > 0.200 > 0.191 > 0.187 > 0.161 > 0.152 > 0.134 > 0.085"
+      "detail": "0.485 > 0.410 > 0.209 > 0.200 > 0.159 > 0.144 > 0.143 > 0.110"
     },
     {
       "name": "§67 the listing is full-frame",
@@ -58,12 +58,12 @@
     {
       "name": "§67.8 arrows move the selection",
       "pass": true,
-      "detail": "0 -> 4"
+      "detail": "0 -> 1"
     },
     {
       "name": "§67.8 enter dives into the selected world",
       "pass": true,
-      "detail": "tokyo-kyojima (wanted tokyo-kyojima)"
+      "detail": "london-deptford (wanted london-deptford)"
     },
     {
       "name": "§67.9 a click dives",
@@ -79,6 +79,31 @@
       "name": "§67.12 the map is deleted, not flagged off",
       "pass": true,
       "detail": "{\"mapView\":false,\"mapMarkers\":false,\"toGlobe\":false,\"mode\":\"city\",\"plateMap\":false,\"bodyGlobe\":false,\"globeEls\":0}"
+    },
+    {
+      "name": "§69.13 a bare load opens /earth and holds — no auto-navigation",
+      "pass": true,
+      "detail": "opened true, still there 18 s later true, url untouched true"
+    },
+    {
+      "name": "§69.14 the status line names the world count, not a generation",
+      "pass": true,
+      "detail": "\"8 worlds\" (gen slot hidden: true)"
+    },
+    {
+      "name": "§69.15 uptime comes from genesis, and is never a page-load counter",
+      "pass": true,
+      "detail": "\"up 1d\""
+    },
+    {
+      "name": "§69.16 the half below the listing is filled",
+      "pass": true,
+      "detail": "premise 304 chars, 5 ticker rows, 447 px tall · 322,429 events · 5,015 buildings standing · 464 agents alive · 15 generations passed · 8/8 worlds answering"
+    },
+    {
+      "name": "§69.17 §68 canary: the batch is inside the fabric box and fills it",
+      "pass": true,
+      "detail": "1.2 m outside, fills 99%"
     }
   ]
 }

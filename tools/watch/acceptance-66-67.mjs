@@ -25,6 +25,15 @@
  *  12. the map is GONE, not hidden: no mapView, no mapMarkers, no toGlobe,
  *      and `plate.mode` is a constant
  *
+ * §69 /earth as the homepage
+ *  13. a bare first load opens /earth and HOLDS — no auto-navigation
+ *  14. the status line names the world count, not a generation
+ *  15. uptime comes from the server's genesis, and reads `—` when the server
+ *      does not report one rather than `0s`
+ *  16. the half below the listing carries the premise, a live aggregate, a
+ *      ticker and the credits
+ *  17. §68's canary: the batch is inside the fabric box and fills it
+ *
  *   node tools/watch/acceptance-66-67.mjs [chunk]
  */
 import { chromium } from 'playwright'
@@ -196,6 +205,12 @@ await page.waitForTimeout(2200)
 const afterZero = await page.evaluate(() => {
   const civ = window.civ
   civ.rig.settle()
+  // settle() places the camera but does not refresh its inverse world matrix,
+  // and `project` reads that. Without this the check reads whatever matrix the
+  // last rendered frame left behind — which, once §66.1 let the director start
+  // taking shots before this block runs, was a close-up pointing elsewhere and
+  // put the city's centre 2.79 off screen.
+  civ.rig.camera.updateMatrixWorld(true)
   const v = new civ.Vector3(civ.plate.city.world[0], civ.plate.groundY, civ.plate.city.world[1]).project(
     civ.rig.camera,
   )
@@ -364,6 +379,77 @@ check(
   !gone.mapView && !gone.mapMarkers && !gone.toGlobe && !gone.plateMap && gone.mode === 'city' && gone.globeEls === 0,
   JSON.stringify(gone),
 )
+
+// ---------------------------------------------------------------------------
+// §69: the homepage
+// ---------------------------------------------------------------------------
+const home = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+home.on('pageerror', (e) => console.log('PAGE EXCEPTION (home)', e.message))
+await home.goto(ORIGIN, { waitUntil: 'domcontentloaded' })
+await home.waitForFunction(() => window.civ != null, null, { timeout: 120000 })
+await home.waitForTimeout(11000)
+const opened = await home.evaluate(() => document.body.classList.contains('worlds'))
+const bareAtFirst = new URL(home.url()).search === ''
+// the whole point: it is a destination, so it must still be here later
+await home.waitForTimeout(18000)
+const held = await home.evaluate(() => document.body.classList.contains('worlds'))
+const bareStill = new URL(home.url()).search === ''
+check(
+  '§69.13 a bare load opens /earth and holds — no auto-navigation',
+  opened && bareAtFirst && held && bareStill,
+  `opened ${opened}, still there 18 s later ${held}, url untouched ${bareStill}`,
+)
+
+const bar = await home.evaluate(() => ({
+  text: document.getElementById('barTop')?.innerText.replace(/\n/g, ' ') ?? '',
+  genShown: !!document.getElementById('genN')?.offsetParent,
+  count: document.getElementById('worldCount')?.textContent ?? '',
+  uptime: document.getElementById('uptime')?.textContent ?? '',
+}))
+check(
+  '§69.14 the status line names the world count, not a generation',
+  !bar.genShown && /^\d+ worlds$/.test(bar.count),
+  `"${bar.count}" (gen slot hidden: ${!bar.genShown})`,
+)
+check(
+  '§69.15 uptime comes from genesis, and is never a page-load counter',
+  /^up (—|\d+[dhms])$/.test(bar.uptime) && bar.uptime !== 'up 0s',
+  `"${bar.uptime}"`,
+)
+
+const below = await home.evaluate(() => ({
+  premise: (document.getElementById('worldsPremise')?.innerText ?? '').trim().length,
+  totals: document.getElementById('worldsTotals')?.innerText ?? '',
+  ticker: document.querySelectorAll('#worldsTicker .e').length,
+  credits: (document.getElementById('worldsCredits')?.innerText ?? '').toLowerCase(),
+  emptyBelowFold: (() => {
+    const b = document.getElementById('worldsBelow')?.getBoundingClientRect()
+    return b ? b.height : 0
+  })(),
+}))
+check(
+  '§69.16 the half below the listing is filled',
+  below.premise > 120 &&
+    /events/.test(below.totals) &&
+    /agents alive/.test(below.totals) &&
+    below.ticker > 0 &&
+    below.credits.includes('openstreetmap') &&
+    below.credits.includes('simulated') &&
+    below.emptyBelowFold > 200,
+  `premise ${below.premise} chars, ${below.ticker} ticker rows, ${below.emptyBelowFold.toFixed(0)} px tall · ${below.totals.replace(/\n/g, ' · ')}`,
+)
+
+const canary = await home.evaluate(() => ({
+  fault: window.civ.plate.batchFault,
+  batch: window.civ.plate.batch,
+}))
+check(
+  '§69.17 §68 canary: the batch is inside the fabric box and fills it',
+  canary.fault === null && (canary.batch?.fills ?? 0) >= 0.6,
+  canary.fault ?? `${canary.batch?.outside} m outside, fills ${((canary.batch?.fills ?? 0) * 100).toFixed(0)}%`,
+)
+await home.screenshot({ path: `${OUT}/earth.png` })
+await home.close()
 
 const failed = results.filter((r) => !r.pass)
 console.log(`\n§66/§67 acceptance: ${results.length - failed.length}/${results.length}`)

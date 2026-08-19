@@ -918,6 +918,45 @@ now refuses to let a real displacement hide behind a passing §65 camera check �
 the class the report suspected cannot recur silently even though this instance
 was not it.
 
+## §21 — §69, and a production deploy skew the homepage made visible
+
+`/earth` became the homepage and three of its four reported faults have one
+root cause between them.
+
+**The client is current; the chunk server is not.** Production's Vercel build
+carries the §67 listing (`worldsList` and `mounting /earth` are both in the
+shipped bundle), and the default branch is the branch being deployed — but the
+Railway server process is still running a build from before §64. Measured off
+the wire and the endpoint rather than inferred:
+
+| field | local server | production server |
+|---|---|---|
+| `/summary` keys | heat, generation, divergenceIndex, lastEvent, working, eventCount, buildings, … | id, country, materialised, tick, agentCount and the fine body only |
+| `hello.uptimeSeconds` | 87802 | **absent** |
+
+So §69's "`gen`, `diff` and `working` render `·` on every row" is not a
+rendering fault: the server does not send those fields. And "`up 0s`" is the
+client's own fault on top of that — `h.uptimeSeconds ?? 0` made ABSENT
+indistinguishable from a world born this instant, so genesis landed on
+`Date.now()` and the readout counted up from page load, which is precisely what
+uptime is not. Absent now reads `up —`.
+
+The client cannot conjure fields a server does not send. What it can do is
+degrade honestly, and it now does: an aggregate figure the servers do not all
+report reads `—` rather than `0`, because a zero is a claim that the world has
+done nothing.
+
+**The fix for the rest is a Railway redeploy**, which is outside this session's
+reach. `eventCount` and `buildings` were added to `/summary` at the same time so
+the aggregate line is complete the moment the server catches up rather than
+needing a second pass.
+
+Worth noting for the deploy runbook: a static client that redeploys per push
+against a long-lived server process that does not is a skew that shows up as
+missing DATA rather than as an error, which is the hardest kind to notice. The
+`/summary` shape is now the cheapest possible check — if `working` is absent,
+the server is behind the client.
+
 ## Carried, not fixed
 
 - ~~UK tier-1 valuations~~ — done (build 10, §33.4): HM Land Registry UK HPI

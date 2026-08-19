@@ -53,7 +53,11 @@ async function measure(chunk) {
    */
   await page
     .waitForFunction(
-      () => window.civ.presence.positions().length > 0 && window.civ.observer.sites().length > 0,
+      () => {
+        const c = window.civ
+        if (!c) return false
+        return [...c.presence.positions()].length > 0 && [...c.observer.sites()].length > 0
+      },
       null,
       { timeout: 90000 },
     )
@@ -168,14 +172,16 @@ async function measure(chunk) {
     }
     // agents come off the wire in chunk-local metres; pointAt is the one
     // conversion the whole client agrees on, so it is what this uses
+    // both of these are GENERATORS, not arrays — spreading them is what the
+    // first pass got wrong, and it reported "none on the wire" on every chunk
     const agents = pts(
-      civ.presence.positions().map((a) => {
+      [...civ.presence.positions()].map((a) => {
         const p = civ.pointAt(a.x, a.y)
         return [p.x, p.z]
       }),
     )
     const sites = pts(
-      civ.observer.sites().map((s) => {
+      [...civ.observer.sites()].map((s) => {
         const p = civ.pointAt(s.footprint[0][0], s.footprint[0][1])
         return [p.x, p.z]
       }),
@@ -198,10 +204,14 @@ async function measure(chunk) {
       groundY: civ.plate.groundY,
       layers: named,
       counts: {
-        agents: civ.presence.positions().length,
-        sites: civ.observer.sites().length,
+        agents: [...civ.presence.positions()].length,
+        sites: [...civ.observer.sites()].length,
       },
       link: document.getElementById('link')?.textContent ?? '',
+      canary: {
+        ...(civ.plate.batch ?? { outside: 0, fills: 0 }),
+        fault: civ.plate.batchFault ?? null,
+      },
     }
   })
 
@@ -230,19 +240,27 @@ for (const chunk of list) {
     console.log(`      ${name.padEnd(22)} x ${JSON.stringify(box.x).padEnd(18)} z ${JSON.stringify(box.z)}`)
   }
   console.log(`      link ${m.link} · ${JSON.stringify(m.counts)}`)
-  if (b) {
-    const dx = Math.max(Math.abs(b.x[0] - f.x[0]), Math.abs(b.x[1] - f.x[1]))
-    const dz = Math.max(Math.abs(b.z[0] - f.z[0]), Math.abs(b.z[1] - f.z[1]))
-    const agree = dx <= 6 && dz <= 6
-    verdicts.push({ chunk, dx, dz, agree })
-    console.log(`  => batch vs fabric: worst edge disagreement ${dx.toFixed(1)} m in x, ${dz.toFixed(1)} m in z — ${agree ? 'AGREE' : 'DISAGREE'}`)
-  }
+  /**
+   * The verdict is the client's own §68 canary, not a second opinion computed
+   * here. A harness that re-derives the check can pass while the product's
+   * check is broken, which is the drift §21.4 exists to prevent.
+   */
+  const v = m.canary
+  verdicts.push({ chunk, ...v })
+  console.log(
+    `  => batch vs fabric: ${v.outside.toFixed(1)} m of the batch outside the box, ` +
+      `fills ${(v.fills * 100).toFixed(0)}% of it — ${v.fault ? 'DISAGREE' : 'AGREE'}`,
+  )
+  if (v.fault) console.log(`     ${v.fault}`)
 }
 
-console.log('\n§68 summary')
+console.log('\n§68 summary — the client\'s own canary, per chunk')
 for (const v of verdicts) {
-  console.log(`  ${v.agree ? 'ok  ' : 'FAIL'} ${v.chunk.padEnd(22)} dx ${v.dx.toFixed(1)} m  dz ${v.dz.toFixed(1)} m`)
+  console.log(
+    `  ${v.fault ? 'FAIL' : 'ok  '} ${v.chunk.padEnd(22)} ` +
+      `${v.outside.toFixed(1)} m outside  fills ${(v.fills * 100).toFixed(0)}%`,
+  )
 }
 await writeFile(`${OUT}/frames.json`, JSON.stringify(all, null, 2))
 await browser.close()
-process.exit(verdicts.every((v) => v.agree) ? 0 : 1)
+process.exit(verdicts.every((v) => !v.fault) ? 0 : 1)

@@ -288,6 +288,17 @@ function summaryOfChunk(host: ChunkHost): Record<string, unknown> {
     // status line makes for the connected chunk
     generation: host.world.sim.generation,
     divergenceIndex: host.world.sim.report.index,
+    /**
+     * §69: the aggregate line on `/earth` sums these across every world. They
+     * are already computed for the connected chunk's readouts; the listing has
+     * no socket to the other seven, so they ride the summary too.
+     */
+    eventCount: host.world.readouts().eventCount,
+    buildings: (() => {
+      let standing = 0
+      for (const b of host.world.sim.world.buildings.values()) if (b.state === 'standing') standing++
+      return standing
+    })(),
     lastEvent: top
       ? {
           text: `${author ? `${author.toLowerCase()} ` : ''}${top.rationale ?? top.type.replace(/_/g, ' ')}`,
