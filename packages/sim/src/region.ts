@@ -48,6 +48,8 @@ export interface SettlementInfo {
 export interface RegionalSummary extends SettlementInfo {
   materialised: boolean
   agentCount: number
+  /** §67: how many are building or demolishing right now */
+  working: number
   medianLandValue: number
   vacancyShare: number
   /** applied actions per 1k decisions attributed here, rolling */
@@ -69,6 +71,13 @@ export interface RegionalSummary extends SettlementInfo {
 
 export interface RegionMigration {
   agentId: string
+  /**
+   * §67: who moved. The id alone was enough while migration was a glowing arc
+   * between two marks; the world listing writes the move as a sentence — "ada
+   * left deptford for maasland" — and a sentence needs a person in it. The
+   * name is already in hand at the departure, it was simply not recorded.
+   */
+  agentName: string
   fromChunk: string
   toSettlement: string
   departedTick: number
@@ -177,6 +186,15 @@ function median(xs: number[]): number {
 /** the fine-side body of a RegionalSummary — what only a live sim can know */
 export interface FineSummary {
   agentCount: number
+  /**
+   * §67: how many of them are physically doing something right now, which is
+   * the one thing the world listing asks that a headcount cannot answer — a
+   * chunk with 58 agents and none of them building is a still photograph.
+   * The same two activities the §59.2 crew pane calls "working", counted here
+   * so every world's number is derived identically rather than only for the
+   * chunk this client happens to be connected to.
+   */
+  working: number
   medianLandValue: number
   vacancyShare: number
   activityRate: number
@@ -211,13 +229,16 @@ export function fineSummaryOf(w: World): FineSummary {
     yields.push((b.yieldPerTick * SUMMARY_RATE_YEAR) / price)
   }
   let agentCount = 0
+  let working = 0
   for (const a of w.agents.values())
     if (!a.diedTick) {
       capital += a.capital
       agentCount++
+      if (a.activity === 'building' || a.activity === 'demolishing') working++
     }
   return {
     agentCount,
+    working,
     medianLandValue: median(values),
     vacancyShare: total ? vacant / total : 0,
     activityRate: w.decisionsIssued > 0 ? w.appliedActions / w.decisionsIssued : 0,
@@ -312,6 +333,7 @@ export class RegionWorld {
       ...info,
       materialised: active,
       agentCount: 0,
+      working: 0,
       medianLandValue: 0,
       vacancyShare: 0,
       activityRate: 0,
@@ -423,6 +445,7 @@ export class RegionWorld {
       )
       const migration: RegionMigration = {
         agentId: agent.id,
+        agentName: departed.name,
         fromChunk: fromId,
         toSettlement: toId,
         departedTick: w.tick,

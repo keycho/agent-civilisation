@@ -69,6 +69,64 @@ export class CameraDirector {
   /** ambient mode: the director drives unless the user is touching the camera */
   enabled = true
 
+  /**
+   * §66.1: the opening. A viewer needs to SEE the city before being taken into
+   * it, so the first load holds the whole-plate framing motionless and the
+   * director is not allowed an intent until the dwell is up. Production dived
+   * to street level 29 seconds after first load, which teaches a stranger that
+   * this is a camera flying around rather than a place they are looking at.
+   *
+   * And the first move out of the dwell is SLOW — twice a normal shot's
+   * duration — because the transition is what teaches that the camera travels
+   * rather than cuts. Every intent after it behaves as before.
+   */
+  /**
+   * WALL CLOCK, not accumulated dt.
+   *
+   * The dwell was first written as a countdown fed by the render loop's delta,
+   * which is clamped to 50 ms so that a stalled tab cannot teleport every
+   * animation on resume. That clamp turns any dt-driven timer into a count of
+   * RENDERED FRAMES: measured under software GL the nine-second dwell burned
+   * 0.6 s of its budget in fourteen seconds of wall clock, and would have run
+   * for minutes. The dwell is a promise to a person about how long they get to
+   * look at the city, so it is measured the way that person measures it. Every
+   * other timer here is about pacing shots against the animation and correctly
+   * stays on dt.
+   */
+  private dwellUntil = 0
+  private firstMovePending = false
+
+  private dwellFrom = 0
+
+  /** hold the framed view for `seconds`, then let the first intent be slow */
+  openWith(seconds: number): void {
+    this.dwellFrom = performance.now()
+    this.dwellUntil = this.dwellFrom + seconds * 1000
+    this.firstMovePending = true
+  }
+
+  /** §66.1: is the opening dwell still running? for the harness and the ui */
+  get dwelling(): boolean {
+    return performance.now() < this.dwellUntil
+  }
+
+  /**
+   * §66.1: when the dwell ends, on the page's own performance timeline.
+   * The acceptance asserts against this rather than against "seconds since the
+   * harness noticed the page was live", which is a different and later origin.
+   */
+  get dwellEndsAt(): number {
+    return this.dwellUntil
+  }
+
+  /** §66.1: when the framing was presented and the hold began */
+  get dwellStartedAt(): number {
+    return this.dwellFrom
+  }
+
+  /** §66.1: the last move the director issued — what it was and how slow */
+  lastMove: { at: number; duration: number; slow: boolean; label: string } | null = null
+
   private readonly rig: CameraRig
   private readonly hooks: DirectorHooks
 
@@ -121,6 +179,14 @@ export class CameraDirector {
     }
     if (!this.enabled) return
 
+    // §66.1: the opening dwell. Nothing is queued, nothing cuts, the camera
+    // does not move — the city is simply on screen, whole, for long enough to
+    // be read.
+    if (this.dwelling) {
+      this.queue.length = 0
+      return
+    }
+
     this.shotElapsed += dt
 
     const canCut = this.shotElapsed >= MIN_SHOT_S
@@ -130,10 +196,21 @@ export class CameraDirector {
       if (next) {
         this.current = next
         this.shotElapsed = 0
+        // §66.1: the move out of the opening is slow, so the first thing the
+        // camera does in front of a stranger is travel rather than cut
+        const slow = this.firstMovePending
+        this.firstMovePending = false
+        const duration = slow ? 7.5 : 3.2
+        // §66.1: what the director actually did, for the acceptance harness.
+        // Asserting the SHOT rather than sampling the camera's wall-clock
+        // travel matters because shot pacing runs on the render loop's dt,
+        // which is clamped — under a software renderer the sampled version
+        // measures the frame rate rather than the decision.
+        this.lastMove = { at: performance.now(), duration, slow, label: next.label }
         this.rig.flyTo(next.target, next.distance, {
-          azimuth: this.rig.azimuth + 0.55,
+          azimuth: this.rig.azimuth + (slow ? 0.28 : 0.55),
           polar: next.polar,
-          duration: 3.2,
+          duration,
         })
         this.hooks.onShot?.(next.label, next.intent)
       } else if (mustCut) {

@@ -102,6 +102,8 @@ export const REGION_RULES = { boundaryGate: true, minOwnableShare: 0.97 } as con
 
 export interface MigrationEvent {
   agentId: string
+  /** §67: who moved, so the world listing can write the move as a sentence */
+  agentName: string
   fromChunk: string
   toSettlement: string
   departedTick: number

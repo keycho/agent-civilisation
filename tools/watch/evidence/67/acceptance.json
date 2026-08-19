@@ -1,0 +1,84 @@
+{
+  "chunk": "schiedam-havens",
+  "results": [
+    {
+      "name": "§67.5 boot reads `mounting /earth · N worlds attached`",
+      "pass": true,
+      "detail": "\"mounting /earth · 8 worlds attached\""
+    },
+    {
+      "name": "§66.1 the opening holds the framing for 8-10 s before the first intent",
+      "pass": true,
+      "detail": "held 9.0 s from presentation, released 10.4 s after navigation (load included); sampler saw the release at +13.7 s"
+    },
+    {
+      "name": "§66.1 and it is genuinely motionless, not merely slow",
+      "pass": true,
+      "detail": "worst fabric-corner drift during the hold: 0.0 px"
+    },
+    {
+      "name": "§66.1 that first move is a slow move, not a cut",
+      "pass": true,
+      "detail": "7.5 s to \"agent\""
+    },
+    {
+      "name": "§66.2 `0` comes home from a bad state and turns ambient OFF",
+      "pass": true,
+      "detail": "ambient off, d=1980, centroid 0.000 off centre"
+    },
+    {
+      "name": "§66.2 pointer input turns ambient off and it does not re-arm",
+      "pass": true,
+      "detail": "off after drag: true; still off 9 s later: true"
+    },
+    {
+      "name": "§67.6 one row per mounted world",
+      "pass": true,
+      "detail": "8 rows for 8 chunks"
+    },
+    {
+      "name": "§67.6 every row carries city, country, generation, diff, meter and working",
+      "pass": true,
+      "detail": "{\"id\":\"maasland-dorp\",\"nm\":\"dorp, maasland\",\"cc\":\"nl\",\"gen\":\"g2\",\"diff\":\"44.4%\",\"act\":\"      ▇▇▇▇\",\"wk\":\"2 working\",\"sel\":false}"
+    },
+    {
+      "name": "§67.7 sorted by activity, busiest first",
+      "pass": true,
+      "detail": "0.214 > 0.200 > 0.191 > 0.187 > 0.161 > 0.152 > 0.134 > 0.085"
+    },
+    {
+      "name": "§67 the listing is full-frame",
+      "pass": true
+    },
+    {
+      "name": "§67.11 the migration line names a person, an origin and a destination",
+      "pass": true,
+      "detail": "\"roosmarijn left maassluis for deptford riverside\""
+    },
+    {
+      "name": "§67.8 arrows move the selection",
+      "pass": true,
+      "detail": "0 -> 4"
+    },
+    {
+      "name": "§67.8 enter dives into the selected world",
+      "pass": true,
+      "detail": "tokyo-kyojima (wanted tokyo-kyojima)"
+    },
+    {
+      "name": "§67.9 a click dives",
+      "pass": true,
+      "detail": "schiedam-havens (wanted schiedam-havens)"
+    },
+    {
+      "name": "§67.10 `[` `]` still cycle",
+      "pass": true,
+      "detail": "schiedam-havens -> london-deptford"
+    },
+    {
+      "name": "§67.12 the map is deleted, not flagged off",
+      "pass": true,
+      "detail": "{\"mapView\":false,\"mapMarkers\":false,\"toGlobe\":false,\"mode\":\"city\",\"plateMap\":false,\"bodyGlobe\":false,\"globeEls\":0}"
+    }
+  ]
+}

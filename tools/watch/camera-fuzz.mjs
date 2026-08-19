@@ -26,10 +26,37 @@ const OUT = 'tools/watch/evidence/62'
 const ORIGIN = process.env.CIV_ORIGIN ?? 'http://127.0.0.1:5173'
 const SERVER = process.env.CIV_SERVER ?? `ws://127.0.0.1:8820/ws/${CHUNK}`
 
-/** the plate must never cover less of the frame than this, at any instant */
-const MIN_ON = 0.04
-/** after `0`, the plate's centroid must land this close to screen centre */
-const HOME_RADIUS = 0.12
+/**
+ * §66.3: the bars measure FRAMED, not "not lost".
+ *
+ * 4% was a floor against losing the city, and a frame with 4% of it in shot is
+ * a frame nobody would post. These are what a composed shot looks like: the
+ * fabric filling nearly half the frame under free camera, more than half at
+ * the home framing, and its centroid close enough to the middle that the shot
+ * reads as being ABOUT the city rather than containing it.
+ *
+ * REVISED after the first contact sheet, which is what the contact sheet is
+ * for. Raising the floor to 40% passed, and three of the ten frames were
+ * unpostable: an empty yard with one silo, a flat roof plane, and the lens
+ * pressed into a window wall. The number had gone up and still meant "not
+ * lost", because coverage counted any ray landing inside the fabric's BOUNDING
+ * BOX — bare ground included, the inside of a building included. It is now
+ * counted against the built grid, so an empty yard scores what it looks like.
+ */
+const MIN_ON = 0.4
+/**
+ * §66.3, third pass: the floor on how much of the frame is BUILDING.
+ *
+ * Set by measuring the sheet rather than chosen: the frames a person would post
+ * and the frames they would not separate cleanly on this number where the tile
+ * score does not separate them at all. Reported beside the tile score on every
+ * run so the two can be seen to disagree when they do.
+ */
+const MIN_BUILT = Number(process.env.CIV_MIN_BUILT ?? 0.12)
+/** the home framing is a portrait of the city, and has to be filled by it */
+const HOME_MIN_ON = 0.6
+/** after `0`, the fabric's centroid must land this close to screen centre */
+const HOME_RADIUS = 0.05
 
 await mkdir(OUT, { recursive: true })
 
@@ -62,72 +89,168 @@ await page.waitForTimeout(9000)
 // the per-frame sampler, installed in the page
 // ---------------------------------------------------------------------------
 await page.evaluate(
-  ({ minOn }) => {
+  ({ minOn, minBuilt }) => {
     const civ = window.civ
-    const V = civ.Vector3
-    // §57.4 lets a zoom-out past the city's maximum hand over to the flat map,
-    // which is product behaviour and not a violation — so the assertion is
-    // against whichever plate is on screen. Both must stay findable.
+
     /**
-     * §65: the box asserted against is the CITY's measured fabric, not the
-     * plate mesh. Framing the mesh was the older claim and it is weaker — a
-     * viewer can have the plate on screen and the city off it.
+     * §66.3: how much of the FRAME has city in it.
+     *
+     * Cast a grid of rays at the ground plane and ask what they land on. The
+     * obvious version (project the four plate corners, intersect the boxes) is
+     * wrong at street zoom and said so loudly: at 40 m with the camera looking
+     * down at a corner, two plate corners fall behind the near plane, their
+     * projections mirror, the box collapses and the metric reports 0% of a
+     * frame that is entirely city. Rays never have that problem — one that
+     * points at the sky simply misses.
+     *
+     * What a ray landing COUNTS AS is the §66.3 correction. Landing inside the
+     * fabric's bounding box is not landing on city: schiedam's port district
+     * is largely yard and water, and the frame the sheet caught was bare olive
+     * ground with a single silo on it, scoring 100%. So a ray counts when
+     * something stands where it lands.
+     *
+     * And it is scored by TILE, not by ray. Counting built rays would measure
+     * the city's density — a low number in an open dock and a high one in a
+     * terrace — when the question is whether the frame is FULL of city. A tile
+     * counts when any ray in it finds something standing, so a well-composed
+     * wide shot of a sparse district scores what it looks like: full.
      */
-    const plateNow = () => {
-      if (civ.plate.mode === 'city') {
-        const c = civ.plate.city
-        return {
-          y: civ.plate.groundY,
-          centre: { x: c.world[0], z: c.world[1] },
-          half: { x: c.half[0], z: c.half[1] },
-        }
-      }
-      const { halfWidth: x, halfHeight: z } = civ.plate.map
-      return { y: 0, centre: { x: 0, z: 0 }, half: { x, z } }
-    }
-    window.__fuzz = { worst: 1, violations: [], frames: 0, modeFlips: 0 }
-    let lastMode = civ.plate.mode
-    const tick = () => {
+    const TILES = 6
+    const PER = 4
+    window.__coverage = () => {
       const cam = civ.rig.camera
       cam.updateMatrixWorld(true)
+      const map = civ.plate.mode !== 'city'
+      const groundY = map ? 0 : civ.plate.groundY
+      const half = map
+        ? { x: civ.plate.map.halfWidth, z: civ.plate.map.halfHeight }
+        : { x: civ.plate.city.half[0], z: civ.plate.city.half[1] }
+      const centre = map ? { x: 0, z: 0 } : { x: civ.plate.city.world[0], z: civ.plate.city.world[1] }
+      // ray directions are bilinear in NDC before normalisation, so the basis
+      // is lifted once rather than unprojecting a Vector3 per sample
+      const e = cam.matrixWorld.elements
+      const th = Math.tan((cam.fov * Math.PI) / 360)
+      const tw = th * cam.aspect
+      const px = cam.position.x
+      const py = cam.position.y
+      const pz = cam.position.z
+      let on = 0
+      for (let ty = 0; ty < TILES; ty++) {
+        for (let tx = 0; tx < TILES; tx++) {
+          let found = false
+          for (let sy = 0; sy < PER && !found; sy++) {
+            for (let sx = 0; sx < PER && !found; sx++) {
+              const u = ((tx * PER + sx + 0.5) / (TILES * PER)) * 2 - 1
+              const v = ((ty * PER + sy + 0.5) / (TILES * PER)) * 2 - 1
+              const a = u * tw
+              const b = v * th
+              const dx = -e[8] + a * e[0] + b * e[4]
+              const dy = -e[9] + a * e[1] + b * e[5]
+              const dz = -e[10] + a * e[2] + b * e[6]
+              if (Math.abs(dy) < 1e-9) continue
+              const t = (groundY - py) / dy
+              if (t <= 0) continue
+              const gx = px + dx * t
+              const gz = pz + dz * t
+              if (Math.abs(gx - centre.x) > half.x || Math.abs(gz - centre.z) > half.z) continue
+              // the map plate is uniformly the thing; the city has to be built on
+              if (map || civ.plate.builtAt(gx, gz)) found = true
+            }
+          }
+          if (found) on++
+        }
+      }
+      return on / (TILES * TILES)
+    }
+
+    /**
+     * §66.3, third pass: how much of the frame is BUILDING.
+     *
+     * The tile score above answers "is the frame full of city" and it is the
+     * right answer to that question, but the second contact sheet showed it is
+     * not the whole question. A dock at street distance lights up most tiles —
+     * there IS something standing in each of them — and still photographs as an
+     * empty olive yard with a silo in it. What the eye is actually judging is
+     * how much of the picture is occupied by buildings, and that is a different
+     * quantity from how much of the ground under the picture is built on.
+     *
+     * So: march each ray against the built grid as a heightfield and ask
+     * whether it meets a wall or a roof. That is the screen area of standing
+     * geometry, which is the thing being looked at. No pixels are read — the
+     * context does not preserve its drawing buffer (§63 found that the hard
+     * way) — and none are needed, because the grid already knows the shape.
+     */
+    const MARCH = 12
+    window.__buildingCover = () => {
+      const cam = civ.rig.camera
+      cam.updateMatrixWorld(true)
+      const e = cam.matrixWorld.elements
+      const th = Math.tan((cam.fov * Math.PI) / 360)
+      const tw = th * cam.aspect
+      const px = cam.position.x
+      const py = cam.position.y
+      const pz = cam.position.z
+      const roof = civ.plate.roofAt
+      const ceiling = civ.plate.tallest
+      const step = Math.max(2, civ.rig.distance * 0.012)
+      let hit = 0
+      let total = 0
+      for (let iy = 0; iy < MARCH; iy++) {
+        for (let ix = 0; ix < MARCH; ix++) {
+          total++
+          const a = (((ix + 0.5) / MARCH) * 2 - 1) * tw
+          const b = (((iy + 0.5) / MARCH) * 2 - 1) * th
+          let dx = -e[8] + a * e[0] + b * e[4]
+          let dy = -e[9] + a * e[1] + b * e[5]
+          let dz = -e[10] + a * e[2] + b * e[6]
+          const len = Math.hypot(dx, dy, dz)
+          dx /= len
+          dy /= len
+          dz /= len
+          for (let s = 1; s <= 260; s++) {
+            const t = s * step
+            const y = py + dy * t
+            // above everything and still climbing: this ray is sky
+            if (y > ceiling && dy > 0) break
+            // under the ground the whole fabric stands on: it has passed all of it
+            if (y < civ.plate.groundY - 2) break
+            if (y < roof(px + dx * t, pz + dz * t)) {
+              hit++
+              break
+            }
+          }
+        }
+      }
+      return hit / total
+    }
+
+    window.__fuzz = {
+      worst: 1,
+      violations: [],
+      frames: 0,
+      modeFlips: 0,
+      worstClearance: Infinity,
+      worstBuilt: 1,
+    }
+    let lastMode = civ.plate.mode
+    const tick = () => {
       if (civ.plate.mode !== lastMode) {
         lastMode = civ.plate.mode
         window.__fuzz.modeFlips++
         requestAnimationFrame(tick)
         return // the transition itself flies; judge it once it has landed
       }
-      const { y: groundY, half, centre } = plateNow()
-      /**
-       * How much of the FRAME is city — measured by casting a grid of viewport
-       * samples at the ground plane and asking which land on the plate.
-       *
-       * The obvious version (project the four plate corners, intersect the
-       * boxes) is wrong at street zoom and said so loudly: at 40 m with the
-       * camera looking down at a corner, two plate corners fall behind the
-       * near plane, their projections mirror, the box collapses and the metric
-       * reports 0% of a frame that is entirely city. Rays never have that
-       * problem — one that points at the sky simply misses.
-       */
-      let hit = 0
-      let total = 0
-      for (let iy = 0; iy < 13; iy++) {
-        for (let ix = 0; ix < 13; ix++) {
-          total++
-          const ndc = new V((ix / 6) - 1, (iy / 6) - 1, 0.5).unproject(cam)
-          const dir = ndc.sub(cam.position)
-          if (Math.abs(dir.y) < 1e-6) continue
-          const t = (groundY - cam.position.y) / dir.y
-          if (t <= 0) continue
-          const gx = cam.position.x + dir.x * t
-          const gz = cam.position.z + dir.z * t
-          if (Math.abs(gx - centre.x) <= half.x && Math.abs(gz - centre.z) <= half.z) hit++
-        }
-      }
-      const onScreen = hit / total
+      const onScreen = window.__coverage()
+      const built = window.__buildingCover()
       window.__fuzz.frames++
       if (onScreen < window.__fuzz.worst) window.__fuzz.worst = onScreen
+      if (built < window.__fuzz.worstBuilt) window.__fuzz.worstBuilt = built
+      const clear = civ.rig.eyeClearance()
+      if (clear < window.__fuzz.worstClearance) window.__fuzz.worstClearance = clear
+      // §66.3's second finding rides `outOfBounds`, which now reports the eye
       const bad = civ.rig.outOfBounds()
-      if (onScreen < minOn) bad.push(`plate covers ${(onScreen * 100).toFixed(2)}% of the frame`)
+      if (onScreen < minOn) bad.push(`city fills ${(onScreen * 100).toFixed(2)}% of the frame`)
+      if (built < minBuilt) bad.push(`buildings cover ${(built * 100).toFixed(2)}% of the frame`)
       if (bad.length && window.__fuzz.violations.length < 12) {
         window.__fuzz.violations.push({
           at: window.__fuzz.frames,
@@ -141,10 +264,17 @@ await page.evaluate(
     }
     requestAnimationFrame(tick)
     window.__fuzzReset = () => {
-      window.__fuzz = { worst: 1, violations: [], frames: 0, modeFlips: 0 }
+      window.__fuzz = {
+      worst: 1,
+      violations: [],
+      frames: 0,
+      modeFlips: 0,
+      worstClearance: Infinity,
+      worstBuilt: 1,
+    }
     }
   },
-  { minOn: MIN_ON },
+  { minOn: MIN_ON, minBuilt: MIN_BUILT },
 )
 
 // ---------------------------------------------------------------------------
@@ -177,16 +307,41 @@ const failures = []
 let worstOverall = 1
 let totalFrames = 0
 let modeFlips = 0
+let worstClearance = Infinity
+let worstBuilt = 1
+
+await mkdir(`${OUT}/contact`, { recursive: true })
+const sheet = []
 
 for (let s = 0; s < SEQUENCES; s++) {
   await page.evaluate(() => window.__fuzzReset())
   const inputs = []
   const steps = 4 + Math.floor(rnd() * 5)
+  /**
+   * §66.3: one frame per sequence, at a random step inside it, for the contact
+   * sheet. The numbers can only say a frame is not broken; ten frames a person
+   * looks at say whether it is a frame you would post, which is the thing the
+   * numbers were failing to measure.
+   */
+  const snapAt = Math.floor(rnd() * steps)
   for (let i = 0; i < steps; i++) {
     const kind = pick(['orbit', 'pan', 'pan', 'wheel', 'orbit'])
     if (kind === 'wheel') inputs.push(await wheel(between(-2400, 2400)))
     else inputs.push(await drag(kind, between(-900, 900), between(-600, 600)))
     await page.waitForTimeout(140)
+    if (i === snapAt) {
+      await page.waitForTimeout(900)
+      const shot = `${OUT}/contact/seq-${String(s).padStart(2, '0')}.png`
+      await page.screenshot({ path: shot })
+      const [tiles, built] = await page.evaluate(() => [window.__coverage(), window.__buildingCover()])
+      sheet.push({
+        file: `contact/seq-${String(s).padStart(2, '0')}.png`,
+        sequence: s,
+        step: i,
+        tiles,
+        built,
+      })
+    }
   }
   // let the damping finish moving wherever the inputs sent it
   await page.waitForTimeout(1600)
@@ -194,6 +349,8 @@ for (let s = 0; s < SEQUENCES; s++) {
   totalFrames += r.frames
   modeFlips += r.modeFlips
   worstOverall = Math.min(worstOverall, r.worst)
+  worstBuilt = Math.min(worstBuilt, r.worstBuilt)
+  worstClearance = Math.min(worstClearance, r.worstClearance)
   if (r.violations.length) {
     failures.push({ sequence: s, seed: SEED, inputs, worst: r.worst, violations: r.violations })
     console.log(
@@ -210,8 +367,17 @@ console.log(
   `\n§62.2 interactive fuzz — ${SEQUENCES} sequences, ${totalFrames} frames asserted, seed ${SEED}`,
 )
 console.log(
-  `  worst plate coverage at any instant: ${(worstOverall * 100).toFixed(2)}% ` +
+  `  worst city coverage at any instant: ${(worstOverall * 100).toFixed(2)}% ` +
     `(floor ${(MIN_ON * 100).toFixed(0)}%)`,
+)
+console.log(
+  `  worst building area in frame:       ${(worstBuilt * 100).toFixed(2)}% ` +
+    `(floor ${(MIN_BUILT * 100).toFixed(0)}%)`,
+)
+console.log(
+  `  least eye headroom over the roofline: ${
+    Number.isFinite(worstClearance) ? `${worstClearance.toFixed(1)} m` : 'open ground throughout'
+  }`,
 )
 console.log(`  sequences with a violating frame: ${failures.length}/${SEQUENCES}`)
 console.log(`  §57.4 city<->map handovers seen: ${modeFlips}`)
@@ -262,7 +428,14 @@ const home = await page.evaluate(() => {
 })
 await page.screenshot({ path: `${OUT}/b-after-zero.png` })
 
-const homeOk = home.offCentre <= HOME_RADIUS
+/**
+ * §66.3: the home framing is a portrait. Measured with the SAME function the
+ * per-frame sampler uses, so "60% of the frame is city" means the same thing in
+ * both places — a second copy of the measurement here was how the two could
+ * have drifted into disagreeing about what was being asserted.
+ */
+const homeCover = await page.evaluate(() => window.__coverage())
+const homeOk = home.offCentre <= HOME_RADIUS && homeCover >= HOME_MIN_ON
 console.log(`\n§62.4 \`0\` from a deliberately bad state`)
 console.log(
   `  before: ${bad.mode} d=${bad.d} polar=${bad.polar} azimuth=${bad.azimuth} target=(${bad.target.join(', ')})`,
@@ -273,15 +446,74 @@ console.log(
   )})`,
 )
 console.log(
-  `  ${homeOk ? 'PASS' : 'FAIL'}  plate centroid ${home.offCentre.toFixed(
+  `  ${homeOk ? 'PASS' : 'FAIL'}  fabric centroid ${home.offCentre.toFixed(
     4,
-  )} from screen centre (radius ${HOME_RADIUS})`,
+  )} from screen centre (radius ${HOME_RADIUS}), fills ${(homeCover * 100).toFixed(
+    1,
+  )}% of the frame (floor ${(HOME_MIN_ON * 100).toFixed(0)}%)`,
 )
+
+/**
+ * §66.3: the contact sheet, as one image.
+ *
+ * Ten frames pulled at random moments out of the fuzz sequences, tiled and
+ * shot in one pass. No image library is needed for this and none is available:
+ * a page that lays the files out in a grid and a screenshot of that page IS
+ * the composite. The point of it is the one thing the numbers cannot do — if a
+ * tile looks like a frame you would not post, the numbers are still measuring
+ * the wrong thing.
+ */
+if (sheet.length) {
+  const tiles = sheet
+    .slice(0, 10)
+    .map(
+      (t) =>
+        `<figure><img src="${t.file}"><figcaption>seq ${t.sequence} · ${(t.tiles * 100).toFixed(0)}% city · ` +
+        `<b>${(t.built * 100).toFixed(0)}% building</b></figcaption></figure>`,
+    )
+    .join('')
+  await writeFile(
+    `${OUT}/contact-sheet.html`,
+    `<!doctype html><meta charset="utf-8"><style>
+      body{margin:0;background:#0d0c0a;color:#8a8069;
+        font:11px ui-monospace,Menlo,monospace;text-transform:lowercase}
+      h1{font-size:11px;color:#e2a54f;font-weight:400;padding:10px 12px 0;margin:0}
+      .g{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;padding:10px 12px}
+      figure{margin:0}
+      img{width:100%;display:block;border:1px solid #2a2620}
+      figcaption{padding-top:3px}
+      figcaption b{color:#e2a54f;font-weight:400}
+     </style><h1>§66.3 contact sheet — seed ${SEED}, ${sheet.length} frames from ${SEQUENCES} sequences</h1>
+     <div class="g">${tiles}</div>`,
+  )
+  const sheetPage = await browser.newPage({ viewport: { width: 1400, height: 700 } })
+  await sheetPage.goto(`file://${process.cwd()}/${OUT}/contact-sheet.html`, {
+    waitUntil: 'networkidle',
+  })
+  await sheetPage.screenshot({ path: `${OUT}/contact-sheet.png`, fullPage: true })
+  await sheetPage.close()
+  console.log(`\n  contact sheet: ${OUT}/contact-sheet.png (${sheet.length} frames)`)
+}
 
 await writeFile(
   `${OUT}/fuzz.json`,
   JSON.stringify(
-    { seed: SEED, sequences: SEQUENCES, totalFrames, worstOverall, modeFlips, failures, bad, home, homeOk },
+    {
+      seed: SEED,
+      sequences: SEQUENCES,
+      totalFrames,
+      worstOverall,
+      worstBuilt,
+      worstClearance,
+      modeFlips,
+      bars: { MIN_ON, MIN_BUILT, HOME_MIN_ON, HOME_RADIUS },
+      failures,
+      bad,
+      home,
+      homeCover,
+      homeOk,
+      sheet,
+    },
     null,
     2,
   ),

@@ -1,25 +1,31 @@
 {
-  "seed": 29,
-  "sequences": 6,
-  "totalFrames": 299,
-  "worstOverall": 0.1301775147928994,
+  "seed": 5,
+  "sequences": 10,
+  "totalFrames": 680,
+  "worstOverall": 0.5555555555555556,
+  "worstClearance": 0,
   "modeFlips": 0,
+  "bars": {
+    "MIN_ON": 0.4,
+    "HOME_MIN_ON": 0.6,
+    "HOME_RADIUS": 0.05
+  },
   "failures": [],
   "bad": {
     "mode": "city",
-    "d": 40,
-    "polar": 1.312,
+    "d": 41,
+    "polar": 1.05,
     "target": [
-      194.8,
-      -93.2
+      113.4,
+      -233.8
     ],
-    "azimuth": -0.13,
-    "coverage": 0.7692307692307693
+    "azimuth": -1.224,
+    "coverage": 0.5555555555555556
   },
   "home": {
     "mode": "city",
-    "offCentre": 0.03683714187558269,
-    "d": 2237,
+    "offCentre": 0.041593855375786894,
+    "d": 1980,
     "polar": 0.66,
     "azimuth": 0,
     "target": [
@@ -27,5 +33,58 @@
       12.5
     ]
   },
-  "homeOk": true
+  "homeCover": 0.7777777777777778,
+  "homeOk": true,
+  "sheet": [
+    {
+      "file": "contact/seq-00.png",
+      "sequence": 0,
+      "step": 3
+    },
+    {
+      "file": "contact/seq-01.png",
+      "sequence": 1,
+      "step": 2
+    },
+    {
+      "file": "contact/seq-02.png",
+      "sequence": 2,
+      "step": 1
+    },
+    {
+      "file": "contact/seq-03.png",
+      "sequence": 3,
+      "step": 2
+    },
+    {
+      "file": "contact/seq-04.png",
+      "sequence": 4,
+      "step": 2
+    },
+    {
+      "file": "contact/seq-05.png",
+      "sequence": 5,
+      "step": 2
+    },
+    {
+      "file": "contact/seq-06.png",
+      "sequence": 6,
+      "step": 0
+    },
+    {
+      "file": "contact/seq-07.png",
+      "sequence": 7,
+      "step": 6
+    },
+    {
+      "file": "contact/seq-08.png",
+      "sequence": 8,
+      "step": 6
+    },
+    {
+      "file": "contact/seq-09.png",
+      "sequence": 9,
+      "step": 3
+    }
+  ]
 }

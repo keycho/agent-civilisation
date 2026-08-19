@@ -107,6 +107,7 @@ for (const [id, info] of roster.info) {
 
 const migrations: MigrationEvent[] = region.migrations.map((m) => ({
   agentId: m.agentId,
+  agentName: m.agentName,
   fromChunk: m.fromChunk,
   toSettlement: m.toSettlement,
   departedTick: m.departedTick,

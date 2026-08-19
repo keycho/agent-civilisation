@@ -673,6 +673,104 @@ and the local-to-world transform is exact (`local (192.29, 245.69)` renders at
 `world (192.3, -245.7)`). A readout over apparently empty ground is a site
 being CLEARED, which is what the feed line beside it says.
 
+## §16 — §66.3, where "framed" was still measuring "not lost"
+
+The §66.3 bars were raised from a 4% free-camera coverage floor to 40%, plus a
+60% floor on the home framing and a 5%-of-screen centroid radius. The run passed
+at 41.42% worst coverage over ten sequences and 662 asserted frames.
+
+**The contact sheet the operator asked for in the same message falsified it.**
+Three of the ten frames were unpostable:
+
+| frame | what it is | coverage said |
+|---|---|---|
+| seq 2 | bare olive ground, one silo, two dark mounds | ~100% |
+| seq 6 | a flat unlit surface, city only at the far edge | above the floor |
+| seq 7 | the lens pressed into a window wall, one facade filling two thirds of frame | above the floor |
+
+Both causes are mechanism, not calibration:
+
+**(a) coverage counted ground, not city.** The metric cast rays at the ground
+plane and asked whether they landed inside the fabric's bounding BOX. Schiedam's
+port district is largely yard and water, so a frame of empty dock scored full
+marks. Raising the number from 4% to 40% moved the threshold and never touched
+what was being counted.
+
+Corrected to a built-occupancy grid rasterised from the footprints themselves
+(6 m cells, interiors by cell-centre point-in-ring plus a walk along every wall
+so a 6 m terrace cannot fall between two centres). The built share of each
+fabric bbox is a minority everywhere, which is why the count had to change:
+
+| chunk | grid | built cells | share of bbox |
+|---|---|---|---|
+| schiedam-havens | 102x102 | 5351 | 51.4% |
+| brooklyn-redhook | 134x127 | 5817 | 34.2% |
+| london-deptford | 140x141 | 4963 | 25.1% |
+| tokyo-kyojima | 146x139 | 4789 | 23.6% |
+
+A per-ray built metric would therefore cap a PERFECT london home framing at
+25%, under a 60% floor — so the score is by TILE: the viewport is divided into
+6x6, and a tile counts when any of its 16 rays finds something standing. That
+asks whether the frame is full of city rather than how dense the city is, which
+is the question the bar was always trying to ask.
+
+**(b) the rig let the eye enter buildings.** Every camera invariant to this
+point bounded the TARGET — where the camera points, what is on screen, how much
+of the frame it fills. None of them said anything about where the eye is, and
+seq 7 is a legal state with the target on the fabric, the coverage over its
+floor, and the lens inside a facade. The rig now keeps the eye 7 m above the
+tallest roofline within a distance-scaled neighbourhood (6-40 m), enforced every
+frame on both the desired and the damped state, by pitching toward vertical —
+which raises the eye and leaves the target exactly where the viewer put it — and
+backing the lens off only if a plan view still cannot clear.
+
+**Also found, unrelated and pre-existing:** `panHalfZ` was assigned from the
+fabric and then immediately reassigned from the plate half-extent on the next
+line, so the north-south pan bound was the plate's and the east-west bound was
+the fabric's. Deleted.
+
+## §17 — §66.1, and an instrument that reported a still camera as moving
+
+The first §66.1 acceptance reported the opening dwell broken: "first move at
+4.2 s" against a required 8-10 s. Tracing the rig at 10 Hz for twenty seconds
+showed target and distance CONSTANT throughout and polar settling by 0.015 rad
+— 0.86° — over the first two seconds. The harness had weighted raw polar by 400
+to make it commensurate with metres of target travel, and 0.014 x 400 = 5.6
+crossed a threshold of 2. The exchange rate was invented and the finding was an
+artifact of it. The check now projects the fabric's own corners and measures
+their displacement in pixels, which needs no exchange rate.
+
+Two real things came out of the trace anyway:
+
+- the 0.86° settle was the damping walking the pitch in from the rig's
+  constructor default, because a plain load flew to the framing with a 0.01 s
+  duration rather than snapping to it. A hold that is specified as motionless
+  should be motionless; plain loads now `home(..., {snap:true})`.
+- §46.4's 2.6 s opening gate and §66.1's 9 s dwell were two mechanisms doing one
+  job, and they STACKED — the dwell only counts down while the director is
+  enabled, so the first intent landed at 11.6 s, past the 8-10 s asked for.
+  §46.4's gate is retired; the dwell is the whole hold, and it drops the
+  director's queue on every frame it holds, which is the protection §46.4
+  existed to provide.
+
+## §18 — §67, what the migration record did not carry
+
+`world/region/migrations.json` records `agentId`, `fromChunk`, `toSettlement`.
+It carries no name, because the map drew migration as an arc between two marks
+and an arc needs no subject. The listing writes the move as a sentence, so
+`RegionMigration` now records `agentName` — it was already in hand at the
+departure (`departed.name`), simply never written down.
+
+Re-recording the artifact against today's sim produced **4 migrations where the
+committed file had 6**, same seed and same 90k-decision budget. The committed
+file predates §58's escalation, which changes the trajectory; it was a replay of
+a run the engine no longer produces. The new file is the current sim's truth and
+says so in its own `_` field.
+
+The §49 deviation itself still stands and is now stated on screen rather than
+only in a comment: migration is not on the wire, live chunk servers do not move
+agents, and the listing's migration line is labelled `replayed region run`.
+
 ## Carried, not fixed
 
 - ~~UK tier-1 valuations~~ — done (build 10, §33.4): HM Land Registry UK HPI

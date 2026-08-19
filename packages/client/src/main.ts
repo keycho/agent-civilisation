@@ -22,6 +22,7 @@ import {
   CITY_MATERIAL_DEFAULT,
   DIVERGENCE_LABEL,
   PURPOSE_INDEX,
+  pointInRing,
 } from '@civ/core'
 import type { BuildingDetail, EventWire, Frame, Hello, Readouts, ScrubResult } from '@civ/protocol'
 import { FRAME_INTERVAL_MS } from '@civ/protocol'
@@ -63,10 +64,8 @@ import { ConstructionOverlay } from './render/scaffold.ts'
 import { createSubstrateView } from './render/substrateMesh.ts'
 import { createTrees } from './render/trees.ts'
 import { PunctuationLayer } from './render/punctuation.ts'
-import { FloatLights } from './render/floatlights.ts'
-import { FlatMapView, MAP_HOME_SPAN, MAP_ZOOM, orbitFor } from './render/flatMap.ts'
 import { AgentInterpolator, Connection, fromBase64 } from './world/connection.ts'
-import { loadChunk } from './world/load.ts'
+import { type ChunkEntry, loadChunk } from './world/load.ts'
 import { Observer } from './world/observer.ts'
 import { Narrative, type OpenAction } from './world/narrative.ts'
 
@@ -143,6 +142,140 @@ function measureCity(): { cx: number; cy: number; halfX: number; halfY: number }
 }
 
 const CITY = measureCity()
+
+/**
+ * §66.3: where the fabric is BUILT, and how tall, as a coarse grid.
+ *
+ * The §66.3 contact sheet falsified the bar it was meant to enforce. Coverage
+ * asked "does this ray land inside the fabric's bounding box", which is true of
+ * an empty industrial yard and true of the inside of a building — so a frame of
+ * bare olive ground with one silo on it scored 100%, and a frame that was
+ * entirely one lit facade scored above the 40% floor. The number went up and
+ * still meant "not lost".
+ *
+ * This grid is the honest denominator: a ray counts when it lands on ground
+ * with something standing on it. It doubles as the rig's collision data — the
+ * height it stores is the roofline, and the sheet's second finding was that the
+ * camera was allowed underneath one.
+ */
+const BUILT_CELL_M = 6
+
+interface BuiltGrid {
+  cols: number
+  rows: number
+  /** chunk-local metres of the grid's lower-left corner */
+  minX: number
+  minY: number
+  /** world Y of the roofline per cell; -Infinity where nothing stands */
+  top: Float32Array
+  built: number
+}
+
+function measureBuilt(): BuiltGrid {
+  const minX = CITY.cx - CITY.halfX
+  const minY = CITY.cy - CITY.halfY
+  const cols = Math.max(1, Math.ceil((CITY.halfX * 2) / BUILT_CELL_M))
+  const rows = Math.max(1, Math.ceil((CITY.halfY * 2) / BUILT_CELL_M))
+  const top = new Float32Array(cols * rows).fill(-Infinity)
+  const mark = (c: number, r: number, y: number): void => {
+    if (c < 0 || r < 0 || c >= cols || r >= rows) return
+    const i = r * cols + c
+    if (y > top[i]) top[i] = y
+  }
+  for (const b of seed.buildings) {
+    // §66.3: `baseY: b.groundM` is how load.ts places the batch, so the roof is
+    // the ground it stands on plus its measured height — not the nominal plate
+    const roof = b.groundM + b.heightM
+    let x0 = Infinity
+    let x1 = -Infinity
+    let y0 = Infinity
+    let y1 = -Infinity
+    for (const p of b.footprint) {
+      if (p[0] < x0) x0 = p[0]
+      if (p[0] > x1) x1 = p[0]
+      if (p[1] < y0) y0 = p[1]
+      if (p[1] > y1) y1 = p[1]
+    }
+    if (!Number.isFinite(x0)) continue
+    const c0 = Math.floor((x0 - minX) / BUILT_CELL_M)
+    const c1 = Math.floor((x1 - minX) / BUILT_CELL_M)
+    const r0 = Math.floor((y0 - minY) / BUILT_CELL_M)
+    const r1 = Math.floor((y1 - minY) / BUILT_CELL_M)
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) {
+        const px = minX + (c + 0.5) * BUILT_CELL_M
+        const py = minY + (r + 0.5) * BUILT_CELL_M
+        if (pointInRing(b.footprint, px, py)) mark(c, r, roof)
+      }
+    }
+    // Interiors alone lose the thin ones. A terraced house is about 6 m across
+    // and contains no cell centre at all in the worst alignment, so a whole
+    // London street can rasterise to nothing while standing there in the
+    // render — which would show up as the metric calling a good frame empty.
+    // Walking the walls costs a few steps a building and fixes it.
+    for (let i = 0, j = b.footprint.length - 1; i < b.footprint.length; j = i++) {
+      const [ax, ay] = b.footprint[j]
+      const [bx, by] = b.footprint[i]
+      const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / (BUILT_CELL_M * 0.5)))
+      for (let s = 0; s <= steps; s++) {
+        const px = ax + ((bx - ax) * s) / steps
+        const py = ay + ((by - ay) * s) / steps
+        mark(
+          Math.floor((px - minX) / BUILT_CELL_M),
+          Math.floor((py - minY) / BUILT_CELL_M),
+          roof,
+        )
+      }
+    }
+  }
+  let built = 0
+  for (const y of top) if (y > -Infinity) built++
+  return { cols, rows, minX, minY, top, built }
+}
+
+const BUILT = measureBuilt()
+
+/**
+ * §66.3: the roofline at a WORLD point, or -Infinity where nothing stands.
+ *
+ * `pointAt` maps local (x, y) to world (x, groundY, -y), so the inverse the
+ * grid needs is local y = -world z.
+ */
+function builtTopAt(wx: number, wz: number): number {
+  const c = Math.floor((wx - BUILT.minX) / BUILT_CELL_M)
+  const r = Math.floor((-wz - BUILT.minY) / BUILT_CELL_M)
+  if (c < 0 || r < 0 || c >= BUILT.cols || r >= BUILT.rows) return -Infinity
+  return BUILT.top[r * BUILT.cols + c]
+}
+
+/**
+ * §66.3: the tallest roofline within `radius` of a world point.
+ *
+ * The eye standing over an unbuilt cell is not the same as the eye being in the
+ * open — a camera 4 m into a street canyon is over bare tarmac with a twenty
+ * metre wall at arm's length, and that is the frame the contact sheet caught.
+ * What the rig has to clear is the neighbourhood, not the cell.
+ *
+ * The radius is capped because the caller scales it with distance and beyond a
+ * few tens of metres it stops describing "what is next to the lens" and starts
+ * costing a grid sweep every frame for nothing.
+ */
+function ceilingNear(wx: number, wz: number, radius: number): number {
+  const span = Math.ceil(Math.min(40, Math.max(0, radius)) / BUILT_CELL_M)
+  const c0 = Math.floor((wx - BUILT.minX) / BUILT_CELL_M)
+  const r0 = Math.floor((-wz - BUILT.minY) / BUILT_CELL_M)
+  let top = -Infinity
+  for (let r = r0 - span; r <= r0 + span; r++) {
+    if (r < 0 || r >= BUILT.rows) continue
+    const row = r * BUILT.cols
+    for (let c = c0 - span; c <= c0 + span; c++) {
+      if (c < 0 || c >= BUILT.cols) continue
+      const y = BUILT.top[row + c]
+      if (y > top) top = y
+    }
+  }
+  return top
+}
 
 /**
  * The plate stops just past the city, so the world reads as an object.
@@ -291,46 +424,29 @@ tether.frustumCulled = false
 cityRoot.add(tether)
 
 /**
- * §47.3a: the floating lights — agent glyphs over the miniature, chrome
- * register. §49 reuses the identical grammar for migration arcs on the globe.
- */
-const floatLights = new FloatLights()
-cityRoot.add(floatLights.group)
-
-/**
- * §59.1: the city's agents are pixel people now. FloatLights stays for the
- * map's migration arcs — that half of §47.3a's "one moving-light grammar" was
- * always right; it was the diamonds standing in for inhabitants that were not.
+ * §59.1: the city's agents are pixel people. §47.3a's floating light glyphs
+ * stood in for inhabitants before that and then survived only as the map's
+ * migration arcs; §67 retires the map, so FloatLights has no caller left and
+ * has gone with it.
  */
 const pixelAgents = new PixelAgents(CITY_MATERIALS[seed.chunk.id] ?? CITY_MATERIAL_DEFAULT)
 cityRoot.add(pixelAgents.group)
 
-// §49: the globe, same void, same grade
-const globe = new FlatMapView(
-  HALF_EXTENT * 0.92,
-  chunks.map((c) => c.id),
-  new Map(chunks.map((c) => [c.id, c.name])),
-)
-scene.add(globe.group)
-const globeArcs = new FloatLights()
-globe.group.add(globeArcs.group)
-
 /**
- * §49 deviation, stated: migration events are NOT on the wire — migration
- * lives in the region harness (§31.6-5), and live servers do not move
- * agents. The arcs replay the committed record of a real region run
- * (world/region/migrations.json); absent that artifact, the globe simply
- * shows no arcs. When live migration exists, this feed swaps for the wire.
+ * §49 deviation, still standing at §67: migration events are NOT on the wire.
+ * Migration lives in the region harness (§31.6-5) and live chunk servers do
+ * not move agents, so this is the committed record of a real region run
+ * (world/region/migrations.json), replayed. It fed the map's arcs; it now
+ * feeds the one line under the world listing, and the listing says on its face
+ * where the line came from. When live migration exists, this swaps for the wire.
  */
-let migrationRecord: Array<{ fromChunk: string; toSettlement: string }> = []
+let migrationRecord: Array<{ agentName?: string; fromChunk: string; toSettlement: string }> = []
 void fetch('/world/region/migrations.json')
   .then((r) => (r.ok ? r.json() : []))
   .then((list: { migrations?: typeof migrationRecord } | typeof migrationRecord) => {
     migrationRecord = Array.isArray(list) ? list : (list.migrations ?? [])
   })
   .catch(() => {})
-let arcCursor = 0
-let arcTimer = 0
 
 
 // ---------------------------------------------------------------------------
@@ -519,8 +635,12 @@ const CITY_CENTRE = new Vector3(CITY.cx, substrate.groundY, -CITY.cy)
 rig.limits.panCentreX = CITY_CENTRE.x
 rig.limits.panCentreZ = CITY_CENTRE.z
 rig.limits.panHalfX = CITY.halfX + 22
+// this line used to be followed by `panHalfZ = HALF_EXTENT`, which silently
+// undid it — the Z bound was the plate's, not the fabric's, so a pan north or
+// south could walk further off the city than the same pan east or west
 rig.limits.panHalfZ = CITY.halfY + 22
-rig.limits.panHalfZ = HALF_EXTENT
+/** §66.3: the eye is not allowed inside the fabric it is looking at */
+rig.ceilingNear = ceilingNear
 
 /**
  * §24.1: "zoom so the diamond's width fills the frame width, accepting corner
@@ -550,7 +670,16 @@ const CITY_AZIMUTH = 0
 /** the pitch every framed shot lands on; the framing must be derived AT it */
 const CITY_POLAR = 0.66
 /** §57.4: the plate is an object in a frame, not a texture bled to the edges */
-const FRAME_MARGIN = 1.22
+/**
+ * §66.3: how much room the home framing leaves around the city.
+ *
+ * 1.22 left the fabric filling 49.9% of the frame, which passed a bar that
+ * only asked whether the city was lost and fails the bar that asks whether it
+ * is framed. A portrait of a city is mostly city. 1.08 keeps the plate whole
+ * inside the frame — it is still an object sitting in the shot, not a crop —
+ * and lifts the fill past 60%.
+ */
+const FRAME_MARGIN = 1.08
 
 /**
  * §57.4: the plate is a SQUARE SEEN AT AN ANGLE, and the old derivation only
@@ -585,9 +714,14 @@ function frameThePlate(aspect: number, azimuth = CITY_AZIMUTH, polar = CITY_POLA
   return rig.distanceToFrame(needVertical)
 }
 const CITY_FRAMING = frameThePlate(innerWidth / innerHeight)
-// §57.4: free zoom-out has to REACH the home framing and keep going a little,
-// or the last thing a viewer can do before the map takes over is still a crop
-rig.limits.maxDistance = CITY_FRAMING * 1.35
+/**
+ * §57.4 gave free zoom-out 35% past the home framing so the last thing a viewer
+ * could do before the map took over was not a crop. §66.3's 40% coverage floor
+ * prices that: coverage falls as 1/d^2, so 1.35x home is 55% of home's fill and
+ * lands under the floor whatever else is right. 1.12x still reaches past home —
+ * a viewer can see they are at the end of the zoom — at ~80% of its fill.
+ */
+rig.limits.maxDistance = CITY_FRAMING * 1.12
 rig.distance = CITY_FRAMING
 rig.target.copy(CITY_CENTRE)
 
@@ -611,12 +745,24 @@ if (arriving) {
     duration: 2.8,
   })
 } else {
-  rig.flyTo(CITY_CENTRE.clone(), CITY_FRAMING, {
-    azimuth: CITY_AZIMUTH,
-    polar: CITY_POLAR,
-    duration: 0.01,
-  })
+  rig.home(CITY_CENTRE.clone(), CITY_FRAMING, CITY_AZIMUTH, CITY_POLAR, { snap: true })
+  /**
+   * §66.1: SETTLED, not flown-with-a-short-duration. A 0.01 s fly-to lands the
+   * target and the distance at once but leaves the damping to walk the pitch in
+   * from the rig's constructor default, which measured as 0.9° of drift over
+   * the first seconds of a hold that is supposed to be motionless. Nobody would
+   * call it a camera move; it is still the opposite of still.
+   */
 }
+
+/**
+ * §66.1: how long the whole-plate framing is held, motionless, before the
+ * director may have its first intent. A viewer needs to see the city before
+ * being taken into it. An arrival from a chunk switch flies in over 2.8 s, so
+ * it gets that much more dwell — the dwell is time spent LOOKING at the city,
+ * not time spent getting there.
+ */
+const OPENING_DWELL_S = 9
 
 const director = new CameraDirector(rig, {
   locateBuilding(id) {
@@ -645,305 +791,273 @@ const director = new CameraDirector(rig, {
   },
 })
 
+// §66.1: the city is on screen, whole and still, before anything moves.
+// An arrival flies in first, so it dwells from where the flight lands.
+director.openWith(OPENING_DWELL_S + (arriving ? 2.8 : 0))
+
 function pointAt(x: number, y: number): Vector3 {
   return new Vector3(x, substrate.groundY, -y)
 }
 
 /**
- * §46.4: first load and every ambient return present the §24.1 framed view.
- * The director's queue fills within the first frames off the socket and its
- * first cut used to land the opening camera on an event close-up — often at
- * the plate's far corner, opening on void. Every load now holds the director
- * until the frame has presented; the arrival sweep keeps its longer hold.
+ * §46.4's opening gate is now the §66.1 dwell.
+ *
+ * They were two mechanisms doing one job. §46.4 held the director for 2.6 s
+ * because "the director's queue fills within the first frames off the socket
+ * and its first cut used to land the opening camera on an event close-up —
+ * often at the plate's far corner, opening on void"; the dwell holds it for
+ * nine and drops the queue on every frame it holds, which is the same
+ * protection and more of it. Running both stacked the two holds — the dwell
+ * only counts down while the director is enabled, so the first intent landed
+ * at 11.6 s, past the 8-10 s that was asked for. One mechanism, one number.
  */
-director.enabled = false
-setTimeout(
-  () => {
-    if (!followId && mode === 'city') director.enabled = true
-  },
-  arriving ? 3400 : 2600,
-)
+director.enabled = true
 
 // ---------------------------------------------------------------------------
-// §49: the scale chain — city <-> globe
+// §67: /earth — the listing of mounted worlds
 // ---------------------------------------------------------------------------
 
-let mode: 'city' | 'globe' = 'city'
-/** §49 r3: seconds since the globe camera was last touched */
-let globeIdle = 0
+/**
+ * §67: the map is retired.
+ *
+ * Three globe attempts and one flat map all failed the same way — labels
+ * detaching from their marks, kyojima and red hook drawn in the wrong place —
+ * and the cause was never the projection or the label solver. It is that eight
+ * worlds clustered inside 15 km of one country have no geographic layout that
+ * separates them; every attempt bought legibility with a label ladder that
+ * lied about where the cities were. A list has no geography to lie about. It
+ * says which worlds are mounted, how far each has diverged, and who is working
+ * in it right now, and every one of those is true.
+ *
+ * The camera never leaves the city now: `mode` is gone, the rig's limits are
+ * set once, and this is a full-frame sheet over a world that keeps rendering
+ * behind it. The one thing the map showed that a list would lose — that people
+ * move between these places — is the line beneath the table.
+ */
+const worldsPane = el('worlds')
+/** the keyboard cursor, held as an id so a re-sort cannot move it */
+let worldsSel = entry.id
+
 
 /**
- * §57.3: the map's home framing — the whole plate, every city in it, always.
- * On a sphere this had to be argued for (which hemisphere, how much limb); on
- * a flat map it is simply the plate fitted to the frame, and the only question
- * is which dimension binds. The map is 2:1 and most windows are wider than
- * they are tall, so on a wide window it is the height, and on a narrow one the
- * width.
+ * §67: the settlements a migration can name are not all mounted worlds, and
+ * none of them wants its pane name here.
+ *
+ * `placeName` inverts to "havens, schiedam", which is right in a title bar and
+ * wrong in a sentence — "left haven, maassluis for deptford riverside, london"
+ * is not something a person says. The migration line wants the one word the
+ * place is called: the district for a mounted world, the town for a region
+ * settlement that was never given a display name at all.
  */
-function globeHomeDistance(): number {
-  const aspect = innerWidth / innerHeight
-  const needVertical = Math.max(globe.halfHeight * 2, (globe.halfWidth * 2) / aspect)
-  return rig.distanceToFrame(needVertical * MAP_HOME_SPAN)
-}
+const GENERIC_DISTRICTS = new Set(['dorp', 'haven', 'havens', 'centrum', 'noord', 'zuid', 'oost', 'west'])
 
-function frameGlobeHome(duration: number, snap = false): void {
-  const orbit = orbitFor(0, 0)
-  // §62.4: the map's `0` is the same four-part reset the city's is
-  rig.home(new Vector3(0, 0, 0), globeHomeDistance(), orbit.azimuth, orbit.polar, {
-    duration,
-    snap,
-  })
-}
-
-function toGlobe(): void {
-  if (mode === 'globe') return
-  mode = 'globe'
-  if (followId) follow(null)
-  director.enabled = false
-  cityRoot.visible = false
-  globe.group.visible = true
-  // §57.3: zoom is bounded around the home framing rather than around a disc,
-  // so no permitted zoom can lose a city off the edge of the plate
-  const home = globeHomeDistance()
-  rig.limits.minDistance = home * MAP_ZOOM.minSpan
-  rig.limits.maxDistance = home * MAP_ZOOM.maxSpan
-  // §62.1: on the map the plate IS the map, so the target is bounded by the
-  // map's own 2:1 footprint. Pinning it to the origin instead would make the
-  // dive impossible, which is how the invariant would have leaked back out.
-  rig.limits.panCentreX = 0
-  rig.limits.panCentreZ = 0
-  rig.limits.panHalfX = globe.halfWidth
-  rig.limits.panHalfZ = globe.halfHeight
-  frameGlobeHome(2.0)
-  el('chunkBtn').textContent = 'earth'
-  document.body.classList.add('globe')
-  void pollSummaries()
-}
-
-/**
- * §40.6/§49.2: the dive — fly to the marker, then descend into the city.
- * Same-chunk dives are one unbroken move; a cross-chunk dive flies to the
- * marker, navigates, and the §36.1 arrival sweep finishes the descent with
- * the boot caption on the far side of the load.
- */
-function diveTo(id: string): void {
-  const m = globe.markers.find((x) => x.id === id)
-  if (!m) return
-  // §57.3: the dive drops toward the mark from directly above it — there is no
-  // limb to swing round on a flat map, so the approach is a descent
-  rig.flyTo(m.position.clone(), globeHomeDistance() * MAP_ZOOM.minSpan, {
-    ...orbitFor(0, 0),
-    duration: 1.7,
-  })
-  setTimeout(() => {
-    if (id === entry.id) toCity()
-    else {
-      sessionStorage.setItem('tf-arrive', '1')
-      switchTo(id)
-    }
-  }, 1750)
-}
-
-function toCity(): void {
-  mode = 'city'
-  document.body.classList.remove('globe')
-  el('globeCard').classList.remove('on')
-  el('chunkBtn').textContent = placeName(entry.name)
-  globe.group.visible = false
-  cityRoot.visible = true
-  rig.limits.minDistance = 40
-  rig.limits.maxDistance = frameThePlate(innerWidth / innerHeight) * 1.35
-  rig.limits.panCentreX = CITY_CENTRE.x
-  rig.limits.panCentreZ = CITY_CENTRE.z
-  rig.limits.panHalfX = CITY.halfX + 22
-  rig.limits.panHalfZ = CITY.halfY + 22
-  rig.flyTo(CITY_CENTRE.clone(), CITY_FRAMING * 1.55, {
-    azimuth: CITY_AZIMUTH + 0.7,
-    polar: 0.36,
-    duration: 0.01,
-  })
-  rig.update(0.05)
-  rig.flyTo(CITY_CENTRE.clone(), CITY_FRAMING, {
-    azimuth: CITY_AZIMUTH,
-    polar: CITY_POLAR,
-    duration: 2.6,
-  })
-  setTimeout(() => {
-    if (!followId && mode === 'city') director.enabled = true
-  }, 3000)
-}
-
-/**
- * §49: labels are chrome — mono, lowercase, crisp screen-space divs projected
- * per frame, never pushed through the world render. Hover shows the city's
- * §46.1 card; click dives.
- */
-const globeLabels = el('globeLabels')
-const labelEls = new Map<string, HTMLElement>()
-const leaderEls = new Map<string, HTMLElement>()
-for (const m of globe.markers) {
-  const leader = document.createElement('div')
-  leader.className = 'gleader'
-  globeLabels.appendChild(leader)
-  leaderEls.set(m.id, leader)
-  const div = document.createElement('div')
-  div.className = 'glabel'
-  div.textContent = m.name.toLowerCase()
-  div.dataset.id = m.id
-  globeLabels.appendChild(div)
-  labelEls.set(m.id, div)
-}
-globeLabels.addEventListener('click', (e) => {
-  const id = (e.target as HTMLElement).dataset?.id
-  if (id) diveTo(id)
-})
-globeLabels.addEventListener('mouseover', (e) => {
-  const id = (e.target as HTMLElement).dataset?.id
-  if (id) showGlobeCard(id)
-})
-
-const labelV = new Vector3()
-
-/**
- * §49 r3: labels anchor to their marks. Each sits immediately beside its mark
- * and only moves when its box genuinely collides with one already placed —
- * then by the smallest step that clears, with a leader line back to the mark
- * so the geography stays honest. The visible label set is exactly the visible
- * mark set: a city behind the limb drops both.
- */
-function updateGlobeLabels(): void {
-  const live: Array<{ m: (typeof globe.markers)[number]; sx: number; sy: number; div: HTMLElement }> = []
-  for (const m of globe.markers) {
-    const div = labelEls.get(m.id)
-    if (!div) continue
-    /**
-     * §57.3: no limb test. On the sphere this line decided whether a mark was
-     * facing the camera, and it was the source of the labels-detached-from-
-     * marks failure the globe never shook off — the mark set and the label set
-     * were two answers to a question that had to have one. A flat map has no
-     * far side: every mark is visible, so the only test left is whether it is
-     * in front of the camera at all.
-     */
-    labelV.copy(m.position).project(rig.camera)
-    const onScreen = labelV.z <= 1
-    m.sprite.visible = onScreen
-    if (!onScreen) {
-      div.classList.remove('on')
-      continue
-    }
-    live.push({
-      m,
-      sx: ((labelV.x + 1) / 2) * innerWidth,
-      sy: (1 - (labelV.y + 1) / 2) * innerHeight,
-      div,
-    })
-  }
-
-  // north-first placement keeps the ladder deterministic between frames
-  live.sort((a, b) => a.sy - b.sy || a.sx - b.sx)
-  const placed: Array<{ x: number; y: number; w: number; h: number }> = []
-  const GAP = 11
-  for (const item of live) {
-    item.div.classList.add('on')
-    const w = item.div.offsetWidth || 120
-    const h = item.div.offsetHeight || 18
-    // adjacent first, then the smallest displacement that clears
-    const candidates: Array<[number, number]> = [
-      [GAP, -h / 2],
-      [GAP, -h / 2 - (h + 3)],
-      [GAP, -h / 2 + (h + 3)],
-      [-w - GAP, -h / 2],
-      [GAP, -h / 2 + 2 * (h + 3)],
-      [-w - GAP, -h / 2 - (h + 3)],
-      [GAP, -h / 2 - 2 * (h + 3)],
-    ]
-    // beyond the fixed ladder, keep stepping down until something clears —
-    // a label printed on top of another is worse than one row further out
-    for (let k = 3; k <= 9; k++) candidates.push([GAP, -h / 2 + k * (h + 3)])
-    let chosen = candidates[0]
-    for (const c of candidates) {
-      const box = { x: item.sx + c[0], y: item.sy + c[1], w, h }
-      const hits = placed.some(
-        (p) => box.x < p.x + p.w + 4 && box.x + box.w + 4 > p.x && box.y < p.y + p.h + 2 && box.y + box.h + 2 > p.y,
-      )
-      if (!hits) {
-        chosen = c
-        break
-      }
-    }
-    const x = item.sx + chosen[0]
-    const y = item.sy + chosen[1]
-    placed.push({ x, y, w, h })
-    item.div.style.left = `${x}px`
-    item.div.style.top = `${y}px`
-    // a leader only when the label had to leave its mark's side
-    const displaced = chosen !== candidates[0]
-    const leader = leaderEls.get(item.m.id)
-    if (leader) {
-      if (displaced) {
-        const tx = chosen[0] < 0 ? x + w : x
-        const ty = y + h / 2
-        const len = Math.hypot(tx - item.sx, ty - item.sy)
-        leader.style.width = `${len}px`
-        leader.style.left = `${item.sx}px`
-        leader.style.top = `${item.sy}px`
-        leader.style.transform = `rotate(${Math.atan2(ty - item.sy, tx - item.sx)}rad)`
-        leader.classList.add('on')
-      } else {
-        leader.classList.remove('on')
-      }
-    }
-  }
-}
-
-/** §46.1's card, docked to the marker being hovered */
-function showGlobeCard(id: string): void {
-  const s = citySummaries.get(id)
+function settlementLabel(id: string): string {
   const c = chunks.find((x) => x.id === id)
-  if (!c) return
-  const facts = s
-    ? `gen ${s.generation ?? '·'} · ${((s.divergenceIndex ?? 0) * 100).toFixed(1)}% diff · ${s.agentCount ?? '·'} active`
-    : 'unreached — baseline only'
-  el('globeCardBody').innerHTML =
-    `<b>${escapeHtml(placeName(c.name))}</b><br>${escapeHtml(facts)}` +
-    (s?.lastEvent ? `<br><span class="dim">last: ${escapeHtml(s.lastEvent.text)}</span>` : '')
-  el('globeCard').classList.add('on')
+  if (!c) return id.split('-')[0]
+  const parts = c.name.split(/\s+—\s+/)
+  const city = parts[0].trim().toLowerCase()
+  const district = (parts[1] ?? parts[0]).split('/')[0].trim().toLowerCase()
+  /**
+   * Whichever half is the NAME. "deptford" and "red hook" are places; "dorp"
+   * and "haven" are Dutch for village and harbour, so the four Dutch chunks
+   * are called by their town instead. This is a stated list rather than a
+   * general rule because there is no general rule — it is a judgement about
+   * eight names, and pretending otherwise would just hide the judgement.
+   */
+  return GENERIC_DISTRICTS.has(district) ? city : district
 }
 
-el('candidatesBtn').addEventListener('click', () => {
-  globe.setCandidates(!globe.candidatesOn)
-  el('candidatesBtn').classList.toggle('on', globe.candidatesOn)
+const SPARK_GLYPHS = '▁▂▃▄▅▆▇'
+
+/**
+ * §67: the activity meter — the last ten polls, scaled against the busiest
+ * world on the board rather than against the row's own maximum.
+ *
+ * Self-normalising is the obvious version and it is the wrong one here: it
+ * makes a dead world's noise floor look identical to a working city's peak,
+ * and the listing is sorted by activity, so the column has to be readable
+ * ACROSS rows or the sort has nothing to show for itself. Before any history
+ * exists a single sample still draws, so a fresh load is not a row of blanks.
+ */
+function activityMeter(id: string, rate: number, peak: number): string {
+  const hist = citySpark.get(id)
+  const series = hist?.length ? hist : [rate]
+  const scale = Math.max(peak, 1e-9)
+  return series
+    .map((v) => SPARK_GLYPHS[Math.max(0, Math.min(6, Math.floor((v / scale) * 6.99)))])
+    .join('')
+    .padStart(10, ' ')
+}
+
+/**
+ * The order: busiest first. Frozen while the pointer is over the list.
+ *
+ * "rows live-update, sorted by activity" and "click dives" are in tension the
+ * moment the two happen together — a row that re-sorts out from under the
+ * cursor between mousedown and mouseup sends the viewer somewhere they did not
+ * choose, and arrowing down a list that reshuffles is worse. So the numbers are
+ * always live and the ORDER holds still whenever the pointer is on the list.
+ */
+let orderFrozen: string[] | null = null
+
+function worldRows(): Array<{ c: ChunkEntry; s: CitySummary | undefined }> {
+  const rows = chunks.map((c) => ({ c, s: citySummaries.get(c.id) }))
+  if (orderFrozen) {
+    const rank = new Map(orderFrozen.map((id, i) => [id, i]))
+    return rows.sort((a, b) => (rank.get(a.c.id) ?? 99) - (rank.get(b.c.id) ?? 99))
+  }
+  return rows.sort((a, b) => (b.s?.activityRate ?? -1) - (a.s?.activityRate ?? -1))
+}
+
+/**
+ * Rows are BUILT once and updated in place.
+ *
+ * Re-writing `innerHTML` on every poll was the first version and it made the
+ * list unclickable: a four-second poll detaches the row under the pointer
+ * mid-gesture, which playwright reported as "element was detached from the DOM,
+ * retrying" and a person would experience as a click that did nothing. The
+ * cells change; the elements do not.
+ */
+const worldRowEls = new Map<string, HTMLElement>()
+
+function buildWorldRows(): void {
+  const list = el('worldsList')
+  for (const c of chunks) {
+    const row = document.createElement('div')
+    row.className = 'row'
+    row.dataset.id = c.id
+    row.innerHTML =
+      `<span class="nm">${escapeHtml(placeName(c.name))}` +
+      (c.id === entry.id ? '<span class="here">here</span>' : '') +
+      `</span><span class="cc"></span><span class="gen"></span>` +
+      `<span class="diff"></span><span class="act"></span><span class="wk"></span>`
+    list.appendChild(row)
+    worldRowEls.set(c.id, row)
+  }
+}
+
+function renderWorlds(): void {
+  if (!worldRowEls.size) buildWorldRows()
+  const rows = worldRows()
+  if (!chunks.some((c) => c.id === worldsSel)) worldsSel = rows[0]?.c.id ?? entry.id
+  const peak = Math.max(...rows.map((r) => r.s?.activityRate ?? 0), 1e-9)
+  rows.forEach(({ c, s }, i) => {
+    const row = worldRowEls.get(c.id)
+    if (!row) return
+    // flex `order` reseats a row without taking it out of the document, so a
+    // re-sort never detaches the element a pointer or a click is resolving to
+    row.style.order = String(i)
+    row.classList.toggle('sel', c.id === worldsSel)
+    row.classList.toggle('cold', !s)
+    const set = (cls: string, text: string): void => {
+      const node = row.querySelector(`.${cls}`)
+      if (node && node.textContent !== text) node.textContent = text
+    }
+    set('cc', (s?.country ?? '··').toLowerCase())
+    set('gen', s?.generation === undefined ? '·' : `g${s.generation}`)
+    set('diff', s?.divergenceIndex === undefined ? '·' : `${(s.divergenceIndex * 100).toFixed(1)}%`)
+    set('act', s ? activityMeter(c.id, s.activityRate ?? 0, peak) : '··········')
+    set('wk', s?.working === undefined ? '—' : `${s.working} working`)
+  })
+  const reached = rows.filter((r) => r.s).length
+  el('worldsMeta').textContent =
+    `${reached}/${chunks.length} answering · arrows select · enter dive · [ ] cycle`
+  renderMigrationLine()
+}
+
+/**
+ * §49 deviation, restated for §67: migration is NOT on the wire. It lives in
+ * the region harness (§31.6-5) and live chunk servers do not move agents, so
+ * this replays the committed record of a real region run. The record was
+ * re-cut for §67 — it now carries the mover's name, because a list writes the
+ * move as a sentence where the map drew it as an arc, and it was re-recorded
+ * against the post-§58 sim, whose trajectory the older file no longer matched.
+ */
+function renderMigrationLine(): void {
+  const m = migrationRecord[migrationRecord.length - 1]
+  if (!m) {
+    el('worldsMigration').textContent = ''
+    return
+  }
+  el('worldsMigration').innerHTML =
+    `<b>${escapeHtml((m.agentName ?? 'someone').toLowerCase().split(' ')[0])}</b> left ` +
+    `${escapeHtml(settlementLabel(m.fromChunk))} for ` +
+    `${escapeHtml(settlementLabel(m.toSettlement))}` +
+    `<span class="src">replayed region run — migration is not on the wire</span>`
+}
+
+function worldsOpen(): boolean {
+  return document.body.classList.contains('worlds')
+}
+
+function openWorlds(on: boolean): void {
+  document.body.classList.toggle('worlds', on)
+  el('chunkBtn').textContent = on ? '/earth' : placeName(entry.name)
+  if (!on) {
+    orderFrozen = null
+    return
+  }
+  // the listing is where you choose from, so it opens on where you are, and
+  // on a freshly-sorted board rather than on whatever order the last visit
+  // happened to be holding
+  worldsSel = entry.id
+  orderFrozen = null
+  renderWorlds()
+  void pollSummaries()
+  worldsTimer ??= setInterval(() => {
+    if (worldsOpen()) void pollSummaries()
+  }, 4000)
+}
+let worldsTimer: ReturnType<typeof setInterval> | null = null
+
+/** §67: enter dives; a dive into the world already mounted is just a close */
+function diveTo(id: string): void {
+  if (!chunks.some((c) => c.id === id)) return
+  if (id === entry.id) {
+    openWorlds(false)
+    civHome()
+    return
+  }
+  sessionStorage.setItem('tf-arrive', '1')
+  switchTo(id)
+}
+
+el('worldsClose').addEventListener('click', () => openWorlds(false))
+el('worldsList').addEventListener('click', (e) => {
+  const row = (e.target as HTMLElement).closest('.row') as HTMLElement | null
+  if (row?.dataset.id) diveTo(row.dataset.id)
+})
+el('worldsList').addEventListener('mouseenter', () => {
+  orderFrozen = worldRows().map((r) => r.c.id)
+})
+el('worldsList').addEventListener('mouseleave', () => {
+  orderFrozen = null
+  renderWorlds()
+})
+el('worldsList').addEventListener('mousemove', (e) => {
+  const row = (e.target as HTMLElement).closest('.row') as HTMLElement | null
+  if (!row?.dataset.id || row.dataset.id === worldsSel) return
+  worldsSel = row.dataset.id
+  renderWorlds()
 })
 
-// zooming out past the city framing lifts off to the globe
+/**
+ * Zooming out past the city framing used to lift off to the map. The gesture
+ * is worth keeping — pull back far enough and you are asking what else there
+ * is — so it opens the listing instead.
+ */
 let liftPressure = 0
 canvas.addEventListener('wheel', (e) => {
-  if (mode !== 'city' || !bootDone) return
+  if (worldsOpen() || !bootDone) return
   if (e.deltaY > 0 && rig.distance >= rig.limits.maxDistance * 0.995) {
     liftPressure += 1
     if (liftPressure >= 3) {
       liftPressure = 0
-      toGlobe()
+      openWorlds(true)
     }
   } else if (e.deltaY < 0) {
     liftPressure = 0
   }
-})
-
-// on the globe, clicking a marker dives; the cards pane stays one keypress away
-canvas.addEventListener('click', (e) => {
-  if (mode !== 'globe') return
-  const v = new Vector3()
-  let best: { id: string; d: number } | null = null
-  for (const m of globe.markers) {
-    v.copy(m.position).project(rig.camera)
-    if (v.z > 1) continue
-    const sx = ((v.x + 1) / 2) * innerWidth
-    const sy = (1 - (v.y + 1) / 2) * innerHeight
-    const d = Math.hypot(sx - e.clientX, sy - e.clientY)
-    if (d < 28 && (!best || d < best.d)) best = { id: m.id, d }
-  }
-  if (best) diveTo(best.id)
 })
 
 // ---------------------------------------------------------------------------
@@ -1012,7 +1126,7 @@ function maybeCinematic(e: EventWire): void {
   // off someone who is using it, and it holds however loud the world gets.
   if (followId || selectedAgentId !== null || selectedIndex !== null) return
   if (!document.body.classList.contains('ambient')) return
-  if (mode !== 'city') return
+  if (worldsOpen()) return
   cinematicCooldown = CINEMATIC_COOLDOWN_S
   const line = e.rationale ?? e.type.replace(/_/g, ' ')
   const hold = monument ? 8000 : 5000
@@ -1131,8 +1245,6 @@ function endTimelapse(from: number, to: number): void {
  * the camera over, with the mode flip announced. Ambient only resumes after
  * 60s of idleness, and only if it was on before the input.
  */
-let ambientWasOn = false
-let ambientResumeTimer: ReturnType<typeof setTimeout> | null = null
 
 /**
  * §57.4: the ambient button states which mode the camera is IN, not what
@@ -1158,23 +1270,23 @@ function announceMode(text: string): void {
   setTimeout(() => m.classList.remove('on'), 1400)
 }
 
+/**
+ * §66.2: a viewer who takes the camera has TAKEN it.
+ *
+ * This used to pause ambient and re-arm it after sixty seconds of idle, which
+ * meant a viewer who framed something they wanted to look at had the camera
+ * pulled out from under them a minute later. Ambient is a mode with a key
+ * (`a`) and a button; a mode you did not ask for should not switch itself back
+ * on. The re-arm is gone, and `0` goes through the same path — §66.2's
+ * "returns home from any state and turns ambient off" is one rule for every
+ * way a viewer can take the camera, not a special case for one key.
+ */
 function inputWinsCamera(): void {
-  globeIdle = 0
   if (document.body.classList.contains('ambient')) {
-    ambientWasOn = true
     document.body.classList.remove('ambient')
     setAmbientButton(false)
     announceMode('manual')
   }
-  if (ambientResumeTimer) clearTimeout(ambientResumeTimer)
-  ambientResumeTimer = setTimeout(() => {
-    if (ambientWasOn && !followId && !document.body.classList.contains('ambient')) {
-      document.body.classList.add('ambient')
-      setAmbientButton(true)
-      director.enabled = true
-      announceMode('ambient')
-    }
-  }, 60_000)
   director.takeControl()
   // §36.2: grabbing the camera releases the tether — following is a mode the
   // viewer leaves by looking elsewhere, not a lock
@@ -1288,7 +1400,7 @@ function ingest(e: EventWire): void {
   // §46.2/§46.3: the staging endpoints get one frame of punctuation, and the
   // session's own tally advances
   const placed =
-    e.x !== undefined && e.y !== undefined && mode === 'city' ? placementOf(e.x, e.y) : undefined
+    e.x !== undefined && e.y !== undefined ? placementOf(e.x, e.y) : undefined
   if (e.type === 'construction_completed') {
     watched.built++
     if (e.x !== undefined && e.y !== undefined) punctuation.constructionFlash(e.x, e.y)
@@ -1800,7 +1912,7 @@ let selectedIndex: number | null = null
 let selectedAgentId: string | null = null
 
 canvas.addEventListener('click', (e) => {
-  if (mode !== 'city') return
+  if (worldsOpen()) return
   // §36.2: agents are clickable ahead of the fabric — a marker is a few pixels
   // and a raycast against instanced cones is not worth the precision
   const hitAgent = pickAgent(e.clientX, e.clientY)
@@ -1816,7 +1928,7 @@ el('close').addEventListener('click', () => select(null))
 
 /** §51.1: double-click a building or parcel for a focus orbit around it */
 canvas.addEventListener('dblclick', (e) => {
-  if (mode !== 'city') return
+  if (worldsOpen()) return
   pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1)
   raycaster.setFromCamera(pointer, rig.camera)
   const hit = buildings.pick(raycaster)
@@ -2318,7 +2430,7 @@ function toggleSurface(name: Surface, force?: boolean): void {
 function closeEverything(): void {
   for (const cls of Object.values(SURFACES)) document.body.classList.remove(cls)
   select(null)
-  chunksPane.classList.remove('on')
+  openWorlds(false)
   el('help').classList.remove('on')
   el('explainer').style.display = 'none'
 }
@@ -2362,7 +2474,7 @@ let hoverId: string | null = null
 const lastPointer: [number, number] = [0, 0]
 
 function markAt(px: number, py: number): string | null {
-  if (mode !== 'city') return null
+  if (worldsOpen()) return null
   // §59.1: hit-test the pixel people, who are the thing on screen now
   const v = new Vector3()
   let best: { id: string; d: number } | null = null
@@ -2470,8 +2582,6 @@ el('agentLogClose').addEventListener('click', () => follow(null))
 // §36.1: the city switcher, over the chunk index the loader already reads
 // ---------------------------------------------------------------------------
 
-const chunksPane = el('chunks')
-
 /**
  * §46.1: the switcher is live city cards fed by /summary — the data is
  * already served; the switcher spends it. Every distinct server origin is
@@ -2480,6 +2590,10 @@ const chunksPane = el('chunks')
  */
 interface CitySummary {
   id: string
+  /** §67: ISO2, set at import — the listing's second column */
+  country?: string
+  /** §67: how many agents are building or demolishing right now */
+  working?: number
   generation?: number
   divergenceIndex?: number
   agentCount?: number
@@ -2521,62 +2635,16 @@ async function pollSummaries(): Promise<void> {
       }
     }),
   )
-  renderCityCards()
+  if (worldsOpen()) renderWorlds()
 }
 
-const SPARK_GLYPHS = '▁▂▃▄▅▆▇'
-function sparkline(id: string): string {
-  const hist = citySpark.get(id)
-  if (!hist?.length) return ''
-  const max = Math.max(...hist, 1e-6)
-  return hist.map((v) => SPARK_GLYPHS[Math.min(6, Math.floor((v / max) * 6.99))]).join('')
-}
-
-function renderCityCards(): void {
-  const rows = chunks
-    .map((c) => ({ c, s: citySummaries.get(c.id) }))
-    .sort((a, b) => (b.s?.heat ?? b.s?.activityRate ?? -1) - (a.s?.heat ?? a.s?.activityRate ?? -1))
-  el('chunkList').innerHTML = rows
-    .map(({ c, s }) => {
-      const mat = CITY_MATERIALS[c.id] ?? CITY_MATERIAL_DEFAULT
-      const facts = s
-        ? `gen ${s.generation ?? '·'} · ${((s.divergenceIndex ?? 0) * 100).toFixed(1)}% diff · ${s.agentCount ?? '·'} active`
-        : 'unreached — baseline only'
-      const spark = sparkline(c.id)
-      const last = s?.lastEvent ? `last: ${s.lastEvent.text}` : ''
-      return (
-        `<div class="c card${c.id === entry.id ? ' here' : ''}" data-id="${c.id}">` +
-        `<div class="hd"><span class="sw" style="background:${mat.roofTarget}"></span>` +
-        `<span class="nm">${escapeHtml(placeName(c.name))}</span>` +
-        `<span class="where">${c.id === entry.id ? 'here' : ''}</span></div>` +
-        `<div class="ln">${escapeHtml(facts)}</div>` +
-        (spark ? `<div class="ln spark">${spark} activity</div>` : '') +
-        (last ? `<div class="ln dim">${escapeHtml(last)}</div>` : '') +
-        `</div>`
-      )
-    })
-    .join('')
-}
-
-renderCityCards()
-let summaryTimer: ReturnType<typeof setInterval> | null = null
-
-function openChunksPane(on: boolean): void {
-  chunksPane.classList.toggle('on', on)
-  if (on) {
-    void pollSummaries()
-    summaryTimer ??= setInterval(() => {
-      if (chunksPane.classList.contains('on')) void pollSummaries()
-    }, 10_000)
-  }
-}
-
-el('chunkBtn').addEventListener('click', () => openChunksPane(!chunksPane.classList.contains('on')))
-el('chunksClose').addEventListener('click', () => openChunksPane(false))
-el('chunkList').addEventListener('click', (e) => {
-  const row = (e.target as HTMLElement).closest('.c') as HTMLElement | null
-  if (row?.dataset.id) switchTo(row.dataset.id)
-})
+/**
+ * §67: the §46.1 card switcher is retired with the map. It was a second, worse
+ * answer to the same question the listing now answers — the same /summary
+ * numbers in a 250 px box behind a button — and two places to choose a world
+ * is one more than the product has.
+ */
+el('chunkBtn').addEventListener('click', () => openWorlds(!worldsOpen()))
 
 function switchTo(id: string): void {
   if (id === entry.id || !chunks.some((c) => c.id === id)) return
@@ -2688,7 +2756,14 @@ if (sessionStorage.getItem('tf-boot') === '1') {
   boot.remove()
   maybeExplain()
 } else {
-  el('bootLines').firstElementChild?.classList.add('done')
+  // §67: `/earth` is a listing of mounted worlds, and the boot says how many
+  // it found. The markup ships the line without the count because the count
+  // comes from the index, which has not loaded when the markup is parsed.
+  const mount = el('bootLines').firstElementChild
+  if (mount) {
+    mount.textContent = `mounting /earth · ${chunks.length} worlds attached`
+    mount.classList.add('done')
+  }
   bootLine(`reading baseline… ${seed.stats.baselineBuildings.toLocaleString()} buildings`, 'done')
   setTimeout(() => {
     if (!bootDone && !attachEl) attachEl = bootLine('attaching to world…')
@@ -2754,11 +2829,10 @@ el('credits').innerHTML =
  * which on first press turned the auto-camera off and left every panel up:
  * the opposite of ambient, while the button claimed otherwise.
  */
-function toggleAmbient(): void {
+function toggleAmbient(force?: boolean): void {
   if (followId) follow(null)
-  const on = !document.body.classList.contains('ambient')
-  ambientWasOn = on
-  if (ambientResumeTimer) clearTimeout(ambientResumeTimer)
+  const on = force ?? !document.body.classList.contains('ambient')
+  if (on === document.body.classList.contains('ambient')) return
   // §24.1: "panels ... gone entirely in ambient." The top bar keeps the ambient
   // button itself reachable, so it is exempt — leaving it running must not mean
   // leaving it with no way out.
@@ -2780,7 +2854,7 @@ function toggleAmbient(): void {
     director.enabled = true
   }
 }
-el('ambient').addEventListener('click', toggleAmbient)
+el('ambient').addEventListener('click', () => toggleAmbient())
 
 // §40.1: the ghost is a HOLD, so it needs the release too — and a blur, or a
 // tab switch mid-hold would leave the world wearing its own past forever
@@ -2795,6 +2869,27 @@ addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return
   // the boot's own once-listener consumes the first key as a skip
   if (!bootDone) return
+  /**
+   * §67: while the listing is up the arrows are its cursor and enter is its
+   * commit. Everything else still reaches the world behind it — `[` `]` cycle,
+   * `0` comes home, `a` toggles ambient — so the listing is a lens on the
+   * product rather than a mode you have to leave first.
+   */
+  if (worldsOpen() && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'Enter')) {
+    e.preventDefault()
+    if (e.key === 'Enter') {
+      diveTo(worldsSel)
+      return
+    }
+    // the order holds still while it is being walked, for the same reason it
+    // holds still under the pointer: enter must land on the row that was lit
+    orderFrozen ??= worldRows().map((r) => r.c.id)
+    const at = orderFrozen.indexOf(worldsSel)
+    const next = (at + (e.key === 'ArrowDown' ? 1 : orderFrozen.length - 1)) % orderFrozen.length
+    worldsSel = orderFrozen[next]
+    renderWorlds()
+    return
+  }
   switch (e.key) {
     case 'a':
       toggleAmbient()
@@ -2817,10 +2912,10 @@ addEventListener('keydown', (e) => {
       break
     case 'b':
       // §40.1: hold to see what was here
-      if (mode === 'city') ghost.held = true
+      ghost.held = true
       break
     case 't':
-      if (mode === 'city') startTimelapse()
+      startTimelapse()
       break
     case 'v':
       setVerbose(!verboseFeed)
@@ -2843,8 +2938,7 @@ addEventListener('keydown', (e) => {
       toggleSurface('digest')
       break
     case 'm':
-      if (mode === 'city') toGlobe()
-      else diveTo(entry.id)
+      openWorlds(!worldsOpen())
       break
     case 's':
       el('soundBtn').click()
@@ -2862,9 +2956,10 @@ addEventListener('keydown', (e) => {
       openCards(true)
       break
     case '0':
-      // §51.1: 0 returns to the chunk's home framing
-      if (mode === 'city') civHome()
-      else frameGlobeHome(1.6)
+      // §51.1/§66.2: 0 returns to the chunk's home framing, from any state —
+      // and §67 leaves only one state to return from
+      openWorlds(false)
+      civHome()
       break
     case 'Escape':
       closeEverything()
@@ -2885,7 +2980,7 @@ function resize(): void {
   // Clamping into the new limit is enough on its own: a viewer who has zoomed
   // in is already below the maximum and is left alone, and one sitting at city
   // framing lands on the new city framing.
-  rig.limits.maxDistance = frameThePlate(aspect) * 1.35
+  rig.limits.maxDistance = frameThePlate(aspect) * 1.12
   rig.distance = Math.min(rig.distance, rig.limits.maxDistance)
   const pr = renderer.getPixelRatio()
   tiltShift.setSize(Math.floor(innerWidth * pr), Math.floor(innerHeight * pr))
@@ -3102,12 +3197,7 @@ renderer.setAnimationLoop(() => {
   // animated in this world stops with it, and a camera that kept breathing
   // through a frozen frame would put its own motion into every a/b pair.
   rig.driftTarget =
-    frozenClock === null &&
-    document.body.classList.contains('ambient') &&
-    !followId &&
-    mode === 'city'
-      ? 1
-      : 0
+    frozenClock === null && document.body.classList.contains('ambient') && !followId ? 1 : 0
   rig.advanceDrift(dt)
   rig.update(dt)
   director.update(dt, liveTick)
@@ -3132,28 +3222,15 @@ renderer.setAnimationLoop(() => {
   updateChip()
   updateSiteMarks()
 
-  if (mode === 'city') {
-    // §59.1: the exact term that keeps a figure at or above 16 px — the lens
-    // opens as the camera descends, so it is computed per frame rather than baked
-    const fovRad = (rig.camera.fov * Math.PI) / 180
-    pixelAgents.setAgents(
-      pixelPeople(),
-      substrate.groundY,
-      t,
-      (2 * Math.tan(fovRad / 2)) / innerHeight,
-    )
-  } else {
-    // §49: the recorded migrations replay as travelling lights
-    globeArcs.update(dt)
-    arcTimer -= dt
-    if (arcTimer <= 0 && migrationRecord.length) {
-      arcTimer = 2.6
-      const m = migrationRecord[arcCursor++ % migrationRecord.length]
-      const from = globe.markers.find((x) => x.id === m.fromChunk)?.position
-      const to = globe.markers.find((x) => x.id === m.toSettlement)?.position
-      if (from && to) globeArcs.launchArc(from, to, '#e2a54f', 6, 'up')
-    }
-  }
+  // §59.1: the exact term that keeps a figure at or above 16 px — the lens
+  // opens as the camera descends, so it is computed per frame rather than baked
+  const fovRad = (rig.camera.fov * Math.PI) / 180
+  pixelAgents.setAgents(
+    pixelPeople(),
+    substrate.groundY,
+    t,
+    (2 * Math.tan(fovRad / 2)) / innerHeight,
+  )
 
   crewTimer += dt
   if (crewTimer > 1.5) {
@@ -3220,9 +3297,7 @@ renderer.setAnimationLoop(() => {
   // §56.1: the glow follows the authored hour, and the globe keeps a little of
   // it — the eight marks are the only emitters up there, and a mark that glows
   // is a mark you can count (§49's acceptance) rather than one more dot.
-  tiltShift.bloom.strength = bloomOverride ?? (mode === 'globe' ? 0.5 : BLOOM_STRENGTH)
-  // §49: the globe is fully exempt from the miniature's depth of field — the
-  // grade and vignette still apply, the blur does not
+  tiltShift.bloom.strength = bloomOverride ?? BLOOM_STRENGTH
   tiltShift.render(
     renderer,
     scene,
@@ -3231,18 +3306,8 @@ renderer.setAnimationLoop(() => {
     // target, so the plane sits on whatever the camera is pointed at — the
     // double-click focus, the followed agent, the log line's fly-to
     rig.distance,
-    mode === 'globe' || !focusOn ? 0 : (1 - close) * (1 - close),
+    !focusOn ? 0 : (1 - close) * (1 - close),
   )
-  if (mode === 'globe') {
-    globe.updateLOD(rig.distance)
-    updateGlobeLabels()
-    // §49 r3: ambient returns to the home framing, the globe's drift-back
-    globeIdle += dt
-    if (globeIdle > 14 && document.body.classList.contains('ambient')) {
-      globeIdle = -24
-      frameGlobeHome(3.4)
-    }
-  }
 })
 
 /** §59.1: the city population, as pixel people */
@@ -3309,9 +3374,19 @@ function* withIdentity(): Generator<AgentPresence> {
  * correct distance aimed at a stale target looks like.
  */
 function civHome(opts: { snap?: boolean } = {}): void {
-  // a follow re-aims the camera every frame, so a home framing taken while one
-  // is running is undone before it lands. `0` is the rescue; it lets go first.
+  /**
+   * §66.2: home is reachable from ANY state, and reaching it ends ambient.
+   *
+   * Three things could undo it and all three are released here. A follow
+   * re-aims the camera every frame, so a home framing taken under one is
+   * undone before it lands. The director will cut away from it on its next
+   * beat. And ambient would have brought both back — a viewer who asks for the
+   * whole city and gets it for ten seconds before being flown somewhere has
+   * not been given the whole city.
+   */
   if (followId) follow(null)
+  toggleAmbient(false)
+  director.enabled = false
   director.takeControl()
   rig.home(
     CITY_CENTRE.clone(),
@@ -3330,8 +3405,6 @@ function civHome(opts: { snap?: boolean } = {}): void {
    * projects the same square the invariant bounds rather than re-deriving an
    * extent from chunk bounds it would have to keep in step by hand.
    */
-  /** §63.5/§62.2: the flat map itself, for the acceptance and fuzz harnesses */
-  mapView: globe,
   /**
    * §65: the local->world helper and three's Box3, so a harness can measure
    * where the city ACTUALLY is rather than trusting metadata about where it
@@ -3372,18 +3445,38 @@ function civHome(opts: { snap?: boolean } = {}): void {
       centre: [CITY.cx, CITY.cy],
       half: [CITY.halfX, CITY.halfY],
       world: [CITY_CENTRE.x, CITY_CENTRE.z],
+      /**
+       * §66.3: and where inside that box anything actually STANDS. A frame can
+       * be entirely inside the fabric's bounding box and be an empty yard —
+       * the contact sheet found one — so "how much of the frame is city" has
+       * to be counted against this, not against the box.
+       */
+      built: { cell: BUILT_CELL_M, cols: BUILT.cols, rows: BUILT.rows, cells: BUILT.built },
     },
-    /** the map is its own plate, 2:1, and must not be lost either */
-    get map() {
-      return { halfWidth: globe.halfWidth, halfHeight: globe.halfHeight }
+    /** §66.3: is there anything standing at this world point? */
+    builtAt: (wx: number, wz: number) => Number.isFinite(builtTopAt(wx, wz)),
+    /** §66.3: the roofline at this world point, for a heightfield ray march */
+    roofAt: builtTopAt,
+    /** §66.3: the tallest roof anywhere in the fabric, to bound that march */
+    tallest: (() => {
+      let top = -Infinity
+      for (const y of BUILT.top) if (y > top) top = y
+      return top
+    })(),
+    /** §66.3: the tallest roofline near a world point, for the clearance canary */
+    ceilingNear,
+    /**
+     * §67: there is one plate now. The map is retired, so the camera has no
+     * second mode to be in and every harness that branched on this reads a
+     * constant — kept rather than deleted so an old rig fails loudly on a
+     * missing key instead of silently taking the wrong branch.
+     */
+    get mode(): 'city' {
+      return 'city'
     },
-    get mode() {
-      return mode
-    },
-    /** §62.4: whichever `0` lands on, snapped, for the capture rigs */
+    /** §62.4: `0`, snapped, for the capture rigs */
     home(snap = true) {
-      if (mode === 'city') civHome({ snap })
-      else frameGlobeHome(1.2, snap)
+      civHome({ snap })
     },
   },
   buildings,
@@ -3492,10 +3585,16 @@ function civHome(opts: { snap?: boolean } = {}): void {
     crew: (on?: boolean) => toggleCrew(on),
     agentCard: (id: string) => showAgentCard(id),
     chunks: () => chunks,
+    /**
+     * §67: the summaries the listing is built from, so an acceptance harness
+     * asserts the sort against the data the rows were rendered from rather
+     * than re-fetching /summary and comparing against a different instant.
+     */
+    summaries: () => [...citySummaries.values()],
     switchTo,
-    toGlobe,
+    openWorlds,
+    worldsOpen,
     diveTo,
-    orbitFor,
     /** return to the §24.1 framed orientation, for tooling and captures */
     home: civHome,
     /**
@@ -3513,9 +3612,6 @@ function civHome(opts: { snap?: boolean } = {}): void {
       })
     },
   },
-  /** §57.3: the map's marks, for the every-city-in-one-frame check */
-  mapMarkers: () =>
-    globe.markers.map((m) => ({ id: m.id, x: m.position.x, y: m.position.y, z: m.position.z })),
   /** §57.4: the plate's own extent, so a framing check can project its corners */
   halfExtent: HALF_EXTENT,
   groundY: substrate.groundY,
@@ -3550,17 +3646,20 @@ function civHome(opts: { snap?: boolean } = {}): void {
 
 
 /**
- * §49.4: first load is boot -> globe -> one beat -> dive to the busiest
- * city. Once per session: a switch or a refresh mid-visit lands directly in
- * its city, and the intro never traps a returning viewer.
+ * §49.4, in §67's grammar: first load is boot -> the listing -> one beat ->
+ * dive to the busiest world. The stage the map used to hold is the listing's
+ * now, and it holds it for the same reason: a stranger should see that there
+ * is more than one of these before being put inside one. Once per session — a
+ * switch or a refresh mid-visit lands directly in its city, and the intro
+ * never traps a returning viewer.
  */
 const bareLoad = !new URLSearchParams(location.search).has('chunk')
-if (bareLoad && !arriving && !sessionStorage.getItem('tf-globe-seen')) {
-  sessionStorage.setItem('tf-globe-seen', '1')
-  toGlobe()
+if (bareLoad && !arriving && !sessionStorage.getItem('tf-earth-seen')) {
+  sessionStorage.setItem('tf-earth-seen', '1')
+  openWorlds(true)
   void pollSummaries().then(() => {
     setTimeout(() => {
-      if (mode !== 'globe') return
+      if (!worldsOpen()) return
       // §40.6: the busiest city is the one with the most watchable work in
       // it, not the one filing the most paperwork — heat is the summed
       // cinematic weight of the recent window, and only falls back to the raw

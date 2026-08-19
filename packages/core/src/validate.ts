@@ -281,7 +281,12 @@ function distanceToRingEdge(ring: Ring, x: number, y: number): number {
   return best
 }
 
-function pointInRing(ring: Ring, x: number, y: number): boolean {
+/**
+ * Ray-crossing test, chunk-local metres. Exported because the client's §66.3
+ * built-occupancy grid rasterises the same footprints and two copies of this
+ * that could disagree is exactly the drift §21.4 exists to prevent.
+ */
+export function pointInRing(ring: Ring, x: number, y: number): boolean {
   let inside = false
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
     const [xi, yi] = ring[i]

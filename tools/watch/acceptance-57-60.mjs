@@ -208,34 +208,39 @@ claim(
 await page.screenshot({ path: `${OUT}/3-pixel-agent.png` })
 
 // ---------------------------------------------------------------------------
-// 7. open the flat map and see every city at once
+// 7. open /earth and see every world at once
 // ---------------------------------------------------------------------------
+/**
+ * §67 replaces §57.3's flat map. The claim survives the replacement — "every
+ * city at once, none of them lost" is exactly what the map was for and exactly
+ * what the listing is for — so it is re-asserted against the listing rather
+ * than dropped: every mounted world has a row, and every row is on screen.
+ */
 await page.evaluate(() => window.civ.follow(null))
 await page.waitForTimeout(600)
-// the product's own entry to the map (§57.3); §57.4's zoom-out handover is
-// the other one and the fuzz already exercises that
-await page.evaluate(() => window.civ.ui.toGlobe())
-await page.waitForTimeout(5000)
-const map = await page.evaluate(() => {
-  const view = window.civ.mapView
-  if (!view || window.civ.plate.mode !== 'globe') return null
-  const rig = window.civ.rig
-  rig.settle()
-  rig.camera.updateMatrixWorld(true)
-  const V = window.civ.Vector3
-  const on = view.markers.filter((m) => {
-    const v = new V(m.position.x, m.position.y, m.position.z).project(rig.camera)
-    return Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1 && v.z < 1
+await page.evaluate(() => window.civ.ui.openWorlds(true))
+await page.waitForTimeout(4500)
+const worlds = await page.evaluate(() => {
+  if (!window.civ.ui.worldsOpen()) return null
+  const rows = [...document.querySelectorAll('#worldsList .row')]
+  const vis = rows.filter((r) => {
+    const b = r.getBoundingClientRect()
+    return b.top >= 0 && b.bottom <= innerHeight && b.width > 0
   })
-  return { on: on.length, total: view.markers.length, names: on.map((m) => m.name) }
+  return {
+    on: vis.length,
+    total: window.civ.ui.chunks().length,
+    names: vis.map((r) => r.querySelector('.nm')?.textContent?.trim() ?? ''),
+  }
 })
 await page.waitForTimeout(1200)
 claim(
-  '§57.3 flat map, every city at once',
-  !!map && map.on === map.total && map.total > 1,
-  map ? `${map.on}/${map.total} marks in frame — ${map.names.join(', ')}` : 'no map view',
+  '§67 /earth, every world at once',
+  !!worlds && worlds.on === worlds.total && worlds.total > 1,
+  worlds ? `${worlds.on}/${worlds.total} rows in frame — ${worlds.names.join(', ')}` : 'listing did not open',
 )
-await page.screenshot({ path: `${OUT}/4-flat-map.png` })
+await page.screenshot({ path: `${OUT}/4-earth.png` })
+await page.evaluate(() => window.civ.ui.openWorlds(false))
 
 // ---------------------------------------------------------------------------
 const video = page.video()

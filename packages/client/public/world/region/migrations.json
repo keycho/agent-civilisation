@@ -1,29 +1,37 @@
 {
- "_": "real migrations recorded from region run globe-record-0 at 90k decisions (§49); replayed on the globe until live migration exists on the wire",
+ "_": "real migrations recorded from region run globe-record-0 at 90k decisions (§49), re-recorded for §67 against the post-§58 sim — the pre-§58 record was a replay of a trajectory the engine no longer produces. agentName added so the world listing can name who moved.",
  "migrations": [
   {
+   "agentId": "agent-42",
+   "agentName": "Adriana Slagter",
    "fromChunk": "schiedam-havens",
-   "toSettlement": "maasland-dorp"
+   "toSettlement": "maasland-dorp",
+   "departedTick": 385,
+   "reversed": false
   },
   {
+   "agentId": "agent-18",
+   "agentName": "Ivy Cobb",
    "fromChunk": "london-deptford",
-   "toSettlement": "maassluis-haven"
+   "toSettlement": "maassluis-haven",
+   "departedTick": 390,
+   "reversed": false
   },
   {
-   "fromChunk": "schiedam-havens",
-   "toSettlement": "maasland-dorp"
-  },
-  {
+   "agentId": "agent-19",
+   "agentName": "Wouter Oosterhuis",
    "fromChunk": "maasland-dorp",
-   "toSettlement": "london-deptford"
+   "toSettlement": "london-deptford",
+   "departedTick": 381,
+   "reversed": false
   },
   {
+   "agentId": "agent-50",
+   "agentName": "Roosmarijn Kluyver",
    "fromChunk": "maassluis-haven",
-   "toSettlement": "schiedam-havens"
-  },
-  {
-   "fromChunk": "maassluis-haven",
-   "toSettlement": "maasland-dorp"
+   "toSettlement": "london-deptford",
+   "departedTick": 381,
+   "reversed": false
   }
  ]
 }

@@ -75,6 +75,35 @@ export interface LensConfig {
  * needs to sit ~2.1 km back. That is the price of the orthographic read and
  * the distance limits have to be built for it, not for a normal lens.
  */
+/**
+ * §66.3: how far below the horizon the top of frame must stay, in degrees.
+ * At zero the far edge of the plate sits exactly on the horizon line and the
+ * shot reads as a photograph of an edge; eight degrees puts ground behind it.
+ */
+const HORIZON_MARGIN_DEG = 8
+
+/**
+ * §66.3: how far above the local roofline the eye must stay, in metres.
+ *
+ * The contact sheet's second finding. Every camera invariant up to here was
+ * about the TARGET — where the camera is pointed, whether the fabric is on
+ * screen, how much of it fills the frame. None of them said anything about
+ * where the eye is, and a legal state put the lens inside a facade: the target
+ * was on the fabric, the coverage was over its floor, and the frame was one
+ * building's window wall in extreme close-up. Seven metres clears a low roof
+ * and a two-storey terrace, which is the height at which the shot stops being
+ * masonry and starts being a street.
+ */
+const EYE_CLEARANCE_M = 7
+
+/**
+ * How wide a neighbourhood the eye has to clear, as a fraction of distance.
+ * Bounded below so a street framing still checks its immediate surroundings and
+ * above because past a few tens of metres the question stops being "what is
+ * next to the lens".
+ */
+const CLEARANCE_RADIUS = { of: 0.15, min: 6, max: 40 }
+
 export const CITY_LENS: LensConfig = {
   cityFov: 15,
   streetFov: 42,
@@ -93,6 +122,14 @@ export const TOOL_LENS: LensConfig = {
 export class CameraRig {
   readonly camera: PerspectiveCamera
   readonly target = new Vector3()
+
+  /**
+   * §66.3: the tallest roofline within `radius` metres of a world point, or
+   * -Infinity where nothing stands. The city supplies it from its measured
+   * built grid; the flat map has no fabric to collide with and leaves it null,
+   * which turns the clearance invariant off rather than guessing.
+   */
+  ceilingNear: ((x: number, z: number, radius: number) => number) | null = null
 
   distance = 700
   azimuth = -0.6
@@ -157,7 +194,7 @@ export class CameraRig {
     this.desiredPolar = MathUtils.clamp(
       this.desiredPolar - dy * 0.0032,
       this.limits.minPolar,
-      this.limits.maxPolar,
+      this.maxPolarFor(this.desiredDistance),
     )
   }
 
@@ -257,12 +294,16 @@ export class CameraRig {
       this.limits.minDistance,
       this.limits.maxDistance,
     )
-    this.desiredPolar = MathUtils.clamp(
-      this.desiredPolar,
-      this.limits.minPolar,
-      this.limits.maxPolar,
-    )
-    this.polar = MathUtils.clamp(this.polar, this.limits.minPolar, this.limits.maxPolar)
+    const maxPolar = this.maxPolarFor(this.desiredDistance)
+    this.desiredPolar = MathUtils.clamp(this.desiredPolar, this.limits.minPolar, maxPolar)
+    this.polar = MathUtils.clamp(this.polar, this.limits.minPolar, this.maxPolarFor(this.distance))
+    // §66.3: and the eye stays out of the masonry, on both states
+    const lifted = this.clearRoofline(this.desiredPolar, this.desiredDistance, this.desiredAzimuth)
+    this.desiredPolar = lifted.polar
+    this.desiredDistance = lifted.distance
+    const live = this.clearRoofline(this.polar, this.distance, this.azimuth)
+    this.polar = live.polar
+    this.distance = live.distance
     // §62.5: azimuth is free, and the one thing that must not accumulate — an
     // unwrapped angle grows without bound under continuous orbiting and
     // eventually loses precision in the sines that place the camera. Shifting
@@ -273,6 +314,63 @@ export class CameraRig {
       this.azimuth += shift
       this.desiredAzimuth += shift
     }
+  }
+
+  /**
+   * §66.3: lift the eye clear of whatever it is standing in.
+   *
+   * Pitching UP is the cheap move and the wrong one — it would swing the shot
+   * off the fabric the other invariants just spent their effort keeping on
+   * screen. Pitching toward vertical raises the eye and keeps the target
+   * exactly where the viewer put it, so the fix costs the shot its obliquity
+   * and nothing else. Lowering polar also walks the eye horizontally, over
+   * different buildings, so this iterates rather than solving once.
+   *
+   * If even a plan view cannot clear the roofline the camera is closer to the
+   * fabric than the fabric is tall, and only backing off fixes that.
+   */
+  private clearRoofline(
+    polar: number,
+    distance: number,
+    azimuth: number,
+  ): { polar: number; distance: number } {
+    if (!this.ceilingNear) return { polar, distance }
+    const radius = MathUtils.clamp(
+      distance * CLEARANCE_RADIUS.of,
+      CLEARANCE_RADIUS.min,
+      CLEARANCE_RADIUS.max,
+    )
+    let p = polar
+    let need = -Infinity
+    for (let i = 0; i < 4; i++) {
+      const sinP = Math.sin(p)
+      const top = this.ceilingNear(
+        this.target.x + distance * sinP * Math.sin(azimuth),
+        this.target.z + distance * sinP * Math.cos(azimuth),
+        radius,
+      )
+      if (!Number.isFinite(top)) return { polar: p, distance }
+      need = top + EYE_CLEARANCE_M
+      if (this.target.y + distance * Math.cos(p) >= need) return { polar: p, distance }
+      const next = Math.max(
+        this.limits.minPolar,
+        Math.acos(MathUtils.clamp((need - this.target.y) / distance, -1, 1)),
+      )
+      if (next >= p - 1e-4) {
+        p = next
+        break
+      }
+      p = next
+    }
+    // still short at the flattest pitch allowed: back the lens off instead
+    if (this.target.y + distance * Math.cos(p) < need) {
+      distance = MathUtils.clamp(
+        (need - this.target.y) / Math.max(Math.cos(p), 0.2),
+        distance,
+        this.limits.maxDistance,
+      )
+    }
+    return { polar: p, distance }
   }
 
   /**
@@ -378,14 +476,34 @@ export class CameraRig {
    * inset `clampToPlate` keeps the target away from the fabric's edge by.
    */
   private visibleGroundHalf(): number {
+    return this.desiredDistance * Math.tan(((this.fovAt(this.desiredDistance) / 2) * Math.PI) / 180)
+  }
+
+  /** the lens at a given distance — the same ramp `apply` uses to set it */
+  private fovAt(distance: number): number {
     const t = MathUtils.clamp(
-      (this.desiredDistance - this.lens.streetDistance) /
-        (this.lens.cityDistance - this.lens.streetDistance),
+      (distance - this.lens.streetDistance) / (this.lens.cityDistance - this.lens.streetDistance),
       0,
       1,
     )
-    const fov = MathUtils.lerp(this.lens.streetFov, this.lens.cityFov, easeInOutCubic(t))
-    return this.desiredDistance * Math.tan(((fov / 2) * Math.PI) / 180)
+    return MathUtils.lerp(this.lens.streetFov, this.lens.cityFov, easeInOutCubic(t))
+  }
+
+  /**
+   * §66.3: the pitch floor. How far from vertical this shot may lean before the
+   * TOP OF FRAME looks across the plate and finds void above the far edge.
+   *
+   * `maxPolar` alone cannot say this, because the answer depends on the lens:
+   * at street level the frame is 42 degrees tall and at city range 15, so the
+   * same pitch that is composed at one is looking at the sky at the other. The
+   * top edge sits `fov/2` further from vertical than the camera's own polar, so
+   * the ray that matters clears the horizon only while
+   * `polar + fov/2 < 90 - margin`. Eight degrees of margin, so the far edge has
+   * ground behind it rather than sitting exactly on the horizon line.
+   */
+  private maxPolarFor(distance: number): number {
+    const headroom = ((90 - this.fovAt(distance) / 2 - HORIZON_MARGIN_DEG) * Math.PI) / 180
+    return Math.min(this.limits.maxPolar, headroom)
   }
 
   /**
@@ -447,12 +565,41 @@ export class CameraRig {
         )}, ${this.limits.maxDistance.toFixed(0)}]`,
       )
     }
-    if (this.polar < this.limits.minPolar - 1e-3 || this.polar > this.limits.maxPolar + 1e-3) {
+    const maxPolar = this.maxPolarFor(this.distance)
+    if (this.polar < this.limits.minPolar - 1e-3 || this.polar > maxPolar + 1e-3) {
       out.push(
-        `polar ${this.polar.toFixed(3)} outside [${this.limits.minPolar}, ${this.limits.maxPolar}]`,
+        `polar ${this.polar.toFixed(3)} outside [${this.limits.minPolar}, ${maxPolar.toFixed(3)}] ` +
+          `at d=${this.distance.toFixed(0)}`,
+      )
+    }
+    // §66.3: measured where the camera actually IS, after drift, because drift
+    // is applied at placement time and never written back into the rig's state
+    const clearance = this.eyeClearance()
+    if (clearance < 0) {
+      out.push(
+        `eye ${(-clearance).toFixed(1)} m inside the roofline ` +
+          `(needs ${EYE_CLEARANCE_M} m of it) at d=${this.distance.toFixed(0)}`,
       )
     }
     return out
+  }
+
+  /**
+   * §66.3: metres of headroom the eye has over its neighbourhood's roofline,
+   * beyond the margin it is required to keep. Negative is a lens in masonry.
+   * Infinite where nothing stands nearby, and where the map has no fabric.
+   */
+  eyeClearance(): number {
+    if (!this.ceilingNear) return Infinity
+    const p = this.camera.position
+    const radius = MathUtils.clamp(
+      this.distance * CLEARANCE_RADIUS.of,
+      CLEARANCE_RADIUS.min,
+      CLEARANCE_RADIUS.max,
+    )
+    const top = this.ceilingNear(p.x, p.z, radius)
+    if (!Number.isFinite(top)) return Infinity
+    return p.y - (top + EYE_CLEARANCE_M)
   }
 
   /** How close to street level we are, 0..1 — used to fade the tilt-shift out. */
