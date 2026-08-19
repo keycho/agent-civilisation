@@ -1,0 +1,33 @@
+
+schiedam-havens  (34,000 decisions)
+  flat cap   §73.3 grey  18.2%   standing  95.3%   touched  93.6%   divergence  64.3%
+             classes: untouched 6.4%  owned 0.2%  renovated 4.9%  converted 5.9%  expanded 67.6%  cleared 15.0%  replaced 0.0%
+             grey lost to: 143 gone, 507 repurposed, 116 more than half again as tall
+             floors added to inherited stock: 1849 across 707 buildings (mean 2.62, worst 5)
+  structure  §73.3 grey  27.0%   standing  95.0%   touched  93.2%   divergence  64.1%
+             classes: untouched 6.8%  owned 0.0%  renovated 4.6%  converted 6.8%  expanded 66.1%  cleared 15.6%  replaced 0.0%
+             grey lost to: 147 gone, 495 repurposed, 41 more than half again as tall
+             floors added to inherited stock: 1305 across 703 buildings (mean 1.86, worst 4)
+             fabric: masonry 503  modern_frame 268  early_frame 120  shed 28  post_war_frame 17
+
+london-deptford  (34,000 decisions)
+  flat cap   §73.3 grey  31.9%   standing  95.6%   touched  89.1%   divergence  56.1%
+             classes: untouched 10.9%  owned 0.1%  renovated 11.5%  converted 21.5%  expanded 45.9%  cleared 10.1%  replaced 0.0%
+             grey lost to: 80 gone, 438 repurposed, 21 more than half again as tall
+             floors added to inherited stock: 830 across 378 buildings (mean 2.20, worst 5)
+  structure  §73.3 grey  35.3%   standing  95.2%   touched  88.4%   divergence  56.2%
+             classes: untouched 11.6%  owned 0.1%  renovated 10.4%  converted 20.4%  expanded 46.1%  cleared 11.4%  replaced 0.0%
+             grey lost to: 90 gone, 422 repurposed, 0 more than half again as tall
+             floors added to inherited stock: 472 across 389 buildings (mean 1.21, worst 2)
+             fabric: masonry 551  early_frame 185  shed 39  post_war_frame 16
+
+brooklyn-redhook  (34,000 decisions)
+  flat cap   §73.3 grey  28.1%   standing  99.9%   touched  85.8%   divergence  56.4%
+             classes: untouched 14.2%  owned 0.1%  renovated 7.5%  converted 9.2%  expanded 65.0%  cleared 3.9%  replaced 0.0%
+             grey lost to: 34 gone, 515 repurposed, 74 more than half again as tall
+             floors added to inherited stock: 1626 across 571 buildings (mean 2.85, worst 5)
+  structure  §73.3 grey  32.2%   standing  99.4%   touched  85.3%   divergence  56.1%
+             classes: untouched 14.7%  owned 0.2%  renovated 6.8%  converted 9.9%  expanded 64.5%  cleared 3.8%  replaced 0.0%
+             grey lost to: 33 gone, 529 repurposed, 25 more than half again as tall
+             floors added to inherited stock: 653 across 568 buildings (mean 1.15, worst 2)
+             fabric: masonry 655  early_frame 160  shed 37  post_war_frame 14
