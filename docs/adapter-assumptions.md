@@ -810,11 +810,35 @@ legal state loses the city — and stops pretending to be a judgement of
 composition it cannot make.
 
 The director sheet answers the operator's question the way the fuzz sheet could
-not: every frame is a composed shot of work in progress at block scale —
-scaffold and crane against dark fabric, agent labels, lamps on the kerb — and
-they are frames you would post. The difference is not the camera's bounds. It is
-that the director aims at where something is HAPPENING, and where something is
-happening is lit.
+not, and it does not answer it perfectly. Judged frame by frame on schiedam at
+night:
+
+| frame | shot | verdict |
+|---|---|---|
+| 1 | the opening, whole plate held | post |
+| 2 | construction, d=1979 | post |
+| 3 | demolition, d=192 | marginal — dim, but the site reads |
+| 4 | agent, d=190 | **would not post** — near black, one orange smear |
+| 5 | agent, d=150 | marginal — dark, the scaffold carries it |
+| 6-10 | agent, d=150 | post — lit fabric, scaffold, kerb lamps |
+
+**One in ten rather than three in ten**, and the one that fails fails for the
+reason the fuzz sheet was pointing at all along: the director aimed at an agent
+who happened to be standing somewhere unlit. Where something is HAPPENING is
+usually lit, which is why the director's frames are mostly good — but "usually"
+is doing work there, and the remaining defect is a selection rule, not a camera
+bound.
+
+Two findings out of this sheet, both escalated rather than acted on because both
+are director-selection changes and §66 is about the camera:
+
+1. **an intent should know whether its subject is lit.** §47.4 already weights
+   idle beats toward work in progress; the same weighting applied to agent
+   intents — prefer a subject with light on it — is what would remove frame 4.
+2. **the director repeats itself.** Seven of ten shots were `agent` at exactly
+   d=150 and pitch 0.9. Variety in distance and pitch is most of what makes a
+   sequence read as filmed rather than sampled, and the ranking currently has
+   nothing that discourages the same composition twice running.
 
 ## Carried, not fixed
 
