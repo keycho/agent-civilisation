@@ -26,6 +26,24 @@ import type { EventQuery, Snapshot, WorldStore } from './store.ts'
 
 type Sql = ReturnType<typeof postgres>
 
+/**
+ * §72.4: how deep the write-behind queue may get before the world is made to
+ * wait for it.
+ *
+ * Sized as roughly ten seconds of a busy eight-chunk process at the §72.2 pace,
+ * so an ordinary latency spike is absorbed and a sustained shortfall is not.
+ * Crossing it is not an error — it is the queue saying the database is the
+ * constraint, and the only honest response is to stop producing history faster
+ * than history can be written down.
+ */
+const QUEUE_CEILING = 20_000
+
+/** the window the drain rate is measured over */
+const DRAIN_WINDOW_MS = 30_000
+
+/** §72.4: a queue this deep after a flush gets another one immediately */
+const CATCH_UP_AT = 2_000
+
 export interface DurableOptions {
   /** Postgres/Supabase connection string. Without one this is memory-only. */
   url?: string
@@ -236,6 +254,44 @@ export class DurableStore implements WorldStore {
   get lag(): { events: number; snapshots: number } {
     return { events: this.pendingEvents.length, snapshots: this.pendingSnapshots.length }
   }
+
+  /**
+   * §72.4: what the flusher is achieving, so a queue that is falling behind can
+   * be seen falling behind rather than inferred from a number that grows.
+   *
+   * Production went 701 -> 10,736 -> 18,256 queued events across 1,000 seconds,
+   * monotonic, and nothing reported why. `rowsPerSecond` is what the drain
+   * actually sustains; `busy` is the share of wall clock spent inside a flush.
+   * When busy approaches 1 and the queue still grows, the database is the
+   * ceiling and the emit rate has to be bounded by it — which is what
+   * `saturated` says and what the tick loop now reads.
+   */
+  get drain(): { rowsPerSecond: number; lastMs: number; busy: number; saturated: boolean } {
+    const span = Math.max(1, Date.now() - this.drainSince)
+    return {
+      rowsPerSecond: +((this.drainRows / span) * 1000).toFixed(0),
+      lastMs: this.lastFlushMs,
+      busy: +Math.min(1, this.drainMs / span).toFixed(2),
+      saturated: this.saturated,
+    }
+  }
+
+  /**
+   * §72.4: the queue is deeper than the flusher can clear in a few intervals.
+   *
+   * The tick loop reads this and stops advancing the world until it clears. "A
+   * permanently growing queue is a slow leak plus a data-loss window" — the
+   * only two ways out are a faster drain or a slower emitter, and when the
+   * drain is already saturated the emitter is the one that has to give.
+   */
+  get saturated(): boolean {
+    return this.pendingEvents.length > QUEUE_CEILING
+  }
+
+  private drainRows = 0
+  private drainMs = 0
+  private drainSince = Date.now()
+  private lastFlushMs = 0
 
   snapshotAt(chunkId: string, ordinal: number): Snapshot | undefined {
     return this.memory.snapshotAt(chunkId, ordinal)
@@ -492,6 +548,7 @@ export class DurableStore implements WorldStore {
     if (!this.sql || this.flushing) return
     if (this.pendingEvents.length === 0 && this.pendingSnapshots.length === 0) return
     this.flushing = true
+    const t0 = Date.now()
     const events = this.pendingEvents
     const snapshots = this.pendingSnapshots
     /**
@@ -537,6 +594,15 @@ export class DurableStore implements WorldStore {
         this.highWaterOrdinal,
         events.length ? events[events.length - 1].id : this.highWaterOrdinal,
       )
+      /**
+       * §72.4: snapshots go in one statement rather than one round trip each.
+       *
+       * At `snapshotEveryEvents` and eight chunks this was a handful of
+       * sequential awaits per flush, each carrying a few kilobytes of bytea —
+       * and on a pooled connection to a database a continent away the round
+       * trips, not the bytes, are what the interval is spent on.
+       */
+      const ready: Snapshot[] = []
       for (const s of snapshots) {
         if (s.ordinal > this.highWaterOrdinal) {
           // Should be unreachable: the drain above wrote every event queued
@@ -548,24 +614,23 @@ export class DurableStore implements WorldStore {
             ),
           )
         }
-        const row = [
-          s.chunkId,
-          s.season,
-          s.ordinal,
-          s.generation,
-          s.tick,
-          Buffer.from(s.buildingData),
-          s.divergenceIndex,
-          this.sql.json(s.stats),
-        ] as const
+        ready.push(s)
+      }
+      for (let i = 0; i < ready.length; i += 100) {
+        const rows = ready.slice(i, i + 100).map((s) => ({
+          chunk_id: s.chunkId,
+          season: s.season,
+          event_ordinal: s.ordinal,
+          generation: s.generation,
+          tick: s.tick,
+          building_data: Buffer.from(s.buildingData),
+          divergence_index: s.divergenceIndex,
+          stats: this.sql!.json(s.stats as Record<string, never>),
+        }))
         await (retry
-          ? this.sql`
-              insert into snapshots (chunk_id, season, event_ordinal, generation, tick, building_data, divergence_index, stats)
-              values (${row[0]}, ${row[1]}, ${row[2]}, ${row[3]}, ${row[4]}, ${row[5]}, ${row[6]}, ${row[7]})
+          ? this.sql`insert into snapshots ${this.sql(rows)}
               on conflict (chunk_id, season, event_ordinal) do nothing`
-          : this.sql`
-              insert into snapshots (chunk_id, season, event_ordinal, generation, tick, building_data, divergence_index, stats)
-              values (${row[0]}, ${row[1]}, ${row[2]}, ${row[3]}, ${row[4]}, ${row[5]}, ${row[6]}, ${row[7]})`)
+          : this.sql`insert into snapshots ${this.sql(rows)}`)
       }
     } catch (e) {
       // Put them back rather than dropping them; a dropped event is a hole in
@@ -576,8 +641,29 @@ export class DurableStore implements WorldStore {
       this.retrying = true
       this.onError(e)
     } finally {
+      this.lastFlushMs = Date.now() - t0
+      this.drainMs += this.lastFlushMs
+      this.drainRows += events.length + snapshots.length
+      // roll the measurement window rather than averaging over the process's
+      // whole life, which is the mistake /health's old rate figure made
+      if (Date.now() - this.drainSince > DRAIN_WINDOW_MS) {
+        this.drainSince = Date.now() - DRAIN_WINDOW_MS / 2
+        this.drainRows = Math.round(this.drainRows / 2)
+        this.drainMs = Math.round(this.drainMs / 2)
+      }
       this.flushing = false
     }
+    /**
+     * §72.4: when the queue is still deep, flush again now rather than waiting
+     * out the rest of the interval.
+     *
+     * A fixed 1 s tick spends its idle capacity doing nothing while the backlog
+     * grows: measured locally, a drain clearing 311 rows/s is busy 27% of the
+     * time, so three quarters of the interval was available and unused. The
+     * interval is the promise about how STALE the log may be (§22.4); it was
+     * never meant to be a ceiling on how fast it may catch up.
+     */
+    if (this.pendingEvents.length > CATCH_UP_AT) void this.flush()
   }
 
   /**

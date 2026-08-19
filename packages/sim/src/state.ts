@@ -224,6 +224,15 @@ export const ESCALATION = { on: true }
  */
 export const FUNDED_PLAN = { on: true }
 
+/**
+ * §72.5. Expansion is bounded by the structural capacity of what is already
+ * there — era and construction type set the ceiling, measured from what the
+ * structure was BUILT as. Always on in the product; the §72.5 a/b flips it off
+ * to restore the old flat `agent_built ? 8 : 6` so "what did structure cost the
+ * ratchet?" is measured against an identical seed in one process.
+ */
+export const STRUCTURAL_CAPACITY = { on: true }
+
 export class World {
   /**
    * §20.2: an internal monotonic sequence number. Construction spans it, decay
@@ -449,6 +458,8 @@ export class World {
         groundM: b.groundM,
         heightM: b.heightM,
         levels: b.levels,
+        // §72.5: what the real building was built as, frozen at import
+        designLevels: b.levels,
         purpose: b.purpose,
         archetype: b.archetype,
         roofHint: b.roofHint,

@@ -25,6 +25,7 @@ import {
   yieldPerTick,
 } from './economy.ts'
 import { type Agent, ESCALATION, FUNDED_PLAN, type MemoryEntry, type PlanSpec, type SitePlan, THIRD_USE, type World, floorArea } from './state.ts'
+import { expansionHeadroom } from './structure.ts'
 
 /**
  * §9. Async, may return null, carries a rationale on the action.
@@ -390,10 +391,21 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
       // old-fabric discount applies. Agent-built structures price at par —
       // they are the modern floorplate the comparison is against. The cap and
       // the condition floor stay: they are physics, not era.
-      const maxLevels = b.source === 'agent_built' ? 8 : 6
-      const addLevels = b.source === 'agent_built' && b.levels <= 3 ? 2 : 1
+      /**
+       * §72.5: how much the structure can carry, not how much a constant says.
+       *
+       * This was `agent_built ? 8 : 6` — a flat ceiling over every inherited
+       * building whatever it was made of, so a two-storey 1909 terrace could
+       * take four more floors. §70.2 measured what that produced: expanded
+       * stock rose from 38.1% to 73.0% of the baseline once §70 stopped
+       * agents spending on demolition. Era and construction type set the
+       * ceiling now, measured from what the structure was BUILT as so that
+       * repeated expansions cannot ratchet past it.
+       */
+      const headroom = expansionHeadroom(b)
+      const addLevels = Math.min(headroom, b.source === 'agent_built' && b.levels <= 3 ? 2 : 1)
       const cost = expansionCost(b, addLevels)
-      if (cost <= funds && b.levels + addLevels <= maxLevels && b.condition >= 0.5) {
+      if (headroom > 0 && cost <= funds && b.condition >= 0.5) {
         const grown = yieldPerTick(world, {
           ...b,
           levels: b.levels + addLevels,

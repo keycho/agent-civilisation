@@ -696,6 +696,8 @@ function develop(
     groundM: groundOf(world, parcels[0]),
     heightM,
     levels,
+    // §72.5: an agent-built structure carries the design it was built to
+    designLevels: levels,
     purpose: action.purpose,
     archetype,
     condition: 1,

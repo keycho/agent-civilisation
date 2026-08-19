@@ -17,7 +17,7 @@ import { MemoryStore } from '@civ/persistence'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { Simulation } from '../../src/index.ts'
+import { Simulation, structuralClass } from '../../src/index.ts'
 import { acquisitionPrice, competitionAt, withDuty } from '../../src/economy.ts'
 import { DISTRICT_SPAN_M, findDistricts } from '../../src/divergence.ts'
 import type { World } from '../../src/state.ts'
@@ -134,6 +134,18 @@ export interface Summary {
    * untouched share above it is now reported as information.
    */
   standingUnconvertedShare: number
+  /**
+   * §72.5: how much taller the inherited city got, which is a different
+   * question from how many buildings expansion touched.
+   *
+   * §70.2's bar counts a building as spent the moment its class reaches
+   * `expanded`, so one added floor and four are the same to it. Structural
+   * capacity bounds the AMOUNT, so the amount has to be measured or the
+   * mechanism is invisible to every instrument in the suite.
+   */
+  expansion: { touched: number; levelsAdded: number; meanAdded: number; maxAdded: number }
+  /** §72.5: what the classifier decided the inherited fabric is made of */
+  structuralClasses: Record<string, number>
   /** §70.2: the class histogram, so a failing fabric bar can name its cause */
   divergenceCounts: Record<number, number>
   /** §34 step 3: observation-candidate appearances per baseline building */
@@ -310,6 +322,26 @@ function groundState(w: {
   }
 }
 
+/**
+ * §72.5: added floors on baseline stock, counted against what each structure
+ * was built as.
+ */
+function expansionOf(w: World): Summary['expansion'] {
+  let touched = 0
+  let levelsAdded = 0
+  let maxAdded = 0
+  for (const b of w.buildings.values()) {
+    if (b.source !== 'real_world') continue
+    const design = b.designLevels ?? b.levels
+    const added = b.levels - design
+    if (added <= 0) continue
+    touched++
+    levelsAdded += added
+    if (added > maxAdded) maxAdded = added
+  }
+  return { touched, levelsAdded, meanAdded: touched ? levelsAdded / touched : 0, maxAdded }
+}
+
 export async function loadSeed(chunk = 'schiedam-havens'): Promise<WorldSeed> {
   const p = join(HERE, '..', '..', '..', 'client', 'public', 'world', `${chunk}.json`)
   return JSON.parse(await readFile(p, 'utf8')) as WorldSeed
@@ -440,6 +472,16 @@ export async function runSeed(
     ...groundState(w),
     standingUnconvertedShare: r.standingUnconvertedShare,
     divergenceCounts: r.counts,
+    expansion: expansionOf(w),
+    structuralClasses: (() => {
+      const out: Record<string, number> = {}
+      for (const b of w.buildings.values()) {
+        if (b.source !== 'real_world') continue
+        const k = structuralClass(b)
+        out[k] = (out[k] ?? 0) + 1
+      }
+      return out
+    })(),
     clearToBuild:
       (eventCounts.construction_completed ?? 0) > 0
         ? (eventCounts.demolition_completed ?? 0) / (eventCounts.construction_completed ?? 1)

@@ -32,7 +32,19 @@ export const FRAME_INTERVAL_MS = 100
 /** §20.3: what the world's pace is, so a viewer can be told and not set it. */
 export interface Pace {
   label: string
+  /**
+   * §72.2: MEASURED, over a rolling window — what the world is actually doing.
+   *
+   * This reported the dial's nominal figure, and the dial did not control the
+   * pace: `advance` asked for `max(1, round(dps * 0.1))` decisions per 100 ms
+   * frame, which is 1 at both 'slow' (3) and 'normal' (14), and one step issues
+   * however many decisions it happens to issue. Production ran at 41.1/s while
+   * this line said 14, and the client gates agent motion on it — so the gate
+   * was reading a number that was wrong by 3x.
+   */
   decisionsPerSecond: number
+  /** what the dial is asking for, which is a different fact */
+  target: number
 }
 
 // ---------------------------------------------------------------------------

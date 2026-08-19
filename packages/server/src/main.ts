@@ -321,7 +321,16 @@ function healthOfChunk(host: ChunkHost): Record<string, unknown> {
      * the loop is not running when nobody is asking, and the deployment is
      * wrong.
      */
-    decisionsPerSecond: +(r.decisions / Math.max(1, (Date.now() - STARTED) / 1000)).toFixed(1),
+    /**
+     * §72.2: measured over a rolling window, not `decisions / uptime`. The old
+     * figure was a lifetime average whose numerator resets on a season turn, so
+     * a chunk that had just turned read slow (tokyo 5.4) and one that had not
+     * read true (london 42.1) — two different quantities under one name.
+     */
+    decisionsPerSecond: host.world.measuredRate,
+    paceTarget: r.pace.target,
+    /** §72.4: frames this world sat out waiting for the durable queue */
+    stalledFrames: host.world.stalledFrames,
   }
 }
 
@@ -401,6 +410,8 @@ const http = createServer((req, res) => {
       // §22.4: the width of what a crash loses, and how far behind it is now
       flushMs: store.flushMs,
       lag: store.lag,
+      // §72.4: and whether the drain is keeping up with the emitter
+      drain: store.drain,
       retainSeasons: RETAIN_SEASONS,
       uptimeSeconds: Math.round((Date.now() - STARTED) / 1000),
     }

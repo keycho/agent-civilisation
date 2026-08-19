@@ -57,6 +57,9 @@ export type SeasonEndReason = 'saturation' | 'slot_pressure'
 /** Turn at this share of the building data texture, whatever the world is doing. */
 const SLOT_PRESSURE_TURN = 0.85
 
+/** §72.2: how far back the measured-rate window looks. */
+const RATE_WINDOW_MS = 5_000
+
 export class WorldService {
   readonly sim: Simulation
   readonly store: DurableStore
@@ -84,6 +87,22 @@ export class WorldService {
   private bornSinceFrame: AgentIdentity[] = []
   private known = new Set<string>()
   private ticking = false
+  /** §72.2: fractional decision budget, carried between frames */
+  private credit = 0
+  /** §72.4: frames this world sat out because the durable queue was full */
+  private stalled = 0
+
+  get stalledFrames(): number {
+    return this.stalled
+  }
+  /**
+   * §72.2: what the world is actually doing, over a rolling window.
+   *
+   * /health reported `decisions / uptime` — a lifetime average whose numerator
+   * resets on a season turn, so a chunk that had just turned read slow and one
+   * that had not read true. A window says what the pace IS.
+   */
+  private readonly rateSamples: Array<{ at: number; n: number }> = []
   private readonly saturation = new SaturationWatch()
   private readonly onSaturated?: (season: number, reason: SeasonEndReason) => void
   private saturatedAlready = false
@@ -190,6 +209,24 @@ export class WorldService {
     return this.throughputIndex
   }
 
+  private sampleRate(issued: number): void {
+    const now = Date.now()
+    this.rateSamples.push({ at: now, n: issued })
+    while (this.rateSamples.length && now - this.rateSamples[0].at > RATE_WINDOW_MS) {
+      this.rateSamples.shift()
+    }
+  }
+
+  /** §72.2: measured decisions per second over the last few seconds. */
+  get measuredRate(): number {
+    if (this.rateSamples.length < 2) return 0
+    const span = (Date.now() - this.rateSamples[0].at) / 1000
+    if (span <= 0) return 0
+    let total = 0
+    for (const s of this.rateSamples) total += s.n
+    return +(total / span).toFixed(1)
+  }
+
   /**
    * Advance the world by wall-clock time at the current throughput. The loop
    * calls this; nothing a client sends does.
@@ -198,9 +235,56 @@ export class WorldService {
     if (this.ticking) return
     const dps = THROUGHPUT[this.throughputIndex].decisionsPerSecond
     if (dps <= 0) return
+
+    /**
+     * §72.2: the loop targets decisions per SECOND, with the fraction carried
+     * across frames.
+     *
+     * It used to ask for `Math.max(1, Math.round(dps * dtSeconds))`. At the
+     * 100 ms frame that is `max(1, round(1.4))` = 1 at 'normal' and
+     * `max(1, round(0.3))` = 1 at 'slow' — the same number, so two of the five
+     * dial positions were identical. And `runToThroughput` stops as soon as
+     * `issued >= target` while one `step()` issues however many decisions it
+     * happens to issue, so exactly one step ran per frame and the world's rate
+     * was (decisions per step) x 10, with nothing reading it back. Measured on
+     * production: 4.15 decisions per step, 41.1 per second, against a dial
+     * saying 14.
+     *
+     * A budget that accumulates fixes both halves. The fraction survives
+     * between frames, so 3/s and 14/s are different rates; and the overshoot is
+     * SPENT rather than forgiven — a step that issues four decisions against a
+     * budget of 1.4 leaves the credit at -2.6 and the next two frames run no
+     * steps at all. That is what makes the average come out at the number on
+     * the dial instead of at whatever the world felt like.
+     */
+    /**
+     * §72.4: a world that is producing history faster than history can be
+     * written down stops producing it.
+     *
+     * The write-behind queue grew monotonically in production — 701 to 18,256
+     * events across 1,000 seconds — which is a slow leak and, worse, a
+     * data-loss window that widens with uptime: everything queued is gone if
+     * the process dies. §22.4 fixes the width of that window at `flushMs`, and
+     * an unbounded queue quietly makes that promise false. So when the queue is
+     * past its ceiling the world waits. It is the only lever that does not
+     * involve dropping events, and dropping events is not a lever.
+     */
+    if (this.store.saturated) {
+      this.stalled++
+      return
+    }
+
+    this.credit = Math.min(this.credit + dps * dtSeconds, dps)
+    if (this.credit < 1) return
+    const target = Math.floor(this.credit)
+
     this.ticking = true
     try {
-      await this.sim.runToThroughput(Math.max(1, Math.round(dps * dtSeconds)), 60)
+      const before = this.sim.decisionsIssued
+      await this.sim.runToThroughput(target, 60)
+      const issued = this.sim.decisionsIssued - before
+      this.credit -= issued
+      this.sampleRate(issued)
       const r = this.sim.refreshReport()
       this.pump()
 
@@ -304,7 +388,11 @@ export class WorldService {
     return {
       viewers: this.viewers,
       season: this.season,
-      pace: THROUGHPUT[this.throughputIndex],
+      pace: {
+        label: THROUGHPUT[this.throughputIndex].label,
+        decisionsPerSecond: this.measuredRate,
+        target: THROUGHPUT[this.throughputIndex].decisionsPerSecond,
+      },
       divergenceIndex: r.index,
       generation: this.sim.generation,
       touchedShare: r.touchedShare,

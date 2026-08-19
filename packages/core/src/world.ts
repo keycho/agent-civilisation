@@ -97,6 +97,15 @@ export interface Building {
   groundM: number
   heightM: number
   levels: number
+  /**
+   * §72.5: the level count this structure was BUILT as, which never changes.
+   *
+   * Structural capacity is a property of the structure as designed, not of the
+   * structure as it now stands — a rule read off `levels` re-reads itself after
+   * every expansion and is therefore unbounded, which is what let six separate
+   * one-floor additions land on a two-storey terrace.
+   */
+  designLevels?: number
   purpose: Purpose
   archetype: ArchetypeId
   roofHint?: RoofHint
