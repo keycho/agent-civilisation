@@ -112,6 +112,55 @@ test('§72.1: a restored world continues the same world, decision for decision',
   )
 })
 
+/**
+ * The gap the fingerprint test above found only by luck.
+ *
+ * `restoreWorld` used to wipe every building's `parcelId` and re-derive it from
+ * `parcel.buildingId`, on the reasoning that a recompute cannot disagree with
+ * itself. It can: that mapping is an inverse only for a parcel's CURRENT
+ * occupant, so every building that had ever been cleared lost the ground it
+ * stood on. The fingerprint test passed for two blocks because nothing on its
+ * trajectory happened to read a demolished building's parcel — §74's conversion
+ * table changed which buildings get cleared and made it reachable.
+ *
+ * This asserts the property directly, so it does not depend on the economy
+ * continuing to produce a demolition whose parcel someone later asks about.
+ */
+test('§72.1: a restored building keeps the ground it stood on, cleared or not', async () => {
+  BOUNDARY.gate = true
+  const sim = await build('seed-resume-ground')
+  await sim.runToDecisionBudget(RUN_TO)
+
+  const before = [...sim.world.buildings.values()].map((b) => [b.id, b.parcelId] as const)
+  const cleared = before.filter(([id]) => sim.world.buildings.get(id)?.state === 'demolished')
+  assert.ok(
+    cleared.length > 0,
+    'the run has to actually clear something or this test asserts nothing',
+  )
+  assert.ok(
+    cleared.some(([, pid]) => pid != null),
+    'a cleared building keeps its parcelId in the live world — if it does not, ' +
+      'this test is checking the wrong invariant',
+  )
+
+  const restored = await build(
+    'seed-resume-ground',
+    decodeWorldState(encodeWorldState(sim.capture(1, 0))),
+  )
+  for (const [id, pid] of before) {
+    assert.equal(
+      restored.world.buildings.get(id)?.parcelId,
+      pid,
+      `building ${id} came back on different ground — restore must carry the ` +
+        `backlink rather than re-derive it from the parcel's current occupant`,
+    )
+  }
+  console.log(
+    `§72.1 ground — ${before.length} buildings restored on the same parcels, ` +
+      `${cleared.length} of them already cleared`,
+  )
+})
+
 test('§72.1: a state from another schema or another chunk is refused, not guessed at', async () => {
   const sim = await build('seed-resume-guard')
   const state = sim.capture(1)

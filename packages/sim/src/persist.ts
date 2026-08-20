@@ -67,6 +67,16 @@ export interface WorldState {
   decisionsIssued: number
   appliedActions: number
   competitionMedian: number
+  /**
+   * §72.1 gap, found by the resume test after §74 changed which buildings get
+   * cleared: `actions.ts` reads this when it assembles a candidate list and
+   * when it looks up what was just built, so a resumed world that has
+   * forgotten it makes a different next decision. Optional, so a state written
+   * before this field existed still loads — it restores to `undefined`, which
+   * is exactly what the old restore produced anyway, and refusing those blobs
+   * would reset the very generational history §72.1 exists to preserve.
+   */
+  lastDevelopedId?: string
   /** mulberry32's u32, so the stream continues rather than replays */
   worldRng: number
   simRng: number
@@ -146,6 +156,7 @@ export function captureWorld(w: World, season: number, sim: SimCapture): WorldSt
     decisionsIssued: w.decisionsIssued,
     appliedActions: w.appliedActions,
     competitionMedian: w.competitionMedian,
+    lastDevelopedId: w.lastDevelopedId,
     worldRng: w.rng.save(),
     simRng: sim.rng,
     serials: { ...w.captureSerials(), heir: sim.nextHeirSerial },
@@ -217,6 +228,7 @@ export function restoreWorld(w: World, s: WorldState): void {
   w.decisionsIssued = s.decisionsIssued
   w.appliedActions = s.appliedActions
   w.competitionMedian = s.competitionMedian
+  w.lastDevelopedId = s.lastDevelopedId
   w.rng.load(s.worldRng)
   w.restoreSerials(s.serials)
 
@@ -244,14 +256,28 @@ export function restoreWorld(w: World, s: WorldState): void {
   replaceArray(w.pendingGeometry, s.pendingGeometry)
   replaceArray(w.pendingRoads, s.pendingRoads)
 
-  // the parcel <-> building backlink is not stored twice; it is re-derived,
-  // because a link that disagrees with itself after a restart is the worst
-  // possible outcome and re-deriving it cannot disagree
-  for (const b of w.buildings.values()) b.parcelId = undefined
-  for (const p of w.parcels.values()) {
-    const b = p.buildingId ? w.buildings.get(p.buildingId) : undefined
-    if (b) b.parcelId = p.id
-  }
+  /**
+   * The parcel <-> building backlink is RESTORED, not re-derived.
+   *
+   * It used to be re-derived here, on the reasoning that a link which disagrees
+   * with itself after a restart is the worst outcome and a recompute cannot
+   * disagree. The second half of that is false and the resume test caught it:
+   * `parcel.buildingId -> building.parcelId` is only an inverse for the CURRENT
+   * occupant of a parcel. A demolished building keeps its `parcelId` in the
+   * live world and its parcel no longer points back at it, so the recompute
+   * silently cleared the link on every building that had ever been cleared —
+   * and `parcelFor()` then found no ground under it.
+   *
+   * The blob already carried the correct value; this loop was throwing it away.
+   * That is §72.1's own lesson one level short of where it needed to go, and it
+   * is the third time in this file that recomputing "obviously derived" state
+   * has been falsified by measurement. Restore what was.
+   *
+   * Found by §74's conversion table: adding `commercial` to the permissive
+   * class changed which buildings get cleared, which made the missing link
+   * reachable on a trajectory the test actually runs. The gap predates §74 by
+   * two blocks; nothing about it is new except that something finally read it.
+   */
 
   // the one genuinely derived structure: parcel adjacency is a pure function of
   // the parcels, and the round-trip test confirms it reproduces exactly

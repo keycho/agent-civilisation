@@ -187,10 +187,22 @@ const CONVERSION_TARGETS: Record<ConversionClass, readonly Purpose[]> = {
   // a shop or a small practice on the ground floor and flats above. Nothing
   // that wants a floorplate or a loading bay: the frontage is five metres.
   fine_grain: ['residential', 'retail', 'office'],
-  // §74.3's asymmetry, and the point of it: conversion pressure lands on the
-  // post-industrial stock these seed cities were chosen for, because that stock
-  // is genuinely the easiest thing to convert
-  open_floorplate: ['residential', 'office', 'retail'],
+  /**
+   * §74.3's asymmetry, and the point of it: conversion pressure lands on the
+   * post-industrial stock these seed cities were chosen for, because that stock
+   * is genuinely the easiest thing to convert.
+   *
+   * `commercial` is here and §74.3's table does not list it, and §74.4's guard
+   * is why. Taking the literal three left `commercial` reachable from NO form,
+   * which removes an option from every building's menu rather than from the
+   * dozen buildings that happen to hold that purpose — and stable dark rose on
+   * the three chunks with the most open-floorplate stock (schiedam +1.0,
+   * vlaardingen +1.1, maasland +1.4 points) while falling on the four that are
+   * fine-grain. A big clear-span shed is precisely what commercial use wants,
+   * so this is the permissive class being as permissive as §74.3's own
+   * parenthetical argues it should be.
+   */
+  open_floorplate: ['residential', 'office', 'retail', 'commercial'],
   // few, and dear. `civic` is listed so a civic building that stays civic is
   // not counted as having nowhere to go; `bestConversion` skips the current
   // purpose, so in practice this is two targets.
