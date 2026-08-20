@@ -177,6 +177,33 @@ boundary need MATCHING values, not merely similar ones. `VOID.fog` sat at
 `#131110` against a `#0d0c0a` horizon — six values apart, invisible as a colour,
 and a visible seam exactly where the plate ended.
 
+**A solve that passes can still answer the wrong question.** §78 is the case,
+and it is a different failure from a bad instrument — the instrument was fine.
+§76.2 derived the camera's far pitch from a correct piece of geometry: a flat
+plate foreshortens to `S·cos(polar)` deep while staying `S` wide, so obliquity
+costs no framing distance until the frame runs out of horizontal room. Take all
+the obliquity that is free, and the fit improves. Every assertion passed at
+every width.
+
+What it optimised was FITTING THE FORESHORTENED DEPTH, and the cheapest way to
+fit a depth is to foreshorten it away. On a wide window it drove the home pitch
+to 0.97 — a camera lying down beside the plate looking across it. The plate ran
+off three edges, and because the curve's far end was now its most oblique point,
+there was no distance at all from which a viewer could be above the city. The
+overhead view was unreachable by construction, and no coverage number said so
+because coverage was exactly what the derivation was maximising.
+
+The lesson is not "measure more". It is that an objective is a claim about what
+the frame is FOR, and that claim belongs in the spec rather than in an
+optimisation. The opening exists so a viewer can see where everything is; that
+requires looking down, and it is worth paying framing distance for. §78's far
+end is therefore authored (0.30 rad, near-top-down) and the solve pays whatever
+that costs — the plate reads smaller and flatter than the derivation would have
+made it, which is the correct trade. When a derived value and a stated purpose
+disagree, the purpose wins and the derivation moves to where it earns its keep:
+here, the close end of the curve, where obliquity buys facades a viewer is
+actually looking at.
+
 ### What §22 measured, and what it found
 
 §21.1 asked for the action mix to be judged. §22.1 answered that the mix is

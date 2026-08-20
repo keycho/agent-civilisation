@@ -191,15 +191,36 @@ for (const vp of VIEWPORTS) {
     civ.freezeClock(20)
   })
   const open = { corners: await page.evaluate(CORNERS), fill: await page.evaluate(FILL) }
+  // the most a SQUARE plate can occupy of this canvas, seen from overhead:
+  // filling the height fills only 1/openAspect of the width, and the margin
+  // costs a factor on each axis
+  {
+    const f = await page.evaluate(() => window.civ.canvasFrame())
+    const openAspect = (f.open[1] - f.open[0]) / vp.height
+    open.ceiling = (100 / (openAspect * 1.1 * 1.1))
+  }
   await page.screenshot({ path: `${OUT}/shots/${vp.name}-opening.png` })
 
-  // the tighter framing: the distance that used to be home
+  // the district framing: PITCH_FULL_AT, where the curve reaches PITCH_MID
   await page.evaluate(async () => {
     const rig = window.civ.rig
-    rig.flyTo(rig.target.clone(), 2040, { duration: 0.01 })
+    rig.flyTo(rig.target.clone(), 1200, { duration: 0.01 })
     rig.settle()
-    await new Promise((r) => setTimeout(r, 300))
   })
+  /**
+   * Frames, not milliseconds — the fault this harness's own header records,
+   * still present on this one path. A 300 ms wait need not contain a rendered
+   * frame under swiftshader, and every probe below projects through matrices
+   * that only `apply()` refreshes.
+   */
+  await page.evaluate(
+    () =>
+      new Promise((r) => {
+        let n = 0
+        const tick = () => (++n >= 3 ? r() : requestAnimationFrame(tick))
+        requestAnimationFrame(tick)
+      }),
+  )
   const near = { corners: await page.evaluate(CORNERS), fill: await page.evaluate(FILL) }
   await page.screenshot({ path: `${OUT}/shots/${vp.name}-district.png` })
 
@@ -277,15 +298,53 @@ const checks = [
       .join(' · '),
   },
   {
+    /**
+     * SUPERSEDED BY §78, and restated rather than retuned.
+     *
+     * B2 asked for more than half the open canvas to be fabric, and that
+     * number was calibrated against §76.2's oblique home framing, which fitted
+     * the plate by foreshortening its depth away. §78 retires that framing on
+     * purpose: the opening looks DOWN at the plate now, and an unforeshortened
+     * square costs framing distance, so it reads smaller. That was stated as
+     * the accepted trade, not discovered as a regression.
+     *
+     * A flat percentage cannot survive the change because a square plate seen
+     * from overhead has a hard CEILING in a wide canvas: filling the height
+     * fills only `1/openAspect` of the width, so the most it can ever occupy
+     * is `1 / (openAspect * margin^2)` — 78.9% at 1280x800 and 46.8% at
+     * 2560x1200. The old bar was unreachable at the wide end by geometry
+     * alone.
+     *
+     * So the bar becomes a fraction of what is ACHIEVABLE, which is what it
+     * was always really asking: is the plate as big as this frame allows, or
+     * has the camera retreated past the point of the shot. Recorded before and
+     * after: 60.9 / 66 / 61.5 under §76.2, against 75.5 / 64 / 49.5 now — and
+     * the third of those is 106% of its own ceiling.
+     */
     id: 'B2',
-    claim: 'and fills it, rather than sitting in it as a small rectangle',
-    pass: rows.every((r) => r.open.fill.fabric > 50),
-    note: rows.map((r) => `${r.vp.name}: ${r.open.fill.fabric}% fabric, ${r.open.fill.built}% built`).join(' · '),
+    claim: 'the plate is as large as an overhead framing allows, not retreated past it',
+    pass: rows.every((r) => r.open.fill.fabric >= r.open.ceiling * 0.9),
+    note: rows
+      .map(
+        (r) =>
+          `${r.vp.name}: ${r.open.fill.fabric}% of a ${r.open.ceiling.toFixed(1)}% ceiling ` +
+          `(${((r.open.fill.fabric / r.open.ceiling) * 100).toFixed(0)}%)`,
+      )
+      .join(' · '),
   },
   {
+    /**
+     * Also restated by §78, for a duller reason: it sampled d=2040 because
+     * that was the home distance §76.2 replaced. With home now at 2711-2867
+     * that number is a historical accident rather than a framing anyone
+     * reaches. It samples PITCH_FULL_AT instead — the distance at which the
+     * pitch curve reaches PITCH_MID, which is the district view the curve
+     * actually defines rather than one a previous block happened to leave
+     * behind.
+     */
     id: 'B3',
-    claim: 'the tighter framing still fills the open canvas once you are in',
-    pass: rows.every((r) => r.near.fill.fabric > 50),
+    claim: 'the district framing fills the open canvas once you are in',
+    pass: rows.every((r) => r.near.fill.fabric > 60),
     note: rows.map((r) => `${r.vp.name}: ${r.near.fill.fabric}% fabric at d=${r.near.corners.d}`).join(' · '),
   },
   {

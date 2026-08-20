@@ -886,32 +886,42 @@ const CITY_AZIMUTH = 0
 const PLATE_MARGIN = 1.1
 
 /**
- * The far end of the pitch curve, DERIVED FROM THE REQUIREMENT rather than
- * authored as a value.
+ * §78: the far end of the pitch curve is OVERHEAD.
  *
- * A flat square plate viewed top-down projects to a square. Tilting it
- * foreshortens the depth to `S·cos(polar)` while the width stays `S`, so
- * obliquity costs nothing until the frame runs out of horizontal room —
- * exactly at `cos(polar) = 1 / openAspect`. Past that point more obliquity
- * starts costing distance, and distance is what makes the plate small.
+ * §76.2 derived it instead, from an argument that was internally sound and
+ * answered the wrong question. A flat plate foreshortens to `S·cos(polar)`
+ * deep while staying `S` wide, so obliquity costs no framing distance until
+ * `cos(polar) = 1/openAspect` — "take all the obliquity the frame affords for
+ * free". What that optimises is FITTING THE FORESHORTENED DEPTH, and the
+ * cheapest way to fit a depth is to foreshorten it away: at 2560x1200 it drove
+ * the home pitch to 0.97, which is a camera lying down beside the plate
+ * looking across it. The solve passed, the plate ran off three edges, and the
+ * overhead view was unreachable by construction — there was no distance at
+ * which the camera was above the city, because the curve's far end was its
+ * most oblique point.
  *
- * So: take all the obliquity the frame can afford for free, and never less
- * than §75's PITCH_MID, which was itself measured against "does this still
- * read as a city rather than a map". A wide window affords a lot — at
- * 2560x1200 the open canvas is 1.77:1 and this lands near 0.97, well past the
- * old top of the curve. A near-square open canvas affords none and it floors
- * at 0.62, where the fix is the framing distance instead.
+ * A cheaper frame is not the goal. The opening exists to show a viewer where
+ * everything is, and that requires looking DOWN at it. So the far end is
+ * authored: near-top-down, and the framing distance pays whatever that costs.
  *
- * The ceiling stops the derivation running to the horizon on an extreme
- * window, where the trapezoid and the fog would take over from the geometry.
+ * The plate does read smaller and flatter here than it did at 0.97 — at
+ * 2560x1200 the solve moves from 1914 m back to roughly 2800 m, because an
+ * unforeshortened square needs its full depth in frame. That is the trade, and
+ * it is the right way round: comprehension first, composition once you are in.
+ *
+ * The obliquity is not deleted, it is moved to where it earns its keep. The
+ * curve still runs 0.86 at the street through 0.62 at PITCH_FULL_AT, where
+ * facades and depth are what a viewer is actually looking at. It is only the
+ * far end — the one framing whose entire job is comprehension — that goes
+ * overhead. The curve is monotonic again as a result, which is what §75 asked
+ * for in the first place: "high and near-top-down when far, lower as you
+ * approach".
+ *
+ * 0.30 rad is 17 degrees off vertical — unambiguously above the city, while
+ * keeping just enough tilt that towers read as having height rather than as
+ * plan-view footprints.
  */
-const PITCH_MID_FLOOR = 0.62
-const PITCH_HOME_CEIL = 1.0
-
-function homePitchFor(openAspect: number): number {
-  const free = Math.acos(Math.min(1, 1 / Math.max(1e-3, openAspect)))
-  return Math.min(PITCH_HOME_CEIL, Math.max(PITCH_MID_FLOOR, free))
-}
+const PITCH_HOME = 0.3
 
 /** mirrors the rig's own fixed reference; only used to seed the solve */
 const PITCH_FULL_AT_REF = 1200
@@ -937,11 +947,14 @@ function plateCorners(): Vector3[] {
 function frameTheFabric(): { distance: number; pitch: number } {
   const open = openCanvas()
   const openFrac = (open.right - open.left) / innerWidth
-  const openAspect = ((open.right - open.left) / innerHeight) * 1
-  const pitch = homePitchFor(openAspect)
-  // the curve must already reach `pitch` at the answer, so the solve runs
-  // against a curve told to land there; one pass, because `homePitchFor`
-  // depends on the aspect alone and not on the distance
+  const pitch = PITCH_HOME
+  // The curve must already reach `pitch` at the answer, so the solve runs
+  // against a curve told to land there. Two passes rather than an iteration:
+  // the first finds the distance under a curve that reaches PITCH_HOME
+  // immediately, the second re-solves with the curve told to land at that
+  // distance. It converges in one step because PITCH_HOME is a constant and
+  // not a function of the distance — which is exactly what §78 buys by
+  // retiring the derivation.
   rig.setHomePitch(pitch, PITCH_FULL_AT_REF + 1)
   const guess = rig.distanceToFit(
     plateCorners(),
