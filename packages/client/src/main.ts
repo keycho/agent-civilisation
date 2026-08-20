@@ -49,7 +49,7 @@ import {
 } from 'three'
 import { CameraDirector } from './camera/director.ts'
 import { CameraRig, attachRigControls } from './camera/rig.ts'
-import { TiltShiftPass } from './postfx/tiltShift.ts'
+import { ComposePass } from './postfx/compose.ts'
 import { ClearedGround } from './render/clearedGround.ts'
 import { RealityGhost } from './render/ghost.ts'
 import { WorldSound } from './audio/worldSound.ts'
@@ -1641,9 +1641,9 @@ function inputWinsCamera(): void {
 
 attachRigControls(rig, canvas, inputWinsCamera)
 
-const tiltShift = new TiltShiftPass(innerWidth, innerHeight)
+const compose = new ComposePass(innerWidth, innerHeight)
 // §50.2: the grade stands down where the authored hour is night
-tiltShift.night = cityHour?.night ?? 0
+compose.night = cityHour?.night ?? 0
 /**
  * §56.1: the glow needs no per-hour ramp. §50.3's emissive terms are already
  * multiplied by the authored hour's `night`, so a golden-hour plate emits
@@ -1655,9 +1655,6 @@ tiltShift.night = cityHour?.night ?? 0
 const BLOOM_STRENGTH = 1
 /** capture-rig override, so a/b can isolate the glow's own contribution */
 let bloomOverride: number | null = null
-// DOF r2: the focus toggle, soft by default. Off is a real setting, not a
-// debug flag — someone reading a street wants the whole street.
-let focusOn = true
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
 
 // ---------------------------------------------------------------------------
@@ -2791,11 +2788,9 @@ el('agentsBtn').addEventListener('click', () => toggleCrew())
 
 // DOF r2: the focus toggle sits in the bottom bar, beside where the §40.5
 // sound toggle lands — the two settings a viewer might actually want off
-el('focusBtn').addEventListener('click', () => {
-  focusOn = !focusOn
-  el('focusBtn').setAttribute('aria-pressed', String(focusOn))
-  el('focusBtn').textContent = focusOn ? 'focus soft' : 'focus off'
-})
+// §77.1: the focus toggle is gone with the pass it toggled. A control whose
+// two states are now identical is worse than no control — it teaches a viewer
+// that pressing things does nothing.
 
 /**
  * §51.3: the mini-card. Hovering a floating marker names the agent, its plan
@@ -3292,9 +3287,6 @@ addEventListener('keydown', (e) => {
     case 's':
       el('soundBtn').click()
       break
-    case 'o':
-      el('focusBtn').click()
-      break
     case '[':
       cycleChunk(-1)
       break
@@ -3412,7 +3404,7 @@ function resize(): void {
   rig.limits.maxDistance = frameTheFabric().distance
   rig.distance = Math.min(rig.distance, rig.limits.maxDistance)
   const pr = renderer.getPixelRatio()
-  tiltShift.setSize(Math.floor(innerWidth * pr), Math.floor(innerHeight * pr))
+  compose.setSize(Math.floor(innerWidth * pr), Math.floor(innerHeight * pr))
 }
 addEventListener('resize', resize)
 resize()
@@ -3739,69 +3731,16 @@ renderer.setAnimationLoop(() => {
   env.sky.position.copy(rig.camera.position)
   substrate.tick(t)
 
+  // §56.1: the glow follows the authored hour — a window that blooms is a
+  // window an agent lit, and §56.1's bright pass keeps that distinction.
+  compose.bloom.strength = bloomOverride ?? BLOOM_STRENGTH
   /**
-   * §24.1: "widen the tilt-shift sharp band so it covers the plate rather than
-   * a strip."
-   *
-   * At 0.055 the sharp band was about 100 m of depth against a plate that
-   * spans roughly 370 m front to back at this tilt, so the top and bottom
-   * thirds blurred out and the world read as small rather than as miniature.
-   * Those are different effects and the old setting delivered both.
-   *
-   * The width is derived rather than dialled. A 604 m plate seen from 52
-   * degrees above the horizontal has a depth extent of 604*cos(52) = 370 m, so
-   * half of that is 185 m either side of the focal plane — and at the city
-   * distance of about 1835 m that is 0.10. Which is the number to use: it puts
-   * the plate inside the band and nothing else, so the falloff still lands on
-   * the water and the far edge, which is where the diorama read comes from. A
-   * first pass at 0.16 covered the plate and a long way past it, and turned the
-   * effect off.
-   *
-   * §39: that 0.10 baked in the city-framing tilt. The visible depth extent
-   * scales with sin(polar) — cos of the elevation — so an oblique director
-   * shot has more depth in frame than the framed orientation and the fixed
-   * ratio melted the near corner. Same derivation, evaluated for the current
-   * view: identical at the calibrated case (polar 0.66), wider as the camera
-   * comes down, narrower toward top-down where there is no depth to keep.
+   * §77.1: the depth of field is gone, so the focal band, the obliquity term
+   * and the proximity ramp go with it. Roughly forty lines of derivation
+   * retired — every one of them correct about a mechanism that was costing
+   * more legibility than it bought.
    */
-  /**
-   * DOF r2. The §39 derivation was right about the mechanism and much too
-   * timid about the amount: sin(polar) alone widens the band by about half
-   * between the home framing and the pitch floor, and an oblique frame does
-   * not have half again as much depth in it — it has the whole plate, from
-   * the near kerb to the far skyline, all of it subject. The melted-church
-   * frame is what that costs.
-   *
-   * So obliquity now drives the band hard, and proximity drives it harder
-   * still: at the home framing the diorama read is untouched, by the pitch
-   * floor the band is several times wider, and at street framing it covers
-   * everything in front of the camera — which is the same thing as off.
-   */
-  const oblique = clamp01((rig.polar - 0.66) / (rig.limits.maxPolar - 0.66))
-  // `streetness` is the LENS ramp — it is already 0.74 at 430 m, because the
-  // fov starts opening long before the camera is in a street. Borrowing it for
-  // the focal band widened the band on a neighbourhood view that still wants
-  // the diorama read. Proximity gets its own ramp, which stays at zero until
-  // the camera is genuinely close.
-  const close = clamp01((rig.lens.cityDistance * 0.35 - rig.distance) / (rig.lens.cityDistance * 0.35 - rig.lens.streetDistance))
-  tiltShift.focusRange = Math.max(
-    30,
-    rig.distance * 0.1 * (1 + 7 * oblique * oblique) * (1 + 6 * close * close),
-  )
-  // §56.1: the glow follows the authored hour, and the globe keeps a little of
-  // it — the eight marks are the only emitters up there, and a mark that glows
-  // is a mark you can count (§49's acceptance) rather than one more dot.
-  tiltShift.bloom.strength = bloomOverride ?? BLOOM_STRENGTH
-  tiltShift.render(
-    renderer,
-    scene,
-    rig.camera,
-    // focus follows attention: rig.distance is the distance to the orbit
-    // target, so the plane sits on whatever the camera is pointed at — the
-    // double-click focus, the followed agent, the log line's fly-to
-    rig.distance,
-    !focusOn ? 0 : (1 - close) * (1 - close),
-  )
+  compose.render(renderer, scene, rig.camera)
 })
 
 /** §59.1: the city population, as pixel people */
@@ -4064,19 +4003,19 @@ function civHome(opts: { snap?: boolean } = {}): void {
   ghost: () => ({ held: ghost.held, visible: ghost.lines.visible }),
   timelapseRunning: () => timelapse !== null,
   retainedOrdinals: () => availableOrdinals.length,
-  /** DOF r2: what the focal band is doing right now, for the capture rigs */
-  dof: () => ({
-    range: tiltShift.focusRange,
-    strength: tiltShift.lastStrength,
-    maxBlurPx: tiltShift.maxBlurPx,
-    on: focusOn,
-  }),
+  /**
+   * §77.1: `dof` reports that there is none. Kept rather than deleted so a
+   * capture rig written against the old surface fails on the ASSERTION —
+   * "strength is 0" — rather than on a missing key, which is the difference
+   * between a harness that tells you the blur is gone and one that throws.
+   */
+  dof: () => ({ strength: 0, maxBlurPx: 0, on: false, uniforms: compose.uniformNames() }),
   /**
    * §56.1: read the linear scene buffer back, so the bloom threshold is set
    * from what the plate actually radiates rather than from an assumption
    * about it. Call after a frame has rendered.
    */
-  measureLinear: () => tiltShift.measureLinear(renderer),
+  measureLinear: () => compose.measureLinear(renderer),
   /**
    * §56 capture discipline: pin the animation clock so an a/b pair differs
    * only by the step under test, not by where the water's glint happened to
@@ -4145,13 +4084,13 @@ function civHome(opts: { snap?: boolean } = {}): void {
   },
   bloom: {
     get strength() {
-      return tiltShift.bloom.strength
+      return compose.bloom.strength
     },
     get threshold() {
-      return tiltShift.bloom.threshold
+      return compose.bloom.threshold
     },
     set threshold(v: number) {
-      tiltShift.bloom.threshold = v
+      compose.bloom.threshold = v
     },
     /**
      * §56.1: force the glow off for a frame, so a capture can isolate what the

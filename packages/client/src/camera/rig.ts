@@ -738,7 +738,24 @@ export class CameraRig {
     const a = this.driftAmount
     const azimuth = this.azimuth + Math.sin(this.driftT * 0.062) * 0.105 * a
     const polar = this.polar + Math.sin(this.driftT * 0.047 + 1.7) * 0.030 * a
-    const distance = this.distance * (1 + Math.sin(this.driftT * 0.035 + 0.6) * 0.055 * a)
+    /**
+     * §77.2: the breath only ever moves IN.
+     *
+     * §56.8's drift multiplied the distance by `1 ± 0.055`, and that term is a
+     * LOCAL — it places the camera without ever passing through `enforce`, so
+     * it was the one path in the rig that could put the eye beyond
+     * `maxDistance`. With §76.2 making maxDistance exactly the whole-fabric
+     * framing, the outward half of that cycle meant the plate could sit 5.5%
+     * smaller than it does at first load, with fresh void around it, purely
+     * from the camera breathing. That is the reported state, and it is an edge
+     * a viewer can back away from without ever asking to.
+     *
+     * One-sided rather than clamped: a clamp would flatten the outward half of
+     * the cycle at home and read as the drift stalling. This keeps a whole
+     * sinusoid and hangs it below the limit instead of across it.
+     */
+    const breathe = 1 - (0.5 + 0.5 * Math.sin(this.driftT * 0.035 + 0.6)) * 0.055 * a
+    const distance = this.distance * breathe
     const sinP = Math.sin(polar)
     this.camera.position.set(
       this.target.x + distance * sinP * Math.sin(azimuth),

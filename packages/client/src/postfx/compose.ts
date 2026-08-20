@@ -1,15 +1,11 @@
 import {
-  DepthTexture,
   HalfFloatType,
   Mesh,
-  NearestFilter,
   OrthographicCamera,
   PlaneGeometry,
   RGBAFormat,
   Scene,
   ShaderMaterial,
-  UnsignedShortType,
-  Vector2,
   WebGLRenderTarget,
   type PerspectiveCamera,
   type WebGLRenderer,
@@ -17,13 +13,22 @@ import {
 import { BloomPass } from './bloom.ts'
 
 /**
- * §16.3: "tilt-shift depth of field — the single cheapest signal for
- * handcrafted diorama. Focal band tied to camera target distance."
+ * The one post chain: an HDR scene buffer, §48.2's grade, §47.1's vignette and
+ * §56.1's glow. Nothing else.
  *
- * Depth-based rather than a screen-space gradient, so the band actually tracks
- * what the camera is looking at instead of smearing the top and bottom of the
- * frame regardless of content. It fades out as the camera comes down to street
- * level, where a miniature read is wrong and just looks out of focus.
+ * §77.1 DELETED the tilt-shift depth of field this file was named for. §16.3
+ * specced it as "the single cheapest signal for handcrafted diorama", and it
+ * bought that read at a price that kept rising: melted foregrounds in the
+ * maassluis frames, unreadable labels, and — once §76.2 let the camera come in
+ * close — a blurred city at exactly the distance a viewer has chosen in order
+ * to look at something. The night register (§63) and the pixel sprites (§59.1)
+ * carry the handcrafted quality on their own, and they carry it without
+ * spending legibility to do it.
+ *
+ * Deleted rather than turned down, so there is no dial left at zero for a
+ * later block to find and reach for. The depth texture goes with it: nothing
+ * else in the chain reads depth, and keeping the attachment allocated for a
+ * pass that no longer exists is the same mistake in storage.
  */
 /** first index whose value is >= t, in a sorted array */
 function lowerBound(sorted: number[], t: number): number {
@@ -37,7 +42,7 @@ function lowerBound(sorted: number[], t: number): number {
   return lo
 }
 
-export class TiltShiftPass {
+export class ComposePass {
   private target: WebGLRenderTarget
   private quad: Mesh
   private scene = new Scene()
@@ -47,48 +52,22 @@ export class TiltShiftPass {
   /** §50.2: how much of this city's authored hour is night */
   night = 0
 
-  /** metres either side of the focal plane that stay sharp */
-  focusRange = 130
-  /**
-   * DOF r2: capped well below the old 9. At 9px the far field stopped being
-   * soft and became formless — a smear where a skyline used to be. The point
-   * of the miniature read is that the far field is out of focus, not that it
-   * is gone.
-   */
-  maxBlurPx = 5
-  strength = 1
-  /** what the last frame actually asked for, for the capture rigs */
-  lastStrength = 1
-
   /** §56.1: the glow, built from this pass's own linear buffer */
   readonly bloom: BloomPass
 
   constructor(width: number, height: number) {
-    const depth = new DepthTexture(width, height, UnsignedShortType)
     this.target = new WebGLRenderTarget(width, height, {
       format: RGBAFormat,
       // §56.1: half-float, so the scene buffer keeps authored radiance above
-      // 1.0 instead of clamping it. The DOF and grade below are unaffected —
-      // they were already reading linear values — but the bright pass now has
-      // an emitter/reflector distinction to threshold on rather than a guess.
+      // 1.0 instead of clamping it, and the bright pass has an
+      // emitter/reflector distinction to threshold on rather than a guess.
       type: HalfFloatType,
-      depthTexture: depth,
-      minFilter: NearestFilter,
-      magFilter: NearestFilter,
     })
     this.bloom = new BloomPass(width, height)
 
     this.material = new ShaderMaterial({
       uniforms: {
         tColor: { value: this.target.texture },
-        tDepth: { value: depth },
-        uTexel: { value: new Vector2(1 / width, 1 / height) },
-        uNear: { value: 1 },
-        uFar: { value: 12000 },
-        uFocus: { value: 600 },
-        uRange: { value: this.focusRange },
-        uMaxBlur: { value: this.maxBlurPx },
-        uStrength: { value: 1 },
         uVignette: { value: 0.42 },
         uExposure: { value: 1.06 },
         uContrast: { value: 0.32 },
@@ -107,20 +86,16 @@ export class TiltShiftPass {
       fragmentShader: /* glsl */ `
         varying vec2 vUv;
         uniform sampler2D tColor;
-        uniform sampler2D tDepth;
         uniform sampler2D tBloom;
-        uniform vec2 uTexel;
-        uniform float uNear, uFar, uFocus, uRange, uMaxBlur, uStrength, uVignette;
-        uniform float uExposure, uContrast, uDesat;
-        uniform float uNight, uBloom;
+        uniform float uVignette, uExposure, uContrast, uDesat, uNight, uBloom;
 
         /**
-         * §48.2: the one post chain — filmic tonemap (ACES approximation),
-         * a gentle contrast s-curve, and a slight desaturation of the mids
-         * with the warm band protected, so terracotta and the fork's amber
-         * keep their voice while the greys quiet down. The divergence lerp
-         * reads through: it is a relative move in the same gamut, and the
-         * protection is exactly its hue family.
+         * §48.2: filmic tonemap (ACES approximation), a gentle contrast
+         * s-curve, and a slight desaturation of the mids with the warm band
+         * protected, so terracotta and the fork's amber keep their voice while
+         * the greys quiet down. The divergence lerp reads through: it is a
+         * relative move in the same gamut, and the protection is exactly its
+         * hue family.
          */
         vec3 grade(vec3 c) {
           vec3 x = c * uExposure;
@@ -137,55 +112,20 @@ export class TiltShiftPass {
           return mix(sc, vec3(lum), uDesat * mids * (1.0 - warm));
         }
 
-        // §47.1: subtle radial falloff toward the void, so the plate edge
-        // reads as an object sitting in darkness rather than a viewport crop
-        vec4 vignetted(vec4 c) {
+        void main() {
+          vec4 c = texture2D(tColor, vUv);
+          // §47.1: subtle radial falloff toward the void, so the plate edge
+          // reads as an object sitting in darkness rather than a viewport crop
           float r = length(vUv * 2.0 - 1.0);
           float v = 1.0 - uVignette * (1.0 - 0.65 * uNight) * smoothstep(0.62, 1.42, r);
           vec3 lit = grade(c.rgb);
           // §56.1: the glow joins AFTER the grade, carrying its emitter's own
           // warmth, with its own soft compression standing in for the tonemap
           // it skipped — so a hot window blooms without punching a white hole
-          // through the plate. It rides the vignette with everything else: a
-          // light at the frame edge that ignored the falloff would float off
-          // the object the §47.1 vignette exists to make the plate read as.
+          // through the plate. It rides the vignette with everything else.
           vec3 b = texture2D(tBloom, vUv).rgb * uBloom;
           lit += b / (1.0 + b);
-          return vec4(lit * v, c.a);
-        }
-
-        float viewZ(vec2 uv) {
-          float d = texture2D(tDepth, uv).x;
-          // perspective depth -> positive distance from the camera
-          return (2.0 * uNear * uFar) / (uFar + uNear - (2.0 * d - 1.0) * (uFar - uNear));
-        }
-
-        void main() {
-          float z = viewZ(vUv);
-          float coc = clamp(abs(z - uFocus) / uRange, 0.0, 1.0);
-          coc = pow(coc, 1.35) * uMaxBlur * uStrength;
-
-          if (coc < 0.35) {
-            gl_FragColor = vignetted(texture2D(tColor, vUv));
-            return;
-          }
-
-          // golden-angle spiral: even coverage for very few taps
-          vec4 sum = texture2D(tColor, vUv);
-          float total = 1.0;
-          const int TAPS = 12;
-          for (int i = 0; i < TAPS; i++) {
-            float fi = float(i) + 1.0;
-            float a = fi * 2.39996323;
-            float r = sqrt(fi / float(TAPS)) * coc;
-            vec2 offset = vec2(cos(a), sin(a)) * r * uTexel;
-            vec2 uv = vUv + offset;
-            // do not drag sharp foreground over a blurred background
-            float w = step(uFocus - uRange * 4.0, viewZ(uv));
-            sum += texture2D(tColor, uv) * w;
-            total += w;
-          }
-          gl_FragColor = vignetted(sum / total);
+          gl_FragColor = vec4(lit * v, c.a);
         }
       `,
       depthTest: false,
@@ -197,30 +137,25 @@ export class TiltShiftPass {
     this.scene.add(this.quad)
   }
 
+  /**
+   * §77.1: the composite's own uniform list, so "the depth of field is DELETED
+   * rather than turned down" is checkable rather than assertable. A pass that
+   * still carried `uMaxBlur` at zero would pass every image test and would be
+   * the thing this block was asked not to leave behind.
+   */
+  uniformNames(): string[] {
+    return Object.keys(this.material.uniforms)
+  }
+
   setSize(width: number, height: number): void {
     this.target.setSize(width, height)
-    this.material.uniforms.uTexel.value.set(1 / width, 1 / height)
     this.bloom.setSize(width, height)
     // setSize reallocates, so the composite's handle has to be re-bound
     this.material.uniforms.tBloom.value = this.bloom.texture
   }
 
-  render(
-    renderer: WebGLRenderer,
-    scene: Scene,
-    camera: PerspectiveCamera,
-    focusDistance: number,
-    strength: number,
-  ): void {
-    const u = this.material.uniforms
-    u.uNear.value = camera.near
-    u.uFar.value = camera.far
-    u.uFocus.value = focusDistance
-    u.uRange.value = this.focusRange
-    u.uMaxBlur.value = this.maxBlurPx
-    u.uStrength.value = strength
-    this.lastStrength = strength
-    u.uNight.value = this.night
+  render(renderer: WebGLRenderer, scene: Scene, camera: PerspectiveCamera): void {
+    this.material.uniforms.uNight.value = this.night
 
     renderer.setRenderTarget(this.target)
     renderer.clear()
@@ -230,15 +165,10 @@ export class TiltShiftPass {
     // §56.1: the glow is built from the linear buffer BEFORE the grade reads
     // it, then handed to the composite to add after. Skipped entirely when the
     // caller has asked for no glow, so golden-hour cities pay nothing for it.
-    u.uBloom.value = this.bloom.strength
+    this.material.uniforms.uBloom.value = this.bloom.strength
     if (this.bloom.strength > 0.001) {
       this.bloom.generate(renderer, this.target.texture)
-      u.tBloom.value = this.bloom.texture
-    }
-
-    if (strength <= 0.01) {
-      // nothing to do; still needs the blit so the frame is not blank
-      u.uStrength.value = 0
+      this.material.uniforms.tBloom.value = this.bloom.texture
     }
     renderer.render(this.scene, this.camera)
   }
