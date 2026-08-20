@@ -176,6 +176,14 @@ function freshLedger(): Ledger {
  */
 export type DegradeReason = 'none' | 'no_key' | 'rate' | 'budget' | 'disabled'
 
+export interface TranscriptRow {
+  at: string
+  chunk: string
+  tier: 0 | 1
+  verb: string
+  line: string
+}
+
 export class Minds {
   private client: Anthropic | null = null
   private ledger: Ledger = freshLedger()
@@ -192,8 +200,8 @@ export class Minds {
    */
   private degradedSince = Date.now()
   /** rolling sample of what tier 1 actually produced, for the block's report */
-  readonly transcript: Array<{ at: string; chunk: string; tier: 0 | 1; verb: string; line: string }> =
-    []
+  private readonly voiced: TranscriptRow[] = []
+  private readonly fallen: TranscriptRow[] = []
 
   constructor() {
     const key = process.env.ANTHROPIC_API_KEY
@@ -380,8 +388,24 @@ export class Minds {
    * never got held at all are not in here; they were never candidates.
    */
   remember(chunk: string, tier: 0 | 1, verb: string, line: string): void {
-    this.transcript.push({ at: new Date().toISOString().slice(11, 19), chunk, tier, verb, line })
-    if (this.transcript.length > 200) this.transcript.shift()
+    /**
+     * ONE RING PER TIER, not one shared ring.
+     *
+     * A shared 200-row buffer is the wrong instrument for this measurement:
+     * tier 0 outnumbers tier 1 by roughly 20:1, so within a minute the common
+     * arm evicts every row of the rare arm and `/minds?tier=1` returns an
+     * empty list while the ledger says 16 lines were written. The buffer was
+     * deleting exactly the thing it exists to show. Each arm now keeps its own
+     * 100, so the comparison survives a burst.
+     */
+    const ring = tier === 1 ? this.voiced : this.fallen
+    ring.push({ at: new Date().toISOString().slice(11, 19), chunk, tier, verb, line })
+    if (ring.length > 100) ring.shift()
+  }
+
+  /** both arms, newest last, for the side-by-side read */
+  get transcript(): TranscriptRow[] {
+    return [...this.voiced, ...this.fallen].sort((a, b) => (a.at < b.at ? -1 : 1))
   }
 }
 
