@@ -132,7 +132,6 @@ function bindConfig(): void {
     ['#buy-mobile', DESK.pumpfunUrl],
     ['#pumpfun', DESK.pumpfunUrl],
     ['#chan-x', DESK.xUrl],
-    ['#chan-tg', DESK.telegramUrl],
     ['#chan-site', DESK.siteUrl],
   ] as const) {
     const el = $<HTMLAnchorElement>(sel)

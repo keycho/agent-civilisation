@@ -18,6 +18,7 @@ import {
   isDrama,
   BUILDING_SLOT_SPARE,
   CITY_HOUR,
+  NIGHT_HOUR,
   CITY_MATERIALS,
   CITY_MATERIAL_DEFAULT,
   CLEARED_TONE,
@@ -436,7 +437,7 @@ if (batchFault) console.error(batchFault)
 buildings.setCityMaterial(CITY_MATERIALS[seed.chunk.id] ?? CITY_MATERIAL_DEFAULT)
 // §50.3: the authored hour decides how much of the frame the windows carry
 const cityHour = CITY_HOUR[seed.chunk.id]
-buildings.setNight(cityHour?.night ?? 0.1, cityHour?.windowWarm ?? '#ffc27a')
+buildings.setNight(nightOf(cityHour), cityHour?.windowWarm ?? '#ffc27a')
 addLayer(buildings.group, 'buildings')
 
 /**
@@ -516,7 +517,7 @@ const streetLights = new StreetLights(
   substrate.heightAt,
   HALF_EXTENT,
   {
-    night: cityHour?.night ?? 0,
+    night: nightOf(cityHour),
     warm: cityHour?.lampWarm ?? '#ffb765',
   },
 )
@@ -532,7 +533,7 @@ const traffic = new Traffic(
   seed.substrate.surfaces,
   substrate.heightAt,
   HALF_EXTENT,
-  { night: cityHour?.night ?? 0 },
+  { night: nightOf(cityHour) },
 )
 addLayer(traffic.group, 'traffic')
 
@@ -548,7 +549,7 @@ const streetTrees = createStreetTrees(
   substrate.heightAt,
   HALF_EXTENT,
   CITY_MATERIALS[seed.chunk.id] ?? CITY_MATERIAL_DEFAULT,
-  cityHour?.night ?? 0,
+  nightOf(cityHour),
 )
 addLayer(streetTrees, 'streetTrees')
 
@@ -557,7 +558,7 @@ const waterReflections = createWaterReflections(
   streetLights.positions,
   substrate.waterPlanes,
   cityHour?.lampWarm ?? '#ffb765',
-  cityHour?.night ?? 0,
+  nightOf(cityHour),
 )
 addLayer(waterReflections, 'waterReflections')
 
@@ -847,6 +848,21 @@ rig.ceilingNear = ceilingNear
  * plate's edges are the fabric — azimuth 0 faces it squarely, and the old
  * three-quarter azimuth was the pre-cut habit surviving into the camera.
  */
+/**
+ * §80: how much of this chunk's hour is night.
+ *
+ * The fallback used to be a literal 0.1 in one call site and 0 in others,
+ * which predates §63.2 making NIGHT_HOUR the default for an unauthored chunk.
+ * The lights already fell back to NIGHT_HOUR; only the WINDOW term did not, so
+ * maasland and maassluis were rendered in the night register with §63's
+ * emissive semantic ten times weaker than the six chunks beside them — dark
+ * cities whose owned stock barely lit up. Caught by §80's a/b asserting that a
+ * night chunk reads night, which it did not.
+ */
+function nightOf(h: { night: number } | undefined): number {
+  return h?.night ?? NIGHT_HOUR.night
+}
+
 const CITY_AZIMUTH = 0
 
 /**
@@ -1341,6 +1357,23 @@ function renderMigrationLine(): void {
     `<span class="src">replayed region run — migration is not on the wire</span>`
 }
 
+/**
+ * §80: the desk is the homepage now, so leaving a world goes THERE.
+ *
+ * §69 made `/earth` the homepage and the in-page listing was how you got back
+ * to it. §79 replaced it with a real page at `/`, which carries the same
+ * board plus the premise, the figures and the token. Two homepages is one too
+ * many, and the one a viewer lands on should be the one leaving a world
+ * returns to.
+ *
+ * The `/earth` overlay's rendering is left in the tree but is no longer
+ * reachable from any control. Deleting a whole surface is a bigger call than
+ * "it should take you back to home", so it is flagged rather than removed.
+ */
+function goHome(): void {
+  location.href = '/'
+}
+
 function worldsOpen(): boolean {
   return document.body.classList.contains('worlds')
 }
@@ -1410,7 +1443,7 @@ canvas.addEventListener('wheel', (e) => {
     liftPressure += 1
     if (liftPressure >= 3) {
       liftPressure = 0
-      openWorlds(true)
+      goHome()
     }
   } else if (e.deltaY < 0) {
     liftPressure = 0
@@ -1656,7 +1689,7 @@ attachRigControls(rig, canvas, inputWinsCamera)
 
 const compose = new ComposePass(innerWidth, innerHeight)
 // §50.2: the grade stands down where the authored hour is night
-compose.night = cityHour?.night ?? 0
+compose.night = nightOf(cityHour)
 /**
  * §56.1: the glow needs no per-hour ramp. §50.3's emissive terms are already
  * multiplied by the authored hour's `night`, so a golden-hour plate emits
@@ -3002,7 +3035,7 @@ async function pollSummaries(): Promise<void> {
  * numbers in a 250 px box behind a button — and two places to choose a world
  * is one more than the product has.
  */
-el('chunkBtn').addEventListener('click', () => openWorlds(!worldsOpen()))
+el('chunkBtn').addEventListener('click', goHome)
 
 function switchTo(id: string): void {
   if (id === entry.id || !chunks.some((c) => c.id === id)) return
@@ -3307,7 +3340,7 @@ addEventListener('keydown', (e) => {
       toggleSurface('digest')
       break
     case 'm':
-      openWorlds(!worldsOpen())
+      goHome()
       break
     case 's':
       el('soundBtn').click()
@@ -4249,7 +4282,4 @@ function civHome(opts: { snap?: boolean } = {}): void {
  * away on its own is a homepage a viewer cannot read.
  */
 const bareLoad = wantedChunk() === null
-if (bareLoad && !arriving && !sessionStorage.getItem('tf-earth-seen')) {
-  sessionStorage.setItem('tf-earth-seen', '1')
-  openWorlds(true)
-}
+if (bareLoad && !arriving) goHome()

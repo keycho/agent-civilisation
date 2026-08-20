@@ -348,6 +348,36 @@ export const NIGHT_HOUR: CityHour = {
   lampWarm: INFRASTRUCTURE_COLD,
 }
 
+/**
+ * §80: two of the eight go back to daylight.
+ *
+ * §63.2 made every city cold and after dark, and it was right about what that
+ * bought — §63's semantic that LIGHT MEANS AGENTS, which only works because
+ * the fabric around the light is unlit. But eight cities in one register read
+ * as one city eight times on the board, and the board's whole job is that they
+ * are different places.
+ *
+ * So red hook and vlaardingen return to the §48-era golden hour they had
+ * before §63. Nothing new is built: §63.2's per-chunk hours already exist and
+ * §75's envelope already multiplies them, so this is a table edit.
+ *
+ * WHAT IT COSTS, stated because it is a real loss and not a free win: in
+ * daylight the emissive windows stop distinguishing owned stock from untouched
+ * stock. §50.3's warm windows are invisible against a lit facade, so on these
+ * two chunks agent activity has to read through §46.2's site glow, the crane
+ * markers and the §59.1 sprites instead — all three tuned against the dark
+ * register, and all three verified against the light one in this block's a/b.
+ * `night: 0` is what switches the window term off, set deliberately rather
+ * than left to decay.
+ */
+const DAYLIGHT: CityHour = {
+  ...GOLDEN_HOUR,
+  night: 0,
+  groundScale: 1,
+  windowWarm: AGENT_WARM,
+  lampWarm: INFRASTRUCTURE_COLD,
+}
+
 export const CITY_HOUR: Record<string, CityHour> = {
   /**
    * Schiedam: grey-green. Estuary light with the green of brackish water and
@@ -414,19 +444,25 @@ export const CITY_HOUR: Record<string, CityHour> = {
   },
 
   /**
-   * Brooklyn: cold charcoal. Almost no hue left — low industrial fabric read
-   * as mass and silhouette, with the water taking what little sky remains.
+   * §80: Brooklyn is one of the two daylight chunks. Red Hook is low, flat and
+   * water-edged, which is the cut that gains most from a raking sun — the pier
+   * sheds and the brownstone rows read as MASSES with shadows rather than as
+   * the silhouette §63.2 reduced them to.
    */
   'brooklyn-redhook': {
-    ...NIGHT_HOUR,
-    sun: '#787b80',
-    sunIntensity: 1.8,
-    fillSky: '#5c5f65',
-    fillGround: '#2b2c2f',
-    coolAmbient: '#36383d',
-    coolAmbientIntensity: 2.2,
-    elevationDeg: 5,
-    groundScale: 0.36,
+    ...DAYLIGHT,
+    elevationDeg: 24,
+  },
+
+  /**
+   * §80: Vlaardingen is the other. It had no authored hour at all and fell
+   * back to NIGHT_HOUR, so it was the least distinguishable of the eight — a
+   * post-war housing district rendered as unlit mass. Daylight is what makes
+   * its long parallel slabs legible as a plan.
+   */
+  'vlaardingen-westwijk': {
+    ...DAYLIGHT,
+    elevationDeg: 27,
   },
 }
 

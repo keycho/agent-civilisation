@@ -23,19 +23,17 @@ export interface DeskConfig {
   /** the pump.fun listing, behind both `buy $fork` and the ghost button */
   pumpfunUrl: string
   xUrl: string
-  telegramUrl: string
   siteUrl: string
   /** the pair label in the head sub-slot, e.g. "$fork/sol" */
   pair: string
 }
 
 export const DESK: DeskConfig = {
-  tokenMint: '',
-  pumpfunUrl: '',
-  xUrl: '',
-  telegramUrl: '',
-  siteUrl: '',
-  pair: '',
+  tokenMint: 'FJ2o9WzyXYTKdAqNYphMoCYsundWykrriosepKiXpump',
+  pumpfunUrl: 'https://pump.fun/coin/FJ2o9WzyXYTKdAqNYphMoCYsundWykrriosepKiXpump',
+  xUrl: 'https://x.com/terraforkwrld',
+  siteUrl: 'https://terrafork.dev',
+  pair: '$fork/sol',
 }
 
 /** a field that is set to something real, rather than blank or whitespace */
