@@ -107,16 +107,23 @@ const clamp01 = (t: number): number => (t < 0 ? 0 : t > 1 ? 1 : t)
  * degrees off vertical, which is nowhere near horizontal and is the pitch the
  * approved opening was composed at.
  */
-const PITCH_FAR = 0.62
+const PITCH_MID = 0.62
 const PITCH_NEAR = 0.86
 
 /**
- * The distance by which the pitch has reached its far value.
+ * The distance by which the pitch has reached its MID value.
  *
  * A FIXED reference rather than `limits.maxDistance`, because the home framing
  * is computed from the pitch and the max distance is computed from the home
  * framing — reading the limit here would close that loop and make the curve
- * depend on the city's size. Above this the camera is simply top-down.
+ * depend on the city's size.
+ *
+ * §76.2: this is no longer the end of the curve. It used to be — above it the
+ * pitch simply held at 0.62 — and that is what made the whole-plate framing
+ * read as a small rectangle in a large field: at the far end the plate's DEPTH
+ * is what binds the frame, and holding the pitch means the only way to fit more
+ * plate is to move further away, which shrinks everything. Past this distance
+ * the curve keeps going, toward `homePitch`.
  */
 const PITCH_FULL_AT = 1200
 
@@ -318,12 +325,107 @@ export class CameraRig {
     )
   }
 
-  /** §75: the one dial. Pitch is read off distance and never stored free. */
+  /**
+   * §76.2: where the curve's far end lands, and at what distance.
+   *
+   * Defaults leave the §75 curve exactly as it was — it ends at PITCH_MID and
+   * holds — so nothing changes until a caller states a home framing. `main`
+   * sets it from the OPEN canvas, because that is the shape the plate has to
+   * fit into and it is not the window's shape.
+   */
+  homePitch = PITCH_MID
+  private homePitchAt = PITCH_FULL_AT
+
+  setHomePitch(pitch: number, atDistance: number): void {
+    this.homePitch = MathUtils.clamp(pitch, 0.05, HORIZON_LIMIT)
+    this.homePitchAt = Math.max(PITCH_FULL_AT + 1, atDistance)
+    this.desiredPolar = this.pitchFor(this.desiredDistance)
+    this.polar = this.pitchFor(this.distance)
+  }
+
+  /**
+   * §75: the one dial. Pitch is read off distance and never stored free.
+   *
+   * §76.2 gives it a second segment. Near to PITCH_FULL_AT it runs from the
+   * street's obliquity to the district view's near-top-down, as before; past
+   * that it runs on to `homePitch`, which for a wide window is MORE oblique
+   * than either. That is not a curve that got turned around — obliquity is
+   * what fills a frame with a flat plate, and how much of it the frame can
+   * afford depends on how much horizontal room is going spare.
+   */
   pitchFor(distance: number): number {
-    const t = clamp01(
-      (distance - this.limits.minDistance) / Math.max(1, PITCH_FULL_AT - this.limits.minDistance),
-    )
-    return PITCH_NEAR + (PITCH_FAR - PITCH_NEAR) * easeInOutCubic(t)
+    if (distance <= PITCH_FULL_AT) {
+      const t = clamp01(
+        (distance - this.limits.minDistance) / Math.max(1, PITCH_FULL_AT - this.limits.minDistance),
+      )
+      return PITCH_NEAR + (PITCH_MID - PITCH_NEAR) * easeInOutCubic(t)
+    }
+    const t = clamp01((distance - PITCH_FULL_AT) / (this.homePitchAt - PITCH_FULL_AT))
+    return PITCH_MID + (this.homePitch - PITCH_MID) * easeInOutCubic(t)
+  }
+
+  /** §76.2: the lens ramp, so a framing solve uses the fov the shot will have */
+  lensAt(distance: number): number {
+    return this.fovAt(distance)
+  }
+
+  /**
+   * §76.2: the distance at which every one of `points` fits the frame.
+   *
+   * Solved by projection rather than by the `d * tan(fov/2)` box, because at
+   * the far end that box is wrong in three ways at once: the frustum meets the
+   * ground in a TRAPEZOID (§72.3 measured 100-290 m of error), the fov itself
+   * ramps with distance, and the pitch does too. Projecting the plate's actual
+   * corners through the actual lens at each candidate distance has none of
+   * those problems and needs no correction terms.
+   *
+   * `ndcHalfX` is how much of the frame's half-width is VISIBLE — §76.1's open
+   * canvas as a fraction — so the solve fits the plate into the part a viewer
+   * can see rather than into the part the canvas happens to occupy.
+   *
+   * Monotonic in distance (further is smaller), so a bisection is exact rather
+   * than a search that might settle anywhere.
+   */
+  distanceToFit(
+    points: readonly Vector3[],
+    target: Vector3,
+    azimuth: number,
+    ndcHalfX: number,
+    margin: number,
+  ): number {
+    const probe = new PerspectiveCamera(this.lens.cityFov, this.camera.aspect, 1, 40000)
+    const v = new Vector3()
+    const fits = (d: number): boolean => {
+      const polar = this.pitchFor(d)
+      const sinP = Math.sin(polar)
+      probe.fov = this.fovAt(d)
+      probe.near = Math.max(0.4, d * 0.05)
+      probe.far = d * 3 + 2500
+      probe.position.set(
+        target.x + d * sinP * Math.sin(azimuth),
+        target.y + d * Math.cos(polar),
+        target.z + d * sinP * Math.cos(azimuth),
+      )
+      probe.lookAt(target)
+      probe.updateMatrixWorld()
+      probe.updateProjectionMatrix()
+      for (const p of points) {
+        v.copy(p).project(probe)
+        if (Math.abs(v.x) > ndcHalfX / margin || Math.abs(v.y) > 1 / margin) return false
+        // behind the camera: project() wraps the sign, so reject it explicitly
+        if (v.z > 1) return false
+      }
+      return true
+    }
+    let lo = this.limits.minDistance
+    let hi = 40000
+    if (!fits(hi)) return hi
+    for (let i = 0; i < 48; i++) {
+      const mid = (lo + hi) / 2
+      if (fits(mid)) hi = mid
+      else lo = mid
+    }
+    return hi
   }
 
   /**

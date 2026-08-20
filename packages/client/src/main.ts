@@ -842,92 +842,126 @@ substrate.aimVoidFade(
 rig.ceilingNear = ceilingNear
 
 /**
- * §24.1: "zoom so the diamond's width fills the frame width, accepting corner
- * crop."
- *
- * `distanceToFrame` fits a span to the *vertical* fov, so framing the plate
- * that way put the whole horizontal margin on screen as dead grey — at 16:9 the
- * camera was showing about 1.8x more world across than down, and the plate is
- * only as wide as it is tall. Frame on the width instead and let the corners go
- * off-frame.
- *
- * The plate is a square seen rotated, which is the §24.2 problem showing up in
- * the camera: a square of half-extent h turned by `az` projects to a horizontal
- * half-width of h*(|cos az| + |sin az|), independent of the tilt, since tilt
- * compresses the vertical only. At the default azimuth that is 1.36 h rather
- * than h — the diamond really is wider than the square it is cut from, and the
- * framing has to know that or it crops the corners it was told to keep.
- */
-/**
  * §35.6: at rest the plate presents square, not as a rotated diamond. §24.2
  * already cut the chunk along its fabric axis, so in local coordinates the
  * plate's edges are the fabric — azimuth 0 faces it squarely, and the old
- * three-quarter azimuth was the pre-cut habit surviving into the camera. The
- * spread term stays general for any azimuth a shot lands on.
+ * three-quarter azimuth was the pre-cut habit surviving into the camera.
  */
 const CITY_AZIMUTH = 0
-/** the pitch every framed shot lands on; the framing must be derived AT it */
-/**
- * §75: the home pitch is no longer authored — it is what the pitch curve gives
- * at the home distance. Kept as a name because the capture rigs and the
- * explainer read it, and because a constant that is now derived should say so
- * where it used to be written.
- */
-const CITY_POLAR = 0.36
-/** §57.4: the plate is an object in a frame, not a texture bled to the edges */
-/**
- * §66.3: how much room the home framing leaves around the city.
- *
- * 1.22 left the fabric filling 49.9% of the frame, which passed a bar that
- * only asked whether the city was lost and fails the bar that asks whether it
- * is framed. A portrait of a city is mostly city. 1.08 keeps the plate whole
- * inside the frame — it is still an object sitting in the shot, not a crop —
- * and lifts the fill past 60%.
- */
-const FRAME_MARGIN = 1.08
 
 /**
- * §57.4: the plate is a SQUARE SEEN AT AN ANGLE, and the old derivation only
- * accounted for its width.
+ * §76.2 retires `frameThePlate`, `CITY_POLAR` and `FRAME_MARGIN` rather than
+ * leaving them beside the fabric framing as a second opinion — §75's own rule
+ * about the inset bound, applied to its successor.
  *
- * `widthM / aspect` frames the plate's width across the frame's width, which
- * is right for a top-down view and wrong for every view we actually use. At
- * the framed pitch the camera sits 52 degrees above the horizon, so the
- * plate's DEPTH — the same 604 m, running away from the camera — projects to
- * 604 * cos(polar) = 477 m of vertical screen extent, while the old framing
- * only ever supplied 604 / 1.6 = 377 m of it. The plate overflowed the frame
- * vertically by 27% at the very distance meant to frame it, and the maximum
- * zoom-out sat only 25% beyond that: which is why every production frame shows
- * the plate cropped or shoved into a corner with void where the city should be.
- *
- * Framing now takes whichever of the two extents needs more room, at the pitch
- * the shot will actually use, plus a margin so the plate reads as an object
- * sitting in the frame.
+ * What they got wrong is recorded on `frameTheFabric` below, because the
+ * reasoning is the useful part: the span was the city's rather than the
+ * plate's, the aspect was the window's rather than the visible canvas's, and
+ * the pitch was a constant the curve had already stopped honouring. The
+ * `d * tan(fov/2)` box they were built on survives as `rig.distanceToFrame`,
+ * which the preview harness still uses on a frame with no chrome over it.
  */
-function frameThePlate(aspect: number, azimuth = CITY_AZIMUTH, polar = CITY_POLAR): number {
-  /**
-   * §75: the pitch at the home framing is a function of the home distance, and
-   * the home distance is a function of the pitch. One iteration closes it —
-   * the curve is flat at this end, so the second pass moves the answer by less
-   * than a metre and a third would move it by nothing.
-   */
-  /**
-   * §65: the span being framed is the CITY's, not the plate mesh's. Those were
-   * the same number while the plate was sized from `chunk.localBounds`, and
-   * that number was wrong — the plate mesh has since grown to cover a city the
-   * metadata understated, and framing the mesh would now pull back further
-   * than the city needs and shrink it in frame. What has to fit is the city.
-   */
-  const spread = Math.abs(Math.cos(azimuth)) + Math.abs(Math.sin(azimuth))
-  const widthM = 2 * Math.max(CITY.halfX, CITY.halfY) * spread
-  const depthOnScreenM = widthM * Math.cos(polar)
-  const needVertical = Math.max(depthOnScreenM, widthM / aspect) * FRAME_MARGIN
-  const first = rig.distanceToFrame(needVertical)
-  const settled = rig.pitchFor(first)
-  const depth2 = widthM * Math.cos(settled)
-  return rig.distanceToFrame(Math.max(depth2, widthM / aspect) * FRAME_MARGIN)
+
+/**
+ * §76.2: the opening shows the whole FABRIC, and it shows it in the part of
+ * the window a viewer can see.
+ *
+ * The retired `frameThePlate` sized the frame from the CITY's span against the
+ * VIEWPORT's aspect. Both halves were wrong for an opening shot, and the
+ * measurements say so:
+ *
+ *   the plate is 680 m across (halfExtent 340) and the city 612 m, so framing
+ *   the city leaves the fabric's outer 34 m cropped on every side; and
+ *
+ *   at 1280x800 the frame spans 861 m horizontally but `#railRight` covers 35%
+ *   of it, so the open canvas showed 563 m of a 680 m plate. The result is the
+ *   reported district view: the middle of the fabric, edges cut, with no
+ *   orienting shot before the director starts moving.
+ *
+ * So the span is the PLATE's, measured as the corner offsets from the actual
+ * target rather than assumed symmetric — the plate is centred on the origin
+ * and the city is not, so those differ — and the fit is solved against the
+ * open canvas by projection (see `distanceToFit`).
+ */
+const PLATE_MARGIN = 1.1
+
+/**
+ * The far end of the pitch curve, DERIVED FROM THE REQUIREMENT rather than
+ * authored as a value.
+ *
+ * A flat square plate viewed top-down projects to a square. Tilting it
+ * foreshortens the depth to `S·cos(polar)` while the width stays `S`, so
+ * obliquity costs nothing until the frame runs out of horizontal room —
+ * exactly at `cos(polar) = 1 / openAspect`. Past that point more obliquity
+ * starts costing distance, and distance is what makes the plate small.
+ *
+ * So: take all the obliquity the frame can afford for free, and never less
+ * than §75's PITCH_MID, which was itself measured against "does this still
+ * read as a city rather than a map". A wide window affords a lot — at
+ * 2560x1200 the open canvas is 1.77:1 and this lands near 0.97, well past the
+ * old top of the curve. A near-square open canvas affords none and it floors
+ * at 0.62, where the fix is the framing distance instead.
+ *
+ * The ceiling stops the derivation running to the horizon on an extreme
+ * window, where the trapezoid and the fog would take over from the geometry.
+ */
+const PITCH_MID_FLOOR = 0.62
+const PITCH_HOME_CEIL = 1.0
+
+function homePitchFor(openAspect: number): number {
+  const free = Math.acos(Math.min(1, 1 / Math.max(1e-3, openAspect)))
+  return Math.min(PITCH_HOME_CEIL, Math.max(PITCH_MID_FLOOR, free))
 }
-const CITY_FRAMING = frameThePlate(innerWidth / innerHeight)
+
+/** mirrors the rig's own fixed reference; only used to seed the solve */
+const PITCH_FULL_AT_REF = 1200
+
+/** the plate's four corners at ground height, which is what has to fit */
+function plateCorners(): Vector3[] {
+  const h = HALF_EXTENT
+  return [
+    [-h, -h],
+    [h, -h],
+    [-h, h],
+    [h, h],
+  ].map(([x, z]) => new Vector3(x, substrate.groundY, z))
+}
+
+/**
+ * The whole-fabric framing: how far back, and at what pitch, so the plate sits
+ * inside the open canvas with a margin on all sides. Returns both because the
+ * pitch curve has to be told where its far end lands, and that IS this
+ * distance — stating it any other way reopens the framing/pitch loop §75
+ * closed.
+ */
+function frameTheFabric(): { distance: number; pitch: number } {
+  const open = openCanvas()
+  const openFrac = (open.right - open.left) / innerWidth
+  const openAspect = ((open.right - open.left) / innerHeight) * 1
+  const pitch = homePitchFor(openAspect)
+  // the curve must already reach `pitch` at the answer, so the solve runs
+  // against a curve told to land there; one pass, because `homePitchFor`
+  // depends on the aspect alone and not on the distance
+  rig.setHomePitch(pitch, PITCH_FULL_AT_REF + 1)
+  const guess = rig.distanceToFit(
+    plateCorners(),
+    CITY_CENTRE,
+    CITY_AZIMUTH,
+    openFrac,
+    PLATE_MARGIN,
+  )
+  rig.setHomePitch(pitch, guess)
+  const distance = rig.distanceToFit(
+    plateCorners(),
+    CITY_CENTRE,
+    CITY_AZIMUTH,
+    openFrac,
+    PLATE_MARGIN,
+  )
+  rig.setHomePitch(pitch, distance)
+  return { distance, pitch }
+}
+const CITY_FRAMING = frameTheFabric().distance
 /**
  * §57.4 gave free zoom-out 35% past the home framing so the last thing a viewer
  * could do before the map took over was not a crop. §66.3's 40% coverage floor
@@ -965,11 +999,10 @@ if (arriving) {
   rig.update(0.05)
   rig.flyTo(CITY_CENTRE.clone(), CITY_FRAMING, {
     azimuth: CITY_AZIMUTH,
-    polar: CITY_POLAR,
     duration: 2.8,
   })
 } else {
-  rig.home(CITY_CENTRE.clone(), CITY_FRAMING, CITY_AZIMUTH, CITY_POLAR, { snap: true })
+  rig.home(CITY_CENTRE.clone(), CITY_FRAMING, CITY_AZIMUTH, rig.homePitch, { snap: true })
   /**
    * §66.1: SETTLED, not flown-with-a-short-duration. A 0.01 s fly-to lands the
    * target and the distance at once but leaves the damping to walk the pitch in
@@ -3159,9 +3192,8 @@ function toggleAmbient(force?: boolean): void {
     // §46.4: an ambient return presents the framed view before the director
     // resumes its cuts — the same rule as first load
     director.enabled = false
-    rig.flyTo(CITY_CENTRE.clone(), frameThePlate(innerWidth / innerHeight), {
+    rig.flyTo(CITY_CENTRE.clone(), frameTheFabric().distance, {
       azimuth: CITY_AZIMUTH,
-      polar: CITY_POLAR,
       duration: 1.6,
     })
     setTimeout(() => {
@@ -3370,9 +3402,15 @@ function resize(): void {
   // §75: the resize path had its own copy of §57.4's 1.12x and kept applying
   // it after the load path stopped — which is why the use test still reached
   // 2285 with the limit set to 2040. One rule, one place.
-  rig.limits.maxDistance = frameThePlate(aspect)
-  rig.distance = Math.min(rig.distance, rig.limits.maxDistance)
+  /**
+   * §76.2: the offset comes FIRST, because the fabric framing is solved
+   * against the open canvas and the open canvas is what the offset is measured
+   * from. Solving before applying it would size the frame for a window a third
+   * of which is covered — which is the bug this block exists to fix.
+   */
   applyCanvasOffset()
+  rig.limits.maxDistance = frameTheFabric().distance
+  rig.distance = Math.min(rig.distance, rig.limits.maxDistance)
   const pr = renderer.getPixelRatio()
   tiltShift.setSize(Math.floor(innerWidth * pr), Math.floor(innerHeight * pr))
 }
@@ -3907,9 +3945,9 @@ function civHome(opts: { snap?: boolean } = {}): void {
    */
   rig.home(
     CITY_CENTRE.clone(),
-    frameThePlate(innerWidth / innerHeight),
+    frameTheFabric().distance,
     opts.snap ? CITY_AZIMUTH : null,
-    CITY_POLAR,
+    rig.homePitch,
     { duration: 1.2, snap: opts.snap },
   )
 }
