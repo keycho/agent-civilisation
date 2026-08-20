@@ -34,6 +34,7 @@ import {
   withDuty,
 } from './economy.ts'
 import { type Agent, type PlanSpec, type World, floorArea } from './state.ts'
+import { conversionPenalty, conversionTargets } from './structure.ts'
 
 /**
  * §4's action set. Everything an agent can do to the built environment.
@@ -553,7 +554,19 @@ function convert(
   const b = world.standing(buildingId)
   if (!b || b.ownerId !== agent.id) return { ok: false, reason: 'not owned' }
   if (b.purpose === to) return { ok: false, reason: 'no change' }
-  const cost = conversionCost(b)
+  /**
+   * §74.3: the form decides, and it decides HERE as well as in the engine.
+   *
+   * The engine only proposes; §18.3's rule is that the action is what actually
+   * happened, so the constraint has to hold at the point of application or a
+   * future caller — a plan filed under an older build, a test, the §55 minds —
+   * can walk straight past it.
+   */
+  if (!conversionTargets(b).includes(to)) {
+    return { ok: false, reason: 'form cannot take this purpose' }
+  }
+  // §74.3: the same multiple the engine priced the option at
+  const cost = conversionCost(b) * conversionPenalty(b)
   if (!spend(world, agent, cost)) return { ok: false, reason: 'insufficient capital' }
 
   const from = b.purpose

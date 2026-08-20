@@ -1,0 +1,29 @@
+
+schiedam-havens  (34,000 decisions)
+  unbounded  grey  25.4%   standing  94.3%   touched  93.1%   divergence  63.0%
+             grey lost to: 140 gone, 517 repurposed, 41 more than half again as tall
+             conversions applied: 1561, expansions 1554, demolitions 140
+  bounded    grey  34.6%   standing  92.6%   touched  88.6%   divergence  59.2%
+             grey lost to: 159 gone, 411 repurposed, 42 more than half again as tall
+             conversions applied: 1068, expansions 1326, demolitions 159
+
+london-deptford  (34,000 decisions)
+  unbounded  grey  36.8%   standing  95.7%   touched  83.9%   divergence  53.0%
+             grey lost to: 78 gone, 422 repurposed, 0 more than half again as tall
+             conversions applied: 1024, expansions 525, demolitions 79
+  bounded    grey  43.5%   standing  96.2%   touched  82.2%   divergence  51.6%
+             grey lost to: 105 gone, 342 repurposed, 0 more than half again as tall
+             conversions applied: 781, expansions 545, demolitions 108
+
+brooklyn-redhook  (34,000 decisions)
+  unbounded  grey  33.0%   standing  99.9%   touched  85.8%   divergence  57.2%
+             grey lost to: 48 gone, 509 repurposed, 23 more than half again as tall
+             conversions applied: 1196, expansions 777, demolitions 48
+  bounded    grey  43.1%   standing  99.0%   touched  85.8%   divergence  55.2%
+             grey lost to: 65 gone, 396 repurposed, 32 more than half again as tall
+             conversions applied: 874, expansions 732, demolitions 65
+
+§74.5 prediction — grey above 40.0% in at least two of 3: 2/3 HELD
+  schiedam-havens        25.4% -> 34.6%  under the floor
+  london-deptford        36.8% -> 43.5%  over the floor
+  brooklyn-redhook       33.0% -> 43.1%  over the floor

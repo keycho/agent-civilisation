@@ -36,10 +36,16 @@
 import { MemoryStore } from '@civ/persistence'
 import { Simulation } from '@civ/sim'
 import { acquisitionPrice, conversionCost, yieldPerTick } from '@civ/sim/economy.ts'
-import { BOUNDARY } from '@civ/sim/state.ts'
+import { BOUNDARY, CONVERSION } from '@civ/sim/state.ts'
 import { DECISION_BUDGET, loadSeed, runSeed } from './lib/summarise.ts'
 
 BOUNDARY.gate = process.env.CIV_BOUNDARY_GATE !== '0'
+/**
+ * §74.4: run the dark-mass instrument on both arms of the conversion bound.
+ * The failure signal is a RISE in stable dark, which needs a before to compare
+ * against — so the arm is selectable rather than assumed.
+ */
+CONVERSION.on = process.env.CIV_CONVERSION !== '0'
 
 const CHUNK = process.argv[2] ?? 'schiedam-havens'
 const SEEDS = Number(process.argv[3] ?? 6)

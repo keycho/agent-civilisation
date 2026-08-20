@@ -233,6 +233,15 @@ export const FUNDED_PLAN = { on: true }
  */
 export const STRUCTURAL_CAPACITY = { on: true }
 
+/**
+ * §74.3. Conversion is bounded by what the building's FORM can become — a
+ * terrace does not become a factory, a warehouse becomes flats constantly.
+ * Always on in the product; the §74 a/b flips it off to restore the old
+ * "any building may become any of four purposes" so the change is measured
+ * against an identical seed in one process.
+ */
+export const CONVERSION = { on: true }
+
 export class World {
   /**
    * §20.2: an internal monotonic sequence number. Construction spans it, decay

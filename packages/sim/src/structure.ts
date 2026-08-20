@@ -29,8 +29,8 @@
  * stacking storeys on victorian brick goes into clearing and rebuilding at
  * height, which is what actually happens to cities under pressure.
  */
-import type { Building } from '@civ/core'
-import { STRUCTURAL_CAPACITY } from './state.ts'
+import type { Building, Purpose } from '@civ/core'
+import { CONVERSION, STRUCTURAL_CAPACITY } from './state.ts'
 
 /**
  * How the structure carries its loads. Not a field on the seed — no importer
@@ -135,4 +135,118 @@ export function structuralCapacity(b: Building): number {
 /** How many levels could still be added to this structure. Often zero. */
 export function expansionHeadroom(b: Building): number {
   return Math.max(0, structuralCapacity(b) - b.levels)
+}
+
+/**
+ * §74.3: what a building's FORM will let it become.
+ *
+ * The last of the three mechanisms that spend the grey. §70 bounded clearing by
+ * making a plan fund its whole self; §72.5 bounded expansion by what the
+ * structure can carry; and the §73.3 decomposition then measured what was left:
+ * 422-529 baseline buildings per chunk change purpose, 45-57 percent of stock,
+ * an order of magnitude more than the two bounded mechanisms cost together. A
+ * 1909 masonry terrace could become a factory.
+ *
+ * The same real reason applies. Floor loading, column spacing, floorplate,
+ * servicing and access decide what a conversion can be, and they are properties
+ * of the form rather than of the market. Terrace to factory does not happen.
+ * Warehouse to loft apartments happens constantly.
+ *
+ * Keyed on FORM rather than on `structuralClass`, which is a deliberate reading
+ * of §74.3's call rather than a literal one. `structuralClass` answers what the
+ * thing is made of and how it carries load, which is what a HEIGHT limit turns
+ * on; conversion turns on plan and floorplate, and §74.3's own table names
+ * forms — terrace, warehouse, civic, slab, tower — not eras. A four-storey
+ * brick mill and a four-storey brick terrace share a structural class and
+ * convert nothing alike.
+ */
+export type ConversionClass = 'fine_grain' | 'open_floorplate' | 'civic_monument' | 'slab' | 'tower'
+
+/** terraces and shopfronts: narrow frontage, party walls, stairs not lifts */
+const FINE_GRAIN = new Set(['rowhouse', 'brownstone_row', 'mansard_block', 'machiya_row', 'retail'])
+/** the permissive one — big clear spans, loading, floor loading already there */
+const OPEN_PLATE = new Set([
+  'warehouse',
+  'industrial',
+  'setback_industrial',
+  'agricultural',
+  'agent_hall',
+])
+/** structures built for one purpose, with the fabric to prove it */
+const CIVIC_MONUMENT = new Set(['civic', 'gasholder', 'water_tower', 'crane', 'station_shed'])
+const SLAB = new Set(['apartment', 'agent_block', 'agent_slab'])
+const TOWER = new Set(['tower', 'agent_tower'])
+
+/**
+ * §74.4's guard lives in this table, and in the test that reads it: every class
+ * keeps at least two targets, so no form is left with nowhere to go. §34 cost
+ * several builds to stock that could not find a viable use, and
+ * over-constraining conversion is exactly how that comes back.
+ */
+const CONVERSION_TARGETS: Record<ConversionClass, readonly Purpose[]> = {
+  // a shop or a small practice on the ground floor and flats above. Nothing
+  // that wants a floorplate or a loading bay: the frontage is five metres.
+  fine_grain: ['residential', 'retail', 'office'],
+  // §74.3's asymmetry, and the point of it: conversion pressure lands on the
+  // post-industrial stock these seed cities were chosen for, because that stock
+  // is genuinely the easiest thing to convert
+  open_floorplate: ['residential', 'office', 'retail'],
+  // few, and dear. `civic` is listed so a civic building that stays civic is
+  // not counted as having nowhere to go; `bestConversion` skips the current
+  // purpose, so in practice this is two targets.
+  civic_monument: ['civic', 'office', 'retail'],
+  slab: ['residential', 'office', 'retail'],
+  /**
+   * §74.3's table says "tower: office <-> residential", which is two targets
+   * and therefore ONE place for any given tower to go — and §74.4's guard
+   * caught that before the economy was asked, which is what it is for. Retail
+   * is the honest third and it is where it actually is: the podium. A tower's
+   * lower floors take shopfront the way a slab's do, and §74.3 grants the slab
+   * exactly that.
+   */
+  tower: ['office', 'residential', 'retail'],
+}
+
+/** §74.3: converting a purpose-built civic structure is dear, not impossible */
+const CIVIC_CONVERSION_PENALTY = 2.4
+
+/** the a/b's before-arm: any building could become any of these */
+const LEGACY_TARGETS: readonly Purpose[] = ['residential', 'retail', 'commercial', 'office']
+
+export function conversionClass(b: Building): ConversionClass {
+  if (CIVIC_MONUMENT.has(b.archetype)) return 'civic_monument'
+  if (OPEN_PLATE.has(b.archetype)) return 'open_floorplate'
+  if (TOWER.has(b.archetype)) return 'tower'
+  if (SLAB.has(b.archetype)) return 'slab'
+  if (FINE_GRAIN.has(b.archetype)) return 'fine_grain'
+  /**
+   * An archetype the table has not met. Decided on the two things that actually
+   * separate the classes — how much floor there is per storey, and how many
+   * storeys — rather than defaulted, because a default here is a silent policy
+   * applied to whatever the next importer adds.
+   */
+  const perFloor = b.areaM2 / Math.max(1, b.levels)
+  if (b.levels >= 9) return 'tower'
+  if (perFloor >= 600) return 'open_floorplate'
+  if (b.levels >= 4) return 'slab'
+  return 'fine_grain'
+}
+
+/** The purposes this form can take. Never empty, and never fewer than two. */
+export function conversionTargets(b: Building): readonly Purpose[] {
+  return CONVERSION.on ? CONVERSION_TARGETS[conversionClass(b)] : LEGACY_TARGETS
+}
+
+/** What converting this form costs, as a multiple of the base. */
+export function conversionPenalty(b: Building): number {
+  if (!CONVERSION.on) return 1
+  return conversionClass(b) === 'civic_monument' ? CIVIC_CONVERSION_PENALTY : 1
+}
+
+/** §74.4: the guard's own input — every class and what it may become. */
+export function conversionTable(): Array<{ kind: ConversionClass; targets: readonly Purpose[] }> {
+  return (Object.keys(CONVERSION_TARGETS) as ConversionClass[]).map((kind) => ({
+    kind,
+    targets: CONVERSION_TARGETS[kind],
+  }))
 }

@@ -126,6 +126,32 @@ Structural canaries run over the seed itself before any simulation. Four of them
 caught real faults on first run — see the commit history; each produced output
 that looked entirely plausible.
 
+### Harness convention (§74.2): a harness that only photographs is not enough
+
+**Every visual a/b carries a state assertion alongside the image.**
+
+An a/b of a live simulation is not a controlled experiment. The world differs
+between arms whether or not the change did anything, so images alone can confirm
+any hypothesis — including one that is false.
+
+§73.2 is the case that produced the rule. The first void fade wrote into
+`shader.uniforms` before `onBeforeCompile` had run, so every write was skipped
+and the half-extent stayed at its `1e9` default: a fade that never faded. The
+before/after frames still looked plausibly improved, because the world had moved
+on between the two captures. What caught it was the readout printed beside them,
+`fabric half [1000000000, 1000000000]`. Nothing in the frames could have.
+
+So a visual harness needs either a frozen world or a printed state that says the
+change is actually in effect — the uniform, the bound, the count, the flag. The
+same rule is why `tools/watch/inset-audit.mjs` steps the rig and prints metres,
+and why `tools/watch/director-sheet.mjs` prints the intent and framing under
+every tile.
+
+A second one worth keeping from the same block: adjacent surfaces meeting at a
+boundary need MATCHING values, not merely similar ones. `VOID.fog` sat at
+`#131110` against a `#0d0c0a` horizon — six values apart, invisible as a colour,
+and a visible seam exactly where the plate ended.
+
 ### What §22 measured, and what it found
 
 §21.1 asked for the action mix to be judged. §22.1 answered that the mix is

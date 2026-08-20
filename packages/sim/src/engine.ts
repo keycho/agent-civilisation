@@ -25,7 +25,7 @@ import {
   yieldPerTick,
 } from './economy.ts'
 import { type Agent, ESCALATION, FUNDED_PLAN, type MemoryEntry, type PlanSpec, type SitePlan, THIRD_USE, type World, floorArea } from './state.ts'
-import { expansionHeadroom } from './structure.ts'
+import { conversionPenalty, conversionTargets, expansionHeadroom } from './structure.ts'
 
 /**
  * §9. Async, may return null, carries a rationale on the action.
@@ -361,8 +361,10 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
       }
 
       const best = bestConversion(world, b, agent)
-      if (best && conversionCost(b) <= funds) {
-        const payback = paybackWindows(conversionCost(b), best.uplift)
+      // §74.3: a purpose-built civic structure converts dear rather than freely
+      const convCost = conversionCost(b) * conversionPenalty(b)
+      if (best && convCost <= funds) {
+        const payback = paybackWindows(convCost, best.uplift)
         if (payback < s.maxPayback) {
           options.push({
             action: {
@@ -734,7 +736,7 @@ export class RuleBasedDecisionEngine implements DecisionEngine {
       const conv = THIRD_USE.on ? bestConversion(world, b, agent) : null
       const capConvert = conv
         ? ((b.yieldPerTick + conv.uplift) * RATE_WINDOW_TICKS) /
-          Math.max(1, price + conversionCost(b))
+          Math.max(1, price + conversionCost(b) * conversionPenalty(b))
         : Number.NEGATIVE_INFINITY
       const cap = Math.max(annual / Math.max(1, price), capConvert)
       const forSite = site * ECONOMY.capRate > incomeAnnual
@@ -1090,8 +1092,22 @@ function bestConversion(
   b: Building,
   agent: Agent,
 ): { purpose: Purpose; uplift: number } | null {
-  if (b.purpose === 'civic') return null
-  const targets: Purpose[] = ['residential', 'retail', 'commercial', 'office']
+  /**
+   * §74.3: the targets come from the building's FORM.
+   *
+   * This was a flat `['residential', 'retail', 'commercial', 'office']` for
+   * every structure in every city, which is how a 1909 masonry terrace could
+   * become a factory — and the §73.3 decomposition measured what that cost:
+   * 422-529 baseline buildings per chunk changed purpose, an order of magnitude
+   * more than clearing and expansion together after §70 and §72.5 bounded them.
+   *
+   * The blanket `b.purpose === 'civic'` refusal goes with it. §74.3's table
+   * gives civic few targets and makes them expensive rather than forbidding
+   * them, which is what actually happens to churches and station sheds; the
+   * cost multiplier is in `conversionPenalty` and §42.2's landmark gate still
+   * applies on top.
+   */
+  const targets = conversionTargets(b)
   let best: { purpose: Purpose; uplift: number } | null = null
   for (const t of targets) {
     if (t === b.purpose) continue
