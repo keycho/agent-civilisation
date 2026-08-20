@@ -215,6 +215,10 @@ export class Minds {
   /** §55: the loud line. Says WHICH constraint is binding, not merely "degraded". */
   health(): Record<string, unknown> {
     this.rollDay()
+    // sweep first: a reader asking "why is tier 1 off" must be answered from
+    // the window as it is NOW, not as it was when the last eligible event
+    // happened to arrive.
+    this.sweep()
     const reason = this.degradeReason()
     // a process that never gets a call still changes state — budget rolls,
     // the rate window drains. `note` is what stamps `degradedSince`.
@@ -275,13 +279,34 @@ export class Minds {
     }
   }
 
+  /**
+   * Ages both windows out of the last 60 seconds.
+   *
+   * This USED to live inside `slot()`, which is only reached when an eligible
+   * event arrives — so in a quiet world the windows were never swept. After a
+   * burst filled the global window, `/health` reported
+   * `degraded: "rate", callsLastMinute: 17` continuously for fifteen minutes
+   * with `calls` frozen, describing a rate limit that had expired fourteen
+   * minutes earlier. The cap itself was fine: `slot()` sweeps before it
+   * decides, so the next real call would have been admitted. It was the
+   * READOUT that was wrong, on the one surface §55 asked to be loud and
+   * truthful about why tier 1 is off. A false "rate" reads as "the world is
+   * too busy" when the truth is "nothing eligible has happened since".
+   */
+  private sweep(chunkId?: string): void {
+    const cut = Date.now() - 60_000
+    while (this.recent.length && this.recent[0] < cut) this.recent.shift()
+    for (const [id, per] of this.perChunk) {
+      while (per.length && per[0] < cut) per.shift()
+      if (!per.length && id !== chunkId) this.perChunk.delete(id)
+    }
+  }
+
   /** trims both windows to the last 60s and reports whether a slot exists */
   private slot(chunkId: string): boolean {
     const now = Date.now()
-    const cut = now - 60_000
-    while (this.recent.length && this.recent[0] < cut) this.recent.shift()
+    this.sweep(chunkId)
     const per = this.perChunk.get(chunkId) ?? []
-    while (per.length && per[0] < cut) per.shift()
     this.perChunk.set(chunkId, per)
     if (this.recent.length >= GLOBAL_CALLS_PER_MIN) return false
     if (per.length >= CHUNK_CALLS_PER_MIN) return false
