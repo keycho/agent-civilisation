@@ -112,7 +112,18 @@ h1,h2,h3{margin:0;font-weight:400}
 .panel__pad{padding:var(--s4) var(--s3)}
 
 /* ---------- left rail ---------- */
-.ca{font-size:var(--t3);line-height:1.4;color:var(--t-2);word-break:break-all}
+.ca{
+  font-size:var(--t3);line-height:1.4;color:var(--t-2);word-break:break-all;
+  /*
+   * §79.4: the ONE string on the page that must not be lowercased.
+   * body sets text-transform:lowercase so no copy can ship capitalised, which
+   * is right for every other word here and catastrophic for this one — a
+   * Solana mint is case-sensitive base58, so the rendered address was a
+   * DIFFERENT, invalid address from the one `copy ca` puts on the clipboard.
+   * Anyone reading it off the screen would have been misled.
+   */
+  text-transform:none;
+}
 .ca[data-unset="true"]{color:var(--t-5)}
 .ca-actions{display:flex;gap:var(--s2);margin-top:var(--s3)}
 .btn-copy{font-size:var(--t1);font-weight:700;letter-spacing:.18em;color:var(--ground);background:var(--btn-idle);padding:9px 13px}
@@ -129,6 +140,12 @@ h1,h2,h3{margin:0;font-weight:400}
 .chan__s{font-size:var(--t1);letter-spacing:.14em;color:var(--t-4);display:block;margin-top:var(--s1)}
 .chan__go{font-size:var(--t2);color:var(--t-4)}
 
+.p-channels{flex:1}
+.standings{display:flex;flex-direction:column;gap:var(--s3);padding:var(--s4) var(--s3);border-bottom:1px solid var(--rule-dim)}
+.standings .row{display:flex;flex-direction:column;gap:2px}
+.standings .k{font-size:var(--t1);letter-spacing:.18em;color:var(--t-4)}
+.standings .v{font-size:var(--t3);color:var(--t-2)}
+.standings .v b{font-weight:400;color:var(--t-1);font-variant-numeric:tabular-nums}
 .provenance{margin-top:auto;display:flex;flex-direction:column;gap:6px;padding:var(--s4) var(--s3)}
 .provenance p{margin:0;font-size:var(--t0);letter-spacing:.08em;color:var(--t-5)}
 
@@ -346,6 +363,18 @@ h1,h2,h3{margin:0;font-weight:400}
           <li><a class="chan" id="chan-x" href="#"><span><b class="chan__t">x.com/terraforkwrld</b><b class="chan__s">dispatches from the sim</b></span><span class="chan__go">↗</span></a></li>
           <li><a class="chan" id="chan-site" href="#"><span><b class="chan__t">terrafork.dev</b><b class="chan__s">worlds index</b></span><span class="chan__go">↗</span></a></li>
         </ul>
+        <!--
+          §79.3: the rail's dead space, given the one thing the centre column
+          makes you scan the table for. The stat strip carries the totals; this
+          carries the SPREAD — which world has drifted furthest from the real
+          place, which is working hardest, and which has barely been touched.
+        -->
+        <div class="standings" data-live="standings">
+          <div class="row"><span class="k">most diverged</span><span class="v" data-stand="most">—</span></div>
+          <div class="row"><span class="k">busiest right now</span><span class="v" data-stand="busy">—</span></div>
+          <div class="row"><span class="k">least touched</span><span class="v" data-stand="least">—</span></div>
+        </div>
+
         <div class="provenance">
           <p>openstreetmap (odbl) · 3dbag · hm land registry (ogl v3) · etalab dvf</p>
           <p>every figure is simulated. the places are real; what has happened to them is not.</p>

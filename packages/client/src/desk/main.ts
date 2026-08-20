@@ -288,7 +288,32 @@ function paintNumbers(): void {
   bind('agents_alive', num(agents))
   bind('generation', num(Math.max(0, ...worlds.map((w) => w.generation))))
 
+  paintStandings()
   paintTape(num(events), num(buildings), num(agents))
+}
+
+/**
+ * §79.3: the spread, which the stat strip cannot show because it sums.
+ * Reads the same `worlds` the table does — no extra fetch, no second source.
+ */
+function paintStandings(): void {
+  if (!worlds.length) return
+  const by = (f: (w: Summary) => number) => worlds.slice().sort((a, b) => f(b) - f(a))
+  const most = by((w) => w.divergenceIndex)[0]
+  const busy = by((w) => w.working)[0]
+  const least = by((w) => -w.divergenceIndex)[0]
+  const set = (k: string, v: string) => {
+    const el = $<HTMLElement>(`[data-stand="${k}"]`)
+    if (el) el.innerHTML = v
+  }
+  set('most', `${esc(label(most.id))} <b>${(most.divergenceIndex * 100).toFixed(1)}%</b>`)
+  set(
+    'busy',
+    busy.working > 0
+      ? `${esc(label(busy.id))} <b>${busy.working}</b> working`
+      : `<b>nobody</b> is building`,
+  )
+  set('least', `${esc(label(least.id))} <b>${(least.divergenceIndex * 100).toFixed(1)}%</b>`)
 }
 
 function paintTape(events: string, buildings: string, agents: string): void {
