@@ -3288,6 +3288,76 @@ addEventListener('keydown', (e) => {
 // loop
 // ---------------------------------------------------------------------------
 
+/**
+ * §76.1: the city is centred on the OPEN CANVAS, not on the viewport.
+ *
+ * §35 makes the chrome DOM, sitting over the render surface rather than beside
+ * it, so the canvas is the full window and the camera has always aimed at its
+ * centre. But `#railRight` covers the rightmost 442px of it. A city centred at
+ * `innerWidth / 2` therefore sits right of centre in the part a viewer can
+ * actually SEE, and every pixel of horizontal margin collects on the left as
+ * one black column — which is exactly the shape reported from production, and
+ * why it is a straight vertical edge rather than the wedge a camera fault
+ * makes.
+ *
+ * The margin itself is §76.1's real subject and is not created by this: a
+ * square city framed in a wide window has horizontal room left over whatever
+ * the camera does. What this decides is WHERE that room goes. Split evenly
+ * about the open canvas, the right half falls behind the pane and the left
+ * half becomes a margin rather than a void column.
+ *
+ * Measured live rather than computed from a constant, because `#railLeft` is
+ * conditional (§59.2 shows it only for crew and changelog) and the viewer can
+ * drag its width. A layout the code assumes is a layout that will be wrong.
+ */
+function openCanvas(): { left: number; right: number } {
+  let left = 0
+  let right = innerWidth
+  for (const id of ['railLeft', 'railRight']) {
+    const node = document.getElementById(id)
+    if (!node) continue
+    /**
+     * The rect is the visibility test. The first cut used `offsetParent ===
+     * null` to detect §59.2's `display: none`, which is the usual idiom and is
+     * wrong here: the rails are POSITION-FIXED, and `offsetParent` is null for
+     * a fixed element whether or not it is on screen. So it rejected a pane
+     * that was plainly covering a third of the window, reported "chrome takes
+     * 0px", and made both a/b arms identical. A display:none element has a
+     * zero rect, so measuring the rect answers both questions at once.
+     */
+    const r = node.getBoundingClientRect()
+    if (r.width < 40 || r.height < 20) continue
+    if (r.left + r.width / 2 < innerWidth / 2) left = Math.max(left, r.right)
+    else right = Math.min(right, r.left)
+  }
+  return left < right ? { left, right } : { left: 0, right: innerWidth }
+}
+
+/** §76.1: null disables the shift, for the a/b's before arm */
+let canvasOffset = true
+
+/**
+ * `setViewOffset(W, H, shift, 0, W, H)` moves the principal point and NOTHING
+ * else. three derives the frustum width from `aspect * height` and then scales
+ * it by `view.width / view.fullWidth` — which is 1 here — so the zoom, the
+ * pitch and the framing distance are all untouched and only the centre moves.
+ * Unproject respects it, so picking, the pixel marks and the void mask all
+ * stay correct rather than needing a parallel correction.
+ */
+function applyCanvasOffset(): void {
+  const cam = rig.camera
+  if (!canvasOffset) {
+    cam.clearViewOffset()
+    cam.aspect = innerWidth / innerHeight
+    cam.updateProjectionMatrix()
+    return
+  }
+  const open = openCanvas()
+  const shift = innerWidth / 2 - (open.left + open.right) / 2
+  cam.aspect = innerWidth / innerHeight
+  cam.setViewOffset(innerWidth, innerHeight, shift, 0, innerWidth, innerHeight)
+}
+
 function resize(): void {
   renderer.setSize(innerWidth, innerHeight, false)
   const aspect = innerWidth / innerHeight
@@ -3302,11 +3372,27 @@ function resize(): void {
   // 2285 with the limit set to 2040. One rule, one place.
   rig.limits.maxDistance = frameThePlate(aspect)
   rig.distance = Math.min(rig.distance, rig.limits.maxDistance)
+  applyCanvasOffset()
   const pr = renderer.getPixelRatio()
   tiltShift.setSize(Math.floor(innerWidth * pr), Math.floor(innerHeight * pr))
 }
 addEventListener('resize', resize)
 resize()
+
+/**
+ * §76.1: the open canvas changes without the window changing. `#railLeft`
+ * appears and disappears with the crew and changelog panes, and §59.2 made it
+ * draggable, so watching `resize` alone would leave the city off-centre for
+ * exactly the states a viewer reaches by using the product.
+ */
+new MutationObserver(applyCanvasOffset).observe(document.body, {
+  attributes: true,
+  attributeFilter: ['class'],
+})
+{
+  const rail = document.getElementById('railLeft')
+  if (rail) new ResizeObserver(applyCanvasOffset).observe(rail)
+}
 
 let last = performance.now()
 let clock = 0
@@ -3960,6 +4046,27 @@ function civHome(opts: { snap?: boolean } = {}): void {
    */
   freezeClock(at: number | null) {
     frozenClock = at
+  },
+  /**
+   * §76.1's a/b arm. Toggling the offset rather than reloading twice means the
+   * two frames are the same world at the same camera, which is the whole point
+   * of §74.2 — a page reload would rebuild the city and put the world's own
+   * movement into a comparison about composition.
+   */
+  centreOnOpenCanvas(on: boolean) {
+    canvasOffset = on
+    applyCanvasOffset()
+  },
+  /** where the chrome leaves room, and how far the frame is being shifted */
+  canvasFrame() {
+    const open = openCanvas()
+    return {
+      viewport: [innerWidth, innerHeight],
+      open: [open.left, open.right],
+      openCentre: (open.left + open.right) / 2,
+      shift: canvasOffset ? innerWidth / 2 - (open.left + open.right) / 2 : 0,
+      on: canvasOffset,
+    }
   },
   /**
    * §75's capture surface, and §74.2's rule applied to my own block: the band
