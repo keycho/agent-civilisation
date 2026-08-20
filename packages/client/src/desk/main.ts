@@ -128,8 +128,6 @@ function bindConfig(): void {
     el.setAttribute('aria-disabled', String(!bound(DESK.tokenMint)))
   }
   for (const [sel, url] of [
-    ['#buy', DESK.pumpfunUrl],
-    ['#buy-mobile', DESK.pumpfunUrl],
     ['#pumpfun', DESK.pumpfunUrl],
     ['#chan-x', DESK.xUrl],
     ['#chan-site', DESK.siteUrl],
@@ -279,8 +277,6 @@ function paintNumbers(): void {
   }
   const rate = $<HTMLElement>('[data-live="events-rate"]')
   if (rate) rate.textContent = `+${ratePerSec.toFixed(0)} events/sec`
-  const clock = $<HTMLElement>('[data-live="clock"]')
-  if (clock) clock.textContent = clockNow()
 
   // boot-log figures are copy, but the numbers inside them are real
   const bind = (f: string, v: string) => {
@@ -298,7 +294,6 @@ function paintNumbers(): void {
 function paintTape(events: string, buildings: string, agents: string): void {
   const gen = Math.max(0, ...worlds.map((w) => w.generation))
   const items: Array<[string, string, boolean?]> = [
-    ['$fork', bound(DESK.pumpfunUrl) ? 'live on pump.fun' : 'not listed yet', true],
     ['gen', `${gen} sealed`],
     ['agents', `${agents} alive`],
     ['buildings', `${buildings} standing`],
@@ -437,10 +432,6 @@ async function start(): Promise<void> {
   }
   await poll()
   setInterval(poll, POLL_MS)
-  setInterval(() => {
-    const clock = $<HTMLElement>('[data-live="clock"]')
-    if (clock) clock.textContent = clockNow()
-  }, 1000)
 }
 
 void start()

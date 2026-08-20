@@ -90,16 +90,10 @@ h1,h2,h3{margin:0;font-weight:400}
 .head-sub{font-size:var(--t1);letter-spacing:.20em;color:var(--t-4)}
 .head-nav{display:flex;align-items:center;gap:var(--s4)}
 .head-nav a{font-size:var(--t1);letter-spacing:.18em;white-space:nowrap}
-.btn-buy{
-  font-size:var(--t1);font-weight:700;letter-spacing:.18em;white-space:nowrap;
-  color:var(--ground);background:var(--amber);padding:9px var(--s4);border:1px solid var(--amber);
-}
-.btn-buy:hover{background:var(--amber-hi);border-color:var(--amber-hi);color:var(--ground)}
 /* §79: an action with nowhere to go must not look like one */
-.btn-buy[aria-disabled="true"],.btn-copy[aria-disabled="true"],.btn-ghost[aria-disabled="true"]{
+.btn-copy[aria-disabled="true"],.btn-ghost[aria-disabled="true"]{
   background:none;color:var(--t-5);border:1px solid var(--rule);cursor:not-allowed;
 }
-.btn-buy[aria-disabled="true"]:hover{background:none;color:var(--t-5);border-color:var(--rule)}
 
 .grid{flex:1;min-height:0;display:grid;grid-template-columns:var(--rail-l) minmax(0,1fr) var(--rail-r);gap:1px;background:var(--rule-dim)}
 .col{display:flex;flex-direction:column;gap:1px;background:var(--rule-dim);min-width:0}
@@ -272,8 +266,7 @@ h1,h2,h3{margin:0;font-weight:400}
   .desk{height:auto;padding-bottom:64px}
   .head{padding:0 var(--s3)}
   .head-sub,.head-nav a{display:none}
-  .head .btn-buy{display:none}
-  .grid{display:flex;flex-direction:column}
+  .head   .grid{display:flex;flex-direction:column}
   .col{display:contents}
   .col--right{display:contents}
   .hero{padding:var(--s6) var(--s3) var(--s5);order:1}
@@ -293,8 +286,7 @@ h1,h2,h3{margin:0;font-weight:400}
     display:flex;align-items:center;gap:var(--s3);
     padding:var(--s3);border-top:1px solid var(--rule);background:var(--ground);
   }
-  .buybar .btn-buy{flex:1;text-align:center;padding:14px}
-  .buybar .btn-copy{padding:14px var(--s3)}
+  .buybar   .buybar .btn-copy{flex:1;text-align:center;padding:14px}
   .boot__log{width:auto;padding:0 var(--s3)}
 }
 .buybar{display:none}
@@ -331,7 +323,6 @@ h1,h2,h3{margin:0;font-weight:400}
       <a href="#premise">premise</a>
       <a href="#worlds">worlds</a>
       <a href="#log">log</a>
-      <a class="btn-buy" id="buy" href="#">buy $fork</a>
     </nav>
   </header>
 
@@ -398,7 +389,6 @@ h1,h2,h3{margin:0;font-weight:400}
       <section class="panel wire" id="log" aria-labelledby="t-wire">
         <div class="panel__bar">
           <h2 class="panel__title" id="t-wire">wire</h2>
-          <span class="panel__meta"><b data-live="clock">--:--:--</b></span>
         </div>
         <div class="panel__body" data-live="wire" data-state="loading" id="wire" aria-live="polite" aria-atomic="false">
           <div class="wire__empty">awaiting /earth stream</div>
@@ -413,7 +403,6 @@ h1,h2,h3{margin:0;font-weight:400}
 
   <div class="buybar">
     <button class="btn-copy" data-copy="#ca">copy ca</button>
-    <a class="btn-buy" id="buy-mobile" href="#">buy $fork</a>
   </div>
 </div>
 
