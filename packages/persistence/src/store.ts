@@ -42,6 +42,15 @@ export interface WorldStore {
   /** Append-only. Returns the assigned id. */
   appendEvent(e: Omit<WorldEvent, 'id'>): number
   events(q?: EventQuery): WorldEvent[]
+  /**
+   * §55 tier 1: attach the agent-voice line to an already-written event.
+   *
+   * Not a mutation of the record — `rationale` is untouched and no event is
+   * added, removed or reordered. The frame re-reads its event window every
+   * tick, so a line attached here reaches every client on the next frame with
+   * no protocol change and no push.
+   */
+  voiceEvent(id: number, voice: string): void
   /** Most recent events ranked by cinematic weight — §17's director input. */
   weightedEvents(chunkId: string, sinceTick: number, limit: number): WorldEvent[]
   /**

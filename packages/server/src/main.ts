@@ -56,6 +56,7 @@ import { WebSocketServer, type WebSocket } from 'ws'
 import { NAME_POOLS } from '@civ/sim/names.ts'
 import { fineSummaryOf } from '@civ/sim/region.ts'
 import { agentDetail, buildingDetail } from './frames.ts'
+import { Minds } from './minds.ts'
 import { WorldService } from './world.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -109,6 +110,13 @@ interface ChunkHost {
   sockets: Set<WebSocket>
 }
 
+/**
+ * §55: ONE Minds for the process, not one per chunk. The daily ceiling and the
+ * global rate cap are properties of the account, not of a world, so a per-host
+ * instance would multiply both by eight and blow the ceiling by lunchtime.
+ */
+const minds = new Minds()
+
 const hosts = new Map<string, ChunkHost>()
 const single = () => (hosts.size === 1 ? [...hosts.values()][0] : null)
 
@@ -117,7 +125,7 @@ function newSeason(
   season: number,
   resumeFrom?: WorldState,
 ): WorldService {
-  return new WorldService({
+  const service = new WorldService({
     seed: host.seed,
     store,
     throughput: THROUGHPUT_INDEX,
@@ -129,6 +137,8 @@ function newSeason(
       void turnSeason(host.id, ended)
     },
   })
+  service.minds = minds
+  return service
 }
 
 /**
@@ -414,6 +424,13 @@ const http = createServer((req, res) => {
       drain: store.drain,
       retainSeasons: RETAIN_SEASONS,
       uptimeSeconds: Math.round((Date.now() - STARTED) / 1000),
+      /**
+       * §55: loud when tiering degrades for BUDGET rather than for load. The
+       * two mean opposite things to whoever is reading this — load comes back
+       * on its own, budget is off until the day rolls and someone has to
+       * decide whether the ceiling is right.
+       */
+      minds: minds.health(),
     }
     res.writeHead(200, JSON_HEAD)
     if (!boot.done) {
@@ -559,6 +576,13 @@ async function handle(host: ChunkHost, ws: WebSocket, msg: ClientMessage): Promi
       )
     }
     case 'inspectAgent': {
+      /**
+       * §55: an inspect is the closest thing the protocol has to "this is who
+       * I am following", so it marks the agent watched. Their lines become
+       * eligible below the weight floor for a minute — which is what a person
+       * who picked one developer out of 58 is actually asking for.
+       */
+      minds.watch(msg.agentId)
       // §47.2: the character sheet, read from the world like a building is
       const detail = agentDetail(host.world.sim, msg.agentId)
       return send(

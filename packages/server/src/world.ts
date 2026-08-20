@@ -1,8 +1,9 @@
 import { BASE_CINEMATIC_WEIGHT, RATE_WINDOW_TICKS, THROUGHPUT, type WorldSeed } from '@civ/core'
-import { DurableStore } from '@civ/persistence'
+import { DurableStore, type WorldEvent } from '@civ/persistence'
 import type { AgentIdentity, EventWire, Frame, Hello, MaterialiseSpec, Readouts, RoadEdgeWire } from '@civ/protocol'
 import { toBase64 } from '@civ/protocol'
 import { SaturationWatch, Simulation, type WorldState } from '@civ/sim'
+import type { Minds } from './minds.ts'
 import {
   BuildingTexture,
   agentIdentity,
@@ -71,6 +72,21 @@ export class WorldService {
   private throughputIndex: number
   private lastBroadcastBytes: Uint8Array
   private lastEventId = 0
+  /**
+   * §55 tier 1. Events pulled out of a frame while Claude writes their line,
+   * and the ones whose call has settled and are ready to go out.
+   *
+   * A high-weight event is HELD rather than sent twice, because the frame
+   * sends each event exactly once and a line attached after delivery would
+   * never reach anyone. Holding defers ONE EVENT'S DELIVERY by up to the call
+   * timeout; it never defers a tick, and it only ever touches the small share
+   * that clears the weight floor. Everything else goes out untouched at the
+   * same moment it always did.
+   */
+  private voicing = new Set<number>()
+  private released: WorldEvent[] = []
+  /** §55: shared across every hosted chunk, so the caps and ledger are global */
+  minds: Minds | null = null
   /**
    * §22.3: the log spans every season, but a new season's tick restarts at 0 —
    * so filtering recent events by tick alone would hand a joining spectator the
@@ -383,6 +399,48 @@ export class WorldService {
   /** Set by the transport; it is the only thing here that is not the world. */
   viewers = 0
 
+  /**
+   * §55 tier 1: hold this event while Claude writes its line?
+   *
+   * Fire-and-forget. The promise is not awaited on the tick path and every
+   * outcome — written, malformed, rate-capped, over budget, thrown, timed out
+   * — releases the event, so there is no path on which a held event is lost or
+   * a tick waits.
+   */
+  private hold(e: WorldEvent): boolean {
+    const minds = this.minds
+    if (!minds?.enabled || !e.rationale) return false
+    if (!minds.wants(e.cinematicWeight, e.agentId)) return false
+    if (this.voicing.has(e.id)) return false
+    const agent = e.agentId ? this.sim.world.agents.get(e.agentId) : undefined
+    if (!agent) return false
+    const rationale = e.rationale
+    this.voicing.add(e.id)
+    void minds
+      .write({
+        chunkId: this.chunkId,
+        agentId: e.agentId,
+        rationale,
+        verb: verbOf(e.type),
+        agentName: agent.name,
+        subject: e.buildingId ? this.sim.world.buildings.get(e.buildingId)?.purpose : undefined,
+        weight: e.cinematicWeight,
+      })
+      .then((line) => {
+        const first = agent.name.split(' ')[0].toLowerCase()
+        if (line) this.store.voiceEvent(e.id, line)
+        else minds.remember(this.chunkId, 0, `${first} ${rationale}`)
+      })
+      .catch(() => {})
+      .finally(() => {
+        this.voicing.delete(e.id)
+        // re-read the row so it carries the voice when one was attached
+        const row = this.store.events({ sinceTick: e.tick, limit: 200, agentId: e.agentId })
+        this.released.push(row.find((r) => r.id === e.id) ?? e)
+      })
+    return true
+  }
+
   readouts(): Readouts {
     const r = this.sim.report
     return {
@@ -425,11 +483,21 @@ export class WorldService {
       }
     }
 
-    const fresh = this.store
+    const seen = this.store
       .events({ sinceTick: Math.max(0, this.sim.world.tick - 400), limit: 60, minWeight: 15 })
       .filter((e) => e.id > this.lastEventId && e.id > this.firstEventId)
       .reverse()
-    if (fresh.length) this.lastEventId = Math.max(...fresh.map((e) => e.id))
+    if (seen.length) this.lastEventId = Math.max(...seen.map((e) => e.id))
+
+    /**
+     * §55 tier 1: hold the few that are worth a line, pass the rest straight
+     * through, and fold in anything whose call has since settled. Ordering by
+     * id keeps the feed in the world's order rather than in the order the
+     * model happened to answer.
+     */
+    const fresh = [...this.released.splice(0), ...seen.filter((e) => !this.hold(e))].sort(
+      (a, b) => a.id - b.id,
+    )
 
     const frame: Frame = {
       t: 'frame',
@@ -487,4 +555,26 @@ export class WorldService {
   get rateWindow(): number {
     return RATE_WINDOW_TICKS
   }
+}
+
+/**
+ * §55: the action vocabulary the schema constrains `verb` to. The model must
+ * echo the verb the sim performed, so it cannot relabel a demolition as a
+ * renovation while writing a fluent sentence about it.
+ */
+function verbOf(type: string): string {
+  if (type.startsWith('acquis') || type.includes('acquire')) return 'acquire'
+  if (type.includes('renovat')) return 'renovate'
+  if (type.includes('convert')) return 'convert'
+  if (type.includes('expand') || type.includes('levels')) return 'expand'
+  if (type.includes('demolition') || type.includes('demolish') || type.includes('clear'))
+    return 'demolish'
+  if (type.includes('construction') || type.includes('develop') || type.includes('built'))
+    return 'develop'
+  if (type.includes('assembl')) return 'assemble'
+  if (type.includes('road')) return 'build_road'
+  if (type.includes('heir') || type.includes('inherit')) return 'inherit'
+  if (type.includes('died')) return 'die'
+  if (type.includes('district')) return 'district'
+  return 'develop'
 }

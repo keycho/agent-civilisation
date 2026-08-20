@@ -35,6 +35,24 @@ export class MemoryStore implements WorldStore {
   }
 
   /**
+   * §55 tier 1. The row is frozen and lives in four indexes, so attaching a
+   * voice replaces the object in all of them rather than assigning through a
+   * reference that does not exist.
+   */
+  voiceEvent(id: number, voice: string): void {
+    const at = this.log.findIndex((e) => e.id === id)
+    if (at < 0) return
+    const next = Object.freeze({ ...this.log[at], voice }) as WorldEvent
+    this.log[at] = next
+    for (const idx of [this.byBuilding, this.byAgent, this.byChunk]) {
+      for (const list of idx.values()) {
+        const i = list.findIndex((e) => e.id === id)
+        if (i >= 0) list[i] = next
+      }
+    }
+  }
+
+  /**
    * §72.1: reinstate written history, ids and all, and move the allocator past
    * it.
    *

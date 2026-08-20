@@ -211,6 +211,20 @@ export class DurableStore implements WorldStore {
 
   // -- the simulation's side: synchronous, memory speed -----------------------
 
+  /**
+   * §55 tier 1: the voice line is attached in memory only, deliberately.
+   *
+   * It is presentation written after the fact, and the durable log's job is
+   * the record — `rationale`, which is already written and unchanged. Not
+   * persisting it means a restored world shows the sim's own lines for its
+   * restored window and fresh voice lines from there on, which is the correct
+   * degradation: no history is lost, and nothing spends the ceiling replaying
+   * lines that were already read.
+   */
+  voiceEvent(id: number, voice: string): void {
+    this.memory.voiceEvent(id, voice)
+  }
+
   appendEvent(e: Omit<WorldEvent, 'id'>): number {
     const id = this.memory.appendEvent(e)
     if (this.sql) this.pendingEvents.push({ ...e, id, season: this.season } as WorldEvent & { season: number })

@@ -22,6 +22,17 @@ export interface WorldEvent {
    */
   cinematicWeight: number
   rationale?: string
+  /**
+   * §55 tier 1: the same decision said in the agent's voice.
+   *
+   * A SEPARATE field rather than a rewrite of `rationale`, because §5 says the
+   * log is the record and the record is what the simulation actually decided.
+   * `rationale` keeps the sim's own words forever; `voice` is presentation,
+   * written later, by a model, and always optional. Everything that reads the
+   * log for meaning reads `rationale`; only the surfaces a person reads prefer
+   * `voice`. That also makes the a/b trivial — both lines are on the row.
+   */
+  voice?: string
   payload?: Record<string, unknown>
 }
 

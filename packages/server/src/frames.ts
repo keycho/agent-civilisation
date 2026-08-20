@@ -172,7 +172,8 @@ export function eventWire(sim: Simulation, e: WorldEvent): EventWire {
     agentName: agent?.name ?? storedName(e),
     generation: agent?.generation ?? sim.generation,
     buildingId: e.buildingId,
-    rationale: e.rationale,
+    // §55 tier 1: the agent's line when one was written, the sim's otherwise
+    rationale: e.voice ?? e.rationale,
     cinematicWeight: e.cinematicWeight,
     x: at ? round(at[0]) : undefined,
     y: at ? round(at[1]) : undefined,
@@ -312,7 +313,7 @@ export function buildingDetail(sim: Simulation, id: string, history: WorldEvent[
       .reverse()
       .map((e) => {
         const g = e.agentId ? w.agents.get(e.agentId)?.generation : undefined
-        return { label: g ? `g${g}` : '·', text: e.rationale ?? e.type.replace(/_/g, ' ') }
+        return { label: g ? `g${g}` : '·', text: e.voice ?? e.rationale ?? e.type.replace(/_/g, ' ') }
       }),
   }
 }

@@ -9,6 +9,7 @@
     "dev": "node --no-warnings --watch src/main.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.120.0",
     "@civ/core": "*",
     "@civ/persistence": "*",
     "@civ/protocol": "*",
@@ -16,5 +17,7 @@
     "postgres": "^3.4.9",
     "ws": "^8.18.0"
   },
-  "devDependencies": { "@types/ws": "^8.5.13" }
+  "devDependencies": {
+    "@types/ws": "^8.5.13"
+  }
 }
