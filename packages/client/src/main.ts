@@ -862,7 +862,13 @@ rig.ceilingNear = ceilingNear
  */
 const CITY_AZIMUTH = 0
 /** the pitch every framed shot lands on; the framing must be derived AT it */
-const CITY_POLAR = 0.66
+/**
+ * §75: the home pitch is no longer authored — it is what the pitch curve gives
+ * at the home distance. Kept as a name because the capture rigs and the
+ * explainer read it, and because a constant that is now derived should say so
+ * where it used to be written.
+ */
+const CITY_POLAR = 0.36
 /** §57.4: the plate is an object in a frame, not a texture bled to the edges */
 /**
  * §66.3: how much room the home framing leaves around the city.
@@ -895,6 +901,12 @@ const FRAME_MARGIN = 1.08
  */
 function frameThePlate(aspect: number, azimuth = CITY_AZIMUTH, polar = CITY_POLAR): number {
   /**
+   * §75: the pitch at the home framing is a function of the home distance, and
+   * the home distance is a function of the pitch. One iteration closes it —
+   * the curve is flat at this end, so the second pass moves the answer by less
+   * than a metre and a third would move it by nothing.
+   */
+  /**
    * §65: the span being framed is the CITY's, not the plate mesh's. Those were
    * the same number while the plate was sized from `chunk.localBounds`, and
    * that number was wrong — the plate mesh has since grown to cover a city the
@@ -905,7 +917,10 @@ function frameThePlate(aspect: number, azimuth = CITY_AZIMUTH, polar = CITY_POLA
   const widthM = 2 * Math.max(CITY.halfX, CITY.halfY) * spread
   const depthOnScreenM = widthM * Math.cos(polar)
   const needVertical = Math.max(depthOnScreenM, widthM / aspect) * FRAME_MARGIN
-  return rig.distanceToFrame(needVertical)
+  const first = rig.distanceToFrame(needVertical)
+  const settled = rig.pitchFor(first)
+  const depth2 = widthM * Math.cos(settled)
+  return rig.distanceToFrame(Math.max(depth2, widthM / aspect) * FRAME_MARGIN)
 }
 const CITY_FRAMING = frameThePlate(innerWidth / innerHeight)
 /**
@@ -915,7 +930,17 @@ const CITY_FRAMING = frameThePlate(innerWidth / innerHeight)
  * lands under the floor whatever else is right. 1.12x still reaches past home —
  * a viewer can see they are at the end of the zoom — at ~80% of its fill.
  */
-rig.limits.maxDistance = CITY_FRAMING * 1.12
+/**
+ * §75: the home framing IS the far end of the zoom.
+ *
+ * §57.4's 1.12x existed so a viewer could feel the stop rather than hit an
+ * invisible wall, and the use test's contact sheet is what retires it: every
+ * frame past home is the same city, smaller, with more nothing around it — the
+ * three weakest wide shots on the sheet were all at 2285 against home's 2040.
+ * Under §75's model the far end of one dial should be the composed whole-city
+ * view, not somewhere past it.
+ */
+rig.limits.maxDistance = CITY_FRAMING
 rig.distance = CITY_FRAMING
 rig.target.copy(CITY_CENTRE)
 
@@ -1425,7 +1450,9 @@ function maybeCinematic(e: EventWire): void {
       ? Math.max(rig.limits.minDistance, rig.distance * 0.55)
       : Math.min(rig.limits.maxDistance, rig.distance * 1.9),
     {
-      polar: Math.max(rig.limits.minPolar + 0.1, rig.polar - 0.18),
+      // §75: pitch follows the distance this move is going to, so there is
+      // nothing to ask for here
+
       duration: seconds,
     },
   )
@@ -3265,7 +3292,10 @@ function resize(): void {
   // Clamping into the new limit is enough on its own: a viewer who has zoomed
   // in is already below the maximum and is left alone, and one sitting at city
   // framing lands on the new city framing.
-  rig.limits.maxDistance = frameThePlate(aspect) * 1.12
+  // §75: the resize path had its own copy of §57.4's 1.12x and kept applying
+  // it after the load path stopped — which is why the use test still reached
+  // 2285 with the limit set to 2040. One rule, one place.
+  rig.limits.maxDistance = frameThePlate(aspect)
   rig.distance = Math.min(rig.distance, rig.limits.maxDistance)
   const pr = renderer.getPixelRatio()
   tiltShift.setSize(Math.floor(innerWidth * pr), Math.floor(innerHeight * pr))
@@ -3695,10 +3725,16 @@ function civHome(opts: { snap?: boolean } = {}): void {
   toggleAmbient(false)
   director.enabled = false
   director.takeControl()
+  /**
+   * §75: `0` resets distance and pitch and LEAVES AZIMUTH ALONE. A viewer who
+   * has turned the city to a bearing they like and then asks for the whole
+   * thing back should get the whole thing at that bearing. `snap` is the
+   * capture path and names its own, so an a/b pair is taken from one place.
+   */
   rig.home(
     CITY_CENTRE.clone(),
     frameThePlate(innerWidth / innerHeight),
-    CITY_AZIMUTH,
+    opts.snap ? CITY_AZIMUTH : null,
     CITY_POLAR,
     { duration: 1.2, snap: opts.snap },
   )

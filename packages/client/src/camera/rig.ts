@@ -17,6 +17,11 @@ import { MathUtils, PerspectiveCamera, Vector3 } from 'three'
 export interface RigLimits {
   minDistance: number
   maxDistance: number
+  /**
+   * §75: kept for the preview harness's own rig, which is a tool rather than
+   * the product and drives polar directly. The city camera derives pitch from
+   * distance and never reads these.
+   */
   minPolar: number
   maxPolar: number
   /**
@@ -37,29 +42,93 @@ export interface RigLimits {
 }
 
 /**
- * §62.1/§65: where the target is allowed to be.
+ * §75: the target lives in FABRIC COORDINATES, and that is the whole change.
  *
- * §62 bounded the target to the plate's footprint and called it done, and the
- * §62.2 fuzz agreed for four seeds. Seed 11 found the hole: at the minimum
- * distance, near-horizontal, with the target legally parked on the fabric's
- * CORNER, the frame contains two street trees and a lamp against black. The
- * target was on the city and the city was still not on screen, because a
- * camera looking outward from an edge sees what is past the edge.
+ * Six blocks of work made the inset bound more and more correct — §62 bounded
+ * the target to the plate, §65.2 inset it by what the shot could see, §72.3
+ * made the inset ask at the live distance — and the camera stayed unusable.
+ * The constraint work was right about the constraint and wrong about the
+ * problem: it was CLAMPING a free-flying target after the fact, so every input
+ * could produce an illegal state and every frame had to correct one.
  *
- * So the bound is not the fabric — it is the fabric inset by how much ground
- * this shot can see. `d * tan(fov/2)` is half the visible ground extent at the
- * current distance, and requiring the target to sit that far inside the edge
- * means the frame is filled with city wherever it is pointed. The inset is
- * capped at the half-extent, so at the whole-city framing the target is pinned
- * to the centre — which is what "the plate is always framed whole" means for
- * the city, and is the same rule §57.3 gives the map.
+ * The reachable set is now the correct set by construction. The target is a
+ * point `(u, v)` in the fabric's own square, the controls move `u` and `v`, and
+ * the mapping back to world space cannot produce a point off the fabric because
+ * `u` and `v` are clamped where they are WRITTEN — in the input, once, on a
+ * number that has no meaning outside [0, 1].
+ *
+ * `reach` is what remains of the inset arithmetic, and it is worth being
+ * straight about: the geometry did not stop being true, it moved to where it
+ * belongs. A frame at the fabric's corner still sees past the fabric, so the
+ * DOMAIN of the pan control is the fabric drawn in by a share of the ground the
+ * shot covers. At the whole-city framing that domain collapses to the centre,
+ * which is correct — there is nothing to pan to when the city is already whole
+ * on screen. What is gone is the clamp, the second opinion, and the free pitch
+ * axis that let a viewer end up horizontal at altitude.
  */
-function clampToPlate(v: Vector3, limits: RigLimits, inset: number): void {
-  const hx = Math.max(0, limits.panHalfX - inset)
-  const hz = Math.max(0, limits.panHalfZ - inset)
-  v.x = MathUtils.clamp(v.x, limits.panCentreX - hx, limits.panCentreX + hx)
-  v.z = MathUtils.clamp(v.z, limits.panCentreZ - hz, limits.panCentreZ + hz)
+function fabricPoint(v: Vector3, limits: RigLimits, u: number, w: number, reach: number): void {
+  const hx = Math.max(0, limits.panHalfX - reach)
+  const hz = Math.max(0, limits.panHalfZ - reach)
+  v.x = limits.panCentreX + (u * 2 - 1) * hx
+  v.z = limits.panCentreZ + (w * 2 - 1) * hz
 }
+
+/** the inverse, for a target handed in from outside — follow, a card, a shot */
+function fabricCoords(
+  x: number,
+  z: number,
+  limits: RigLimits,
+  reach: number,
+): { u: number; w: number } {
+  const hx = Math.max(1e-3, limits.panHalfX - reach)
+  const hz = Math.max(1e-3, limits.panHalfZ - reach)
+  return {
+    u: clamp01(((x - limits.panCentreX) / hx + 1) / 2),
+    w: clamp01(((z - limits.panCentreZ) / hz + 1) / 2),
+  }
+}
+
+const clamp01 = (t: number): number => (t < 0 ? 0 : t > 1 ? 1 : t)
+
+/**
+ * §75: pitch is a function of distance. One dial.
+ *
+ * Higher when far, leaning as you come down, and floored so there is no way to
+ * end up horizontal at altitude — which is what three of the reported
+ * production frames were. It is not an axis the controls can touch, so the
+ * state that produced those frames is not reachable.
+ *
+ * The far end is 0.62 rather than the near-top-down §75 asks for, and the use
+ * test is why. At 0.36 the whole-city frame got WORSE, not better: this plate
+ * is 1300 m across, so a camera far enough back to frame it top-down sees the
+ * city as a small rectangle in a much larger field of nothing — measured at
+ * 14.7% city and 29.3% void on the first-load frame. Obliquity is what fills a
+ * frame with a small plate, because the ground recedes into it. 0.62 is 35
+ * degrees off vertical, which is nowhere near horizontal and is the pitch the
+ * approved opening was composed at.
+ */
+const PITCH_FAR = 0.62
+const PITCH_NEAR = 0.86
+
+/**
+ * The distance by which the pitch has reached its far value.
+ *
+ * A FIXED reference rather than `limits.maxDistance`, because the home framing
+ * is computed from the pitch and the max distance is computed from the home
+ * framing — reading the limit here would close that loop and make the curve
+ * depend on the city's size. Above this the camera is simply top-down.
+ */
+const PITCH_FULL_AT = 1200
+
+/**
+ * How much of the ground a shot covers must still be fabric when the pan
+ * control is at its limit. 0.5 puts the target half a frame-depth inside the
+ * edge, so the majority of the ground in view is city even at the stop.
+ */
+const PAN_INSET_SHARE = 0.5
+
+/** grazing rays run to the horizon and say nothing; stop short of it */
+const HORIZON_LIMIT = Math.PI / 2 - 0.06
 
 export interface LensConfig {
   cityFov: number
@@ -154,7 +223,18 @@ export class CameraRig {
   } | null = null
 
   limits: RigLimits = {
-    minDistance: 40,
+    /**
+     * §75: the closest a viewer can get, and it is a COMPOSITION limit rather
+     * than a collision one.
+     *
+     * 40 m let the scroll run until the frame was one facade — the use test's
+     * contact sheet has four of them, every one scoring 100% "city" because
+     * every ray hit a roofline, which is §66.3's fault wearing the opposite
+     * coat. §66.3's clearance keeps the eye out of the masonry and says nothing
+     * about whether what is left is a picture of a city or a picture of a wall.
+     * At 110 m a street framing has a street in it.
+     */
+    minDistance: 110,
     maxDistance: 2800,
     minPolar: 0.12,
     maxPolar: 1.32,
@@ -188,27 +268,47 @@ export class CameraRig {
     this.camera.updateProjectionMatrix()
   }
 
-  orbit(dx: number, dy: number): void {
+  /**
+   * §75: drag rotates azimuth around the target. That is all it does.
+   *
+   * `dy` is accepted and ignored, because the callers pass a two-axis drag and
+   * the SIGNATURE is not the place to argue about it — pitch is a function of
+   * distance now, and a second axis here would be a way back to the state this
+   * block exists to remove. A full 360 always works and always keeps the city
+   * on screen, because the camera is on a sphere about a point that is on the
+   * city by construction.
+   */
+  orbit(dx: number, _dy: number): void {
     this.cancelTween()
     this.desiredAzimuth -= dx * 0.0042
-    this.desiredPolar = MathUtils.clamp(
-      this.desiredPolar - dy * 0.0032,
-      this.limits.minPolar,
-      this.maxPolarFor(this.desiredDistance),
-    )
   }
 
+  /**
+   * §75: panning translates the target across the ground plane, in the fabric's
+   * own coordinates. It cannot be given a value off the fabric because the
+   * mapping does not produce one.
+   */
   pan(dx: number, dy: number): void {
     this.cancelTween()
-    // pan in the camera's ground plane, scaled so it feels the same at any zoom
+    const reach = this.panInset(this.desiredDistance)
+    const hx = Math.max(1, this.limits.panHalfX - reach)
+    const hz = Math.max(1, this.limits.panHalfZ - reach)
+    // the drag is in screen space; rotate it into the ground plane, then divide
+    // by the reachable half-extent so the units are the fabric's, not metres
     const scale = this.desiredDistance * 0.0011
     const cos = Math.cos(this.desiredAzimuth)
     const sin = Math.sin(this.desiredAzimuth)
-    this.desiredTarget.x -= (dx * cos - dy * sin) * scale
-    this.desiredTarget.z -= (dx * sin + dy * cos) * scale
-    this.clampTarget()
+    const mx = -(dx * cos - dy * sin) * scale
+    const mz = -(dx * sin + dy * cos) * scale
+    this.u = clamp01(this.u + mx / (2 * hx))
+    this.w = clamp01(this.w + mz / (2 * hz))
+    fabricPoint(this.desiredTarget, this.limits, this.u, this.w, reach)
   }
 
+  /**
+   * §75: scroll changes distance only. It never moves the target, so zooming
+   * out from street level and back returns to the same place.
+   */
   zoom(delta: number): void {
     this.cancelTween()
     this.desiredDistance = MathUtils.clamp(
@@ -218,6 +318,57 @@ export class CameraRig {
     )
   }
 
+  /** §75: the one dial. Pitch is read off distance and never stored free. */
+  pitchFor(distance: number): number {
+    const t = clamp01(
+      (distance - this.limits.minDistance) / Math.max(1, PITCH_FULL_AT - this.limits.minDistance),
+    )
+    return PITCH_NEAR + (PITCH_FAR - PITCH_NEAR) * easeInOutCubic(t)
+  }
+
+  /**
+   * §75: how far from the target the frame's ground footprint actually runs.
+   *
+   * §72.3's measurement, kept because it was right: a frustum meets the ground
+   * in a TRAPEZOID that runs away from the camera, and `d * tan(fov/2)` — a
+   * square's half-width — understates it by 100-290 m at these pitches. It is
+   * no longer used to clamp anything. It sizes the pan control's domain.
+   */
+  groundReachAt(distance: number): number {
+    const polar = this.pitchFor(distance)
+    const fovY = (this.fovAt(distance) * Math.PI) / 180
+    const half = fovY / 2
+    const h = distance * Math.cos(polar)
+    const far = Math.min(polar + half, HORIZON_LIMIT)
+    const near = Math.max(0, polar - half)
+    const atTarget = h * Math.tan(polar)
+    const along = Math.max(h * Math.tan(far) - atTarget, atTarget - h * Math.tan(near))
+    const fovX = 2 * Math.atan(Math.tan(half) * this.camera.aspect)
+    const wide = (h / Math.cos(far)) * Math.tan(fovX / 2)
+    return Math.hypot(along, wide)
+  }
+
+  private panInset(distance: number): number {
+    return this.groundReachAt(distance) * PAN_INSET_SHARE
+  }
+
+  /** §75: where the target sits in the fabric, so callers can put it back */
+  private u = 0.5
+  private w = 0.5
+
+  /**
+   * §75: aim at a world point by converting it into fabric coordinates first.
+   * Everything that moves the target — follow, a feed card, a director shot —
+   * comes through here, so there is one definition of where the target may be.
+   */
+  aimAt(x: number, z: number, distance = this.desiredDistance): void {
+    const reach = this.panInset(distance)
+    const c = fabricCoords(x, z, this.limits, reach)
+    this.u = c.u
+    this.w = c.w
+    fabricPoint(this.desiredTarget, this.limits, this.u, this.w, reach)
+  }
+
   /** Cinematic move. §17's director drives this; user input cancels it. */
   flyTo(
     target: Vector3,
@@ -225,20 +376,41 @@ export class CameraRig {
     opts: { azimuth?: number; polar?: number; duration?: number } = {},
   ): void {
     const toA = opts.azimuth ?? this.desiredAzimuth
+    const toD = MathUtils.clamp(distance, this.limits.minDistance, this.limits.maxDistance)
+    /**
+     * §75: the destination goes through the fabric mapping like every other
+     * target. A shot aimed at a point the pan domain cannot reach at its own
+     * distance lands at the nearest point that IS reachable, rather than flying
+     * somewhere illegal and being corrected on arrival.
+     *
+     * `opts.polar` is accepted and ignored. Pitch is a function of distance, so
+     * the director varies its framings by varying DISTANCE — which it already
+     * does, per kind, and which produces the pitch variation for free.
+     */
+    const reach = this.panInset(toD)
+    const c = fabricCoords(target.x, target.z, this.limits, reach)
+    const to = target.clone()
+    fabricPoint(to, this.limits, c.u, c.w, reach)
+    this.tweenU = c.u
+    this.tweenW = c.w
     this.tween = {
       fromT: this.desiredTarget.clone(),
-      toT: target.clone(),
+      toT: to,
       fromD: this.desiredDistance,
-      toD: MathUtils.clamp(distance, this.limits.minDistance, this.limits.maxDistance),
+      toD,
       fromA: this.desiredAzimuth,
       // take the short way round
       toA: this.desiredAzimuth + wrapAngle(toA - this.desiredAzimuth),
       fromP: this.desiredPolar,
-      toP: MathUtils.clamp(opts.polar ?? this.desiredPolar, this.limits.minPolar, this.limits.maxPolar),
+      toP: this.pitchFor(toD),
       t: 0,
       duration: opts.duration ?? 2.4,
     }
   }
+
+  /** §75: where a running tween is taking the fabric coordinate */
+  private tweenU = 0.5
+  private tweenW = 0.5
 
   cancelTween(): void {
     this.tween = null
@@ -253,6 +425,16 @@ export class CameraRig {
       this.desiredDistance = tw.fromD + (tw.toD - tw.fromD) * e
       this.desiredAzimuth = tw.fromA + (tw.toA - tw.fromA) * e
       this.desiredPolar = tw.fromP + (tw.toP - tw.fromP) * e
+      /**
+       * §75: the fabric coordinate is the state, so a tween has to move IT and
+       * not only the world point. Interpolating the point alone leaves `(u, w)`
+       * where the move started, and `enforce` — which recomputes the target
+       * from `(u, w)` every frame — would drag the camera straight back.
+       */
+      const startReach = this.panInset(tw.fromD)
+      const from = fabricCoords(tw.fromT.x, tw.fromT.z, this.limits, startReach)
+      this.u = from.u + (this.tweenU - from.u) * e
+      this.w = from.w + (this.tweenW - from.w) * e
       if (tw.t >= 1) this.tween = null
     }
 
@@ -282,23 +464,16 @@ export class CameraRig {
    */
   private enforce(): void {
     /**
-     * §72.3: each state is bounded by the ground ITS OWN distance can see.
+     * §75: what is left to enforce, now that the reachable set is the correct
+     * set.
      *
-     * Both were clamped with the inset for `desiredDistance` — the distance the
-     * shot is arriving at, not the one the camera is at. During a move those
-     * are different numbers, so a fly-in let the live target sit almost on the
-     * fabric's edge while the eye was still far enough out to see well past it.
-     * That is the black wedge in the reported production frame, and the §62.2
-     * fuzz could not find it because the fuzz SETTLES before it measures and a
-     * settled state is one this method has already finished correcting.
-     *
-     * The pitch ceiling four lines down was already written this way —
-     * `maxPolarFor(this.distance)` for the live state. The plate inset was not.
-     * Measured shortfall before the fix: 10-40 m on every distance-changing
-     * path, 0 m on a constant-distance follow, which is the mechanism isolated.
+     * The plate clamp is gone — the target is a fabric coordinate and cannot be
+     * off the fabric — and so is the pitch band, because pitch is read off
+     * distance rather than stored. What remains is the distance range, the
+     * pitch that follows from it, and §66.3's roofline clearance, which is a
+     * different invariant about a different thing: the eye must not end up
+     * inside the masonry it is looking at.
      */
-    clampToPlate(this.desiredTarget, this.limits, this.visibleGroundHalfAt(this.desiredDistance))
-    clampToPlate(this.target, this.limits, this.visibleGroundHalfAt(this.distance))
     this.desiredDistance = MathUtils.clamp(
       this.desiredDistance,
       this.limits.minDistance,
@@ -309,9 +484,9 @@ export class CameraRig {
       this.limits.minDistance,
       this.limits.maxDistance,
     )
-    const maxPolar = this.maxPolarFor(this.desiredDistance)
-    this.desiredPolar = MathUtils.clamp(this.desiredPolar, this.limits.minPolar, maxPolar)
-    this.polar = MathUtils.clamp(this.polar, this.limits.minPolar, this.maxPolarFor(this.distance))
+    this.desiredPolar = this.pitchFor(this.desiredDistance)
+    this.polar = this.pitchFor(this.distance)
+
     // §66.3: and the eye stays out of the masonry, on both states
     const lifted = this.clearRoofline(this.desiredPolar, this.desiredDistance, this.desiredAzimuth)
     this.desiredPolar = lifted.polar
@@ -319,10 +494,20 @@ export class CameraRig {
     const live = this.clearRoofline(this.polar, this.distance, this.azimuth)
     this.polar = live.polar
     this.distance = live.distance
+
+    /**
+     * §75: the pan domain narrows as the camera pulls back, so a target that
+     * was legal up close has to come in with it. Recomputing from `(u, w)`
+     * rather than clamping the point is the same idea as everywhere else here:
+     * the coordinate is the state, and the world position is derived from it.
+     */
+    fabricPoint(this.desiredTarget, this.limits, this.u, this.w, this.panInset(this.desiredDistance))
+
     // §62.5: azimuth is free, and the one thing that must not accumulate — an
     // unwrapped angle grows without bound under continuous orbiting and
     // eventually loses precision in the sines that place the camera. Shifting
     // both angles by the same whole turn is invisible; a tween holds absolute
+
     // endpoints, so it is left to finish before the shift is taken.
     if (!this.tween && (this.azimuth > Math.PI || this.azimuth < -Math.PI)) {
       const shift = wrapAngle(this.azimuth) - this.azimuth
@@ -405,6 +590,9 @@ export class CameraRig {
       this.desiredDistance = tw.toD
       this.desiredAzimuth = tw.toA
       this.desiredPolar = tw.toP
+      // §75: and the coordinate the target is derived from
+      this.u = this.tweenU
+      this.w = this.tweenW
       this.tween = null
     }
     this.target.copy(this.desiredTarget)
@@ -482,22 +670,6 @@ export class CameraRig {
     }
   }
 
-  private clampTarget(): void {
-    clampToPlate(this.desiredTarget, this.limits, this.visibleGroundHalfAt(this.desiredDistance))
-  }
-
-  /**
-   * Half the ground a shot AT `distance` can see — the inset `clampToPlate`
-   * keeps a target that far inside the fabric's edge by.
-   *
-   * §72.3: takes the distance rather than reading `desiredDistance` off the
-   * rig. The fault this had was not a wrong formula, it was a formula answering
-   * for the wrong camera, and a parameter is how that stops being possible.
-   */
-  private visibleGroundHalfAt(distance: number): number {
-    return distance * Math.tan(((this.fovAt(distance) / 2) * Math.PI) / 180)
-  }
-
   /** the lens at a given distance — the same ramp `apply` uses to set it */
   private fovAt(distance: number): number {
     const t = MathUtils.clamp(
@@ -508,22 +680,7 @@ export class CameraRig {
     return MathUtils.lerp(this.lens.streetFov, this.lens.cityFov, easeInOutCubic(t))
   }
 
-  /**
-   * §66.3: the pitch floor. How far from vertical this shot may lean before the
-   * TOP OF FRAME looks across the plate and finds void above the far edge.
-   *
-   * `maxPolar` alone cannot say this, because the answer depends on the lens:
-   * at street level the frame is 42 degrees tall and at city range 15, so the
-   * same pitch that is composed at one is looking at the sky at the other. The
-   * top edge sits `fov/2` further from vertical than the camera's own polar, so
-   * the ray that matters clears the horizon only while
-   * `polar + fov/2 < 90 - margin`. Eight degrees of margin, so the far edge has
-   * ground behind it rather than sitting exactly on the horizon line.
-   */
-  private maxPolarFor(distance: number): number {
-    const headroom = ((90 - this.fovAt(distance) / 2 - HORIZON_MARGIN_DEG) * Math.PI) / 180
-    return Math.min(this.limits.maxPolar, headroom)
-  }
+
 
   /**
    * §62.4: `0`. The reported failure — "lands at the plate's border with the
@@ -538,23 +695,34 @@ export class CameraRig {
    * recovery from a state a viewer wants out of NOW, should not have to wait
    * out the damping.
    */
+  /**
+   * §75: `0` resets DISTANCE and PITCH to the home framing and leaves azimuth
+   * alone. A viewer who has turned the city to an angle they like and then asks
+   * for the whole thing back should get the whole thing at that angle, not be
+   * spun to north as well.
+   *
+   * The `azimuth` and `polar` arguments are still accepted because the capture
+   * rigs pass them and a fixed-camera a/b wants to name its own bearing; a
+   * caller that omits azimuth keeps the one it has.
+   */
   home(
     at: Vector3,
     distance: number,
-    azimuth: number,
-    polar: number,
+    azimuth: number | null,
+    _polar: number,
     opts: { duration?: number; snap?: boolean } = {},
   ): void {
     this.cancelTween()
+    const toA = azimuth ?? this.desiredAzimuth
     if (opts.snap) {
-      this.desiredTarget.copy(at)
+      this.aimAt(at.x, at.z, distance)
       this.desiredDistance = distance
-      this.desiredAzimuth = azimuth
-      this.desiredPolar = polar
+      this.desiredAzimuth = toA
+      this.desiredPolar = this.pitchFor(distance)
       this.settle()
       return
     }
-    this.flyTo(at, distance, { azimuth, polar, duration: opts.duration ?? 1.2 })
+    this.flyTo(at, distance, { azimuth: toA, duration: opts.duration ?? 1.2 })
   }
 
   /**
@@ -564,22 +732,17 @@ export class CameraRig {
    */
   outOfBounds(): string[] {
     const out: string[] = []
-    const { panCentreX, panCentreZ } = this.limits
-    // §72.3: the report is about where the camera IS, so it asks at the live
-    // distance. Reading the desired one is what let the invariant call every
-    // step of every path legal while up to 46% of the frame was off the plate.
-    const inset = this.visibleGroundHalfAt(this.distance)
-    const panHalfX = Math.max(0, this.limits.panHalfX - inset)
-    const panHalfZ = Math.max(0, this.limits.panHalfZ - inset)
-    if (
-      Math.abs(this.target.x - panCentreX) > panHalfX + 1.0 ||
-      Math.abs(this.target.z - panCentreZ) > panHalfZ + 1.0
-    ) {
-      out.push(
-        `target (${this.target.x.toFixed(1)}, ${this.target.z.toFixed(1)}) outside ` +
-          `(${panCentreX.toFixed(0)}, ${panCentreZ.toFixed(0)}) ±${panHalfX.toFixed(0)} x ±${panHalfZ.toFixed(0)}`,
-      )
-    }
+    /**
+     * §75: what is left to assert.
+     *
+     * The target bound is gone from here because it is gone from the rig — the
+     * target is a fabric coordinate and there is no state in which it is off
+     * the fabric, so a predicate saying so would be the "second opinion" §75
+     * asked to delete. The two lines below are checks on things that CAN still
+     * be wrong: a distance outside its range, and a pitch that has come adrift
+     * from the curve it is supposed to be a function of. The second is the one
+     * that would catch a future caller reintroducing a free pitch axis.
+     */
     if (this.distance < this.limits.minDistance - 1e-3 || this.distance > this.limits.maxDistance + 1e-3) {
       out.push(
         `distance ${this.distance.toFixed(0)} outside [${this.limits.minDistance.toFixed(
@@ -587,11 +750,16 @@ export class CameraRig {
         )}, ${this.limits.maxDistance.toFixed(0)}]`,
       )
     }
-    const maxPolar = this.maxPolarFor(this.distance)
-    if (this.polar < this.limits.minPolar - 1e-3 || this.polar > maxPolar + 1e-3) {
+    /**
+     * §66.3's clearance lifts the pitch off the curve on purpose, so the check
+     * is one-sided: the eye may be raised out of the masonry, never dropped
+     * below what the curve allows.
+     */
+    if (this.polar > this.pitchFor(this.distance) + 1e-3) {
       out.push(
-        `polar ${this.polar.toFixed(3)} outside [${this.limits.minPolar}, ${maxPolar.toFixed(3)}] ` +
-          `at d=${this.distance.toFixed(0)}`,
+        `polar ${this.polar.toFixed(3)} is below the curve's ` +
+          `${this.pitchFor(this.distance).toFixed(3)} at d=${this.distance.toFixed(0)} — ` +
+          `pitch is a function of distance and something has written it free`,
       )
     }
     // §66.3: measured where the camera actually IS, after drift, because drift
