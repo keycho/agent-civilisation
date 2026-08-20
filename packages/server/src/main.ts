@@ -393,7 +393,14 @@ function summaryOfChunk(host: ChunkHost): Record<string, unknown> {
     })(),
     lastEvent: top
       ? {
-          text: `${author ? `${author.toLowerCase()} ` : ''}${top.rationale ?? top.type.replace(/_/g, ' ')}`,
+          /**
+           * §55: `voice ?? rationale`, the same read §55 put in `frames.ts`.
+           * This endpoint was missed, and it is the ONE the desk homepage
+           * reads — so the front page was the single surface guaranteed to
+           * show the templated line even with tier 1 up. `rationale` stays
+           * untouched underneath as §5's record.
+           */
+          text: `${author ? `${author.toLowerCase()} ` : ''}${top.voice ?? top.rationale ?? top.type.replace(/_/g, ' ')}`,
           weight: top.cinematicWeight,
         }
       : undefined,

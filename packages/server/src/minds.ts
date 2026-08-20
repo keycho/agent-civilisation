@@ -184,7 +184,13 @@ export class Minds {
   private perChunk = new Map<string, number[]>()
   private inFlight = 0
   private lastDegrade: DegradeReason = 'none'
-  private degradedSince = 0
+  /**
+   * Seeded at construction, not 0. A process that boots without a key is
+   * degraded from its first second, and `/health` was reporting the epoch —
+   * `degradedForSeconds: 1787255913`, which reads as an instrument fault
+   * rather than as "no key since boot".
+   */
+  private degradedSince = Date.now()
   /** rolling sample of what tier 1 actually produced, for the block's report */
   readonly transcript: Array<{ at: string; chunk: string; tier: 0 | 1; line: string }> = []
 
@@ -201,6 +207,9 @@ export class Minds {
   health(): Record<string, unknown> {
     this.rollDay()
     const reason = this.degradeReason()
+    // a process that never gets a call still changes state — budget rolls,
+    // the rate window drains. `note` is what stamps `degradedSince`.
+    this.note(reason)
     return {
       tier: reason === 'none' ? 1 : 0,
       model: MODEL,
