@@ -36,9 +36,91 @@ export interface EnvironmentOptions {
   chunkId?: string
 }
 
+/**
+ * §75: the lighting envelope over §63's register.
+ *
+ * Constant darkness reads as monotony, and a full day/night cycle would break
+ * §63's semantic outright — in daylight, lit and unlit stock are
+ * indistinguishable and light-means-agents is the entire read. So the world
+ * drifts within a band that never reaches daylight, and one rare event does.
+ *
+ * What moves: ambient, hemisphere fill, the sky dome's two stops, and the
+ * sun's own weak night key. What does NOT move: emissive windows, worksite
+ * lights, street lights, traffic. Agent light stays the brightest thing in the
+ * frame at every point in the band, so the semantic survives; what changes is
+ * how legible the untouched fabric is, and at the dusk end §63.3's cold
+ * per-city identity finally reads.
+ */
+export interface LightingEnvelope {
+  /**
+   * `phase` 0 is deep night, 1 is dusk blue. `dawn` is the generational wash,
+   * separate because it is an EVENT rather than a position in the band — it
+   * goes somewhere the band never does.
+   */
+  set(phase: number, dawn: number): void
+  /**
+   * §74.2: every visual a/b carries a state assertion alongside the image.
+   * This reports what the envelope ACTUALLY drives, read back off the light
+   * objects rather than echoed from the arguments — so an arm that failed to
+   * take is visible in the numbers instead of being argued about from the
+   * picture, which is the exact failure that produced the rule.
+   */
+  state(): LightingState
+}
+
+export interface LightingState {
+  phase: number
+  dawn: number
+  hemi: number
+  ambient: number
+  sun: number
+  skyTop: string
+  skyBottom: string
+}
+
+/** deep night is dimmer than §63's authored hour; dusk is brighter and bluer */
+const BAND = { floor: 0.72, ceiling: 1.55 }
+/**
+ * The generational dawn's top: pale, cold, and well past the band.
+ *
+ * MEASURED, not chosen. The first value here was 4.2 and the capture falsified
+ * it — at 4.2 a third of the frame clips to pure white, so the top of the sweep
+ * revealed LESS of the baseline than the dusk end of the band did, inverting
+ * the one thing the event exists to do. §15 chose NoToneMapping deliberately,
+ * so there is no highlight rolloff to absorb an over-bright key: everything
+ * above 1.0 clips hard and the ceiling has to be found rather than assumed.
+ *
+ * `lighting-ab.mjs --sweep` walks the lift and reports where the fabric lands.
+ * That sweep confounds intensity with the tint lerp — both ride `dawn` — so it
+ * gives the SHAPE and not the absolute:
+ *
+ *     lift   fabricMed  clipped%   hot%
+ *     1.77          51      0       5.7
+ *     2.41          99      0      12.2
+ *     2.90         133      0.08   10.7
+ *     3.55         168      7.2     6.2
+ *     4.20         196     33.6     0.6
+ *
+ * The shape says two things. Clipping runs away past ~2.9, and `hot%` — the
+ * share of frame that is warm AND bright, a window core rather than a lit roof
+ * — peaks and then FALLS, because past that point the wash starts eating the
+ * agent light it exists to reveal the fabric around. Brighter is a paler
+ * picture with less of the product in it.
+ *
+ * The value itself is set from the unconfounded measurement, at full tint,
+ * which is what the a/b's dawn arm reports: 2.4 blows 1.51% of the frame,
+ * 2.05 blows 0.24% and puts the fabric's median at 135 — a daylight midtone
+ * with every roof still carrying form, and agent light still reading on top.
+ */
+const DAWN_GAIN = 2.05
+const DAWN_SKY_TOP = '#8fa2b4'
+const DAWN_SKY_BOTTOM = '#6f8496'
+const DAWN_TINT = '#b9c7d4'
+
 export function createEnvironment(scene: Scene, opts: EnvironmentOptions): {
   sun: DirectionalLight
   sky: Mesh
+  lighting: LightingEnvelope
 } {
   /**
    * §63.2: the hour is per city and every one of them is cold and after dark.
@@ -65,13 +147,17 @@ export function createEnvironment(scene: Scene, opts: EnvironmentOptions): {
    * up so raked faces land near their authored albedo, the fill down so the
    * shade genuinely cools instead of washing grey.
    */
-  const hemi = new HemisphereLight(
+  const hemi: HemisphereLight = new HemisphereLight(
     new Color(hour.fillSky).getHex(),
     new Color(hour.fillGround).getHex(),
     hour.fillIntensity,
   )
   scene.add(hemi)
-  scene.add(new AmbientLight(new Color(hour.coolAmbient).getHex(), hour.coolAmbientIntensity))
+  const ambient = new AmbientLight(
+    new Color(hour.coolAmbient).getHex(),
+    hour.coolAmbientIntensity,
+  )
+  scene.add(ambient)
 
   // one fixed hour per city, forever (§48.1/§50.2): elevation from the
   // authored rig, the bearing per chunk so the canal or main street catches
@@ -118,7 +204,68 @@ export function createEnvironment(scene: Scene, opts: EnvironmentOptions): {
   const sky = createSkyDome(opts.radius * 12)
   scene.add(sky)
 
-  return { sun, sky }
+  /**
+   * The authored values are captured once and every later state is a scale of
+   * them, so §63's register stays the thing being modulated rather than being
+   * replaced by a second set of numbers that could drift away from it.
+   */
+  const base = {
+    hemi: hemi.intensity,
+    hemiSky: hemi.color.clone(),
+    hemiGround: hemi.groundColor.clone(),
+    ambient: ambient.intensity,
+    ambientColour: ambient.color.clone(),
+    sun: sun.intensity,
+    skyTop: new Color(VOID.skyTop),
+    skyBottom: new Color(VOID.skyBottom),
+  }
+  const dawnTint = new Color(DAWN_TINT)
+  const dawnTop = new Color(DAWN_SKY_TOP)
+  const dawnBottom = new Color(DAWN_SKY_BOTTOM)
+  const skyMat = sky.material as ShaderMaterial
+
+  let lastPhase = 0
+  let lastDawn = 0
+  const lighting: LightingEnvelope = {
+    state: () => ({
+      phase: +lastPhase.toFixed(4),
+      dawn: +lastDawn.toFixed(4),
+      hemi: +hemi.intensity.toFixed(4),
+      ambient: +ambient.intensity.toFixed(4),
+      sun: +sun.intensity.toFixed(4),
+      skyTop: `#${(skyMat.uniforms.uTop.value as Color).getHexString()}`,
+      skyBottom: `#${(skyMat.uniforms.uBottom.value as Color).getHexString()}`,
+    }),
+    set(phase, dawn) {
+      const p = Math.max(0, Math.min(1, phase))
+      const d = Math.max(0, Math.min(1, dawn))
+      lastPhase = p
+      lastDawn = d
+      // smooth at both ends so the band has no corner a viewer can catch
+      const eased = p * p * (3 - 2 * p)
+      const gain = BAND.floor + (BAND.ceiling - BAND.floor) * eased
+      const lift = gain + (DAWN_GAIN - gain) * d
+      hemi.intensity = base.hemi * lift
+      ambient.intensity = base.ambient * lift
+      // the night key is sky-as-source; it lifts with the band and leads it
+      // into the dawn, which is the one moment there is a real key again
+      sun.intensity = base.sun * (gain + (DAWN_GAIN * 0.55 - gain) * d)
+      hemi.color.copy(base.hemiSky).lerp(dawnTint, d)
+      hemi.groundColor.copy(base.hemiGround).lerp(dawnTint, d * 0.7)
+      ambient.color.copy(base.ambientColour).lerp(dawnTint, d)
+      ;(skyMat.uniforms.uTop.value as Color)
+        .copy(base.skyTop)
+        .multiplyScalar(0.85 + 0.5 * eased)
+        .lerp(dawnTop, d)
+      ;(skyMat.uniforms.uBottom.value as Color)
+        .copy(base.skyBottom)
+        .multiplyScalar(0.85 + 0.5 * eased)
+        .lerp(dawnBottom, d)
+    },
+  }
+  lighting.set(0.35, 0)
+
+  return { sun, sky, lighting }
 }
 
 /**

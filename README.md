@@ -147,6 +147,31 @@ same rule is why `tools/watch/inset-audit.mjs` steps the rig and prints metres,
 and why `tools/watch/director-sheet.mjs` prints the intent and framing under
 every tile.
 
+**Freeze the world, then diff pixels.** §75 pushed the rule further by applying
+it to its own block, and everything it caught it caught in the same place.
+`tools/watch/lighting-ab.mjs` closes the wire, pins the animation clock, snaps
+the camera once, and pins the state under test — so the arms differ by the light
+and nothing else — and then adds a CONTROL arm that re-measures the same pinned
+state one interval later. That control is the part worth copying: it is the
+harness's own noise floor, and without it "the wire close worked" is an
+assumption of exactly the kind that produced this rule. On its first run the
+control read a per-pixel drift of zero while the two band arms reported
+*identical lighting state with different pixels* — which is how the missing
+frame step was found rather than argued about.
+
+Once the arms are genuinely controlled, **the per-pixel difference between them
+is a better instrument than any summary of either one**. Three assertions in
+that block failed on their statistic rather than on the mechanism, all the same
+species: a percentile taken over a heterogeneous frame. The worst compared the
+median of "every non-warm pixel" between two lighting states and reported almost
+no change on Red Hook — whose frame is mostly near-black asphalt and water, so
+the median sits in that population and cannot move however much the buildings
+light up. Same world, same camera, same clock means pixel (x, y) is the same
+surface in both arms, so subtracting them classifies nothing and needs no
+threshold. Prefer that to inventing a cutoff, and when a bar does have to be
+restated, record what it read before and after so the restatement can be checked
+rather than trusted.
+
 A second one worth keeping from the same block: adjacent surfaces meeting at a
 boundary need MATCHING values, not merely similar ones. `VOID.fog` sat at
 `#131110` against a `#0d0c0a` horizon — six values apart, invisible as a colour,

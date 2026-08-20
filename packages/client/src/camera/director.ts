@@ -151,6 +151,19 @@ export class CameraDirector {
   get dwelling(): boolean {
     return performance.now() < this.dwellUntil
   }
+  /**
+   * §75: hold the camera still for a beat, without giving up control.
+   *
+   * The generational dawn is the one moment the entire baseline is visible at
+   * once, and cutting through it would be the product interrupting its own best
+   * frame. This is §66.1's dwell reused rather than a second mechanism: the
+   * queue clears, nothing cuts, and the shot in progress is left to finish.
+   */
+  holdFor(seconds: number): void {
+    this.dwellUntil = Math.max(this.dwellUntil, performance.now() + seconds * 1000)
+  }
+
+
 
   /**
    * §66.1: when the dwell ends, on the page's own performance timeline.

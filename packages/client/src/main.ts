@@ -24,6 +24,7 @@ import {
   DIVERGENCE_LABEL,
   PURPOSE_INDEX,
   pointInRing,
+  hashString,
   VOID,
 } from '@civ/core'
 import type { BuildingDetail, EventWire, Frame, Hello, Readouts, ScrubResult } from '@civ/protocol'
@@ -784,6 +785,10 @@ function acceptReadouts(r: Readouts): void {
   el('durability').textContent =
     `${r.viewers} watching` + (durability === 'postgres' ? '' : ' · in memory')
   if (r.generation !== lastGen) {
+    // §75: the generational dawn. Not on the first readout of a session —
+    // arriving is not a generation turning, and a wash on load would spend the
+    // beat on someone who has not watched anything happen yet.
+    if (lastGen > 0 && r.generation > lastGen) beginDawn(r.generation)
     lastGen = r.generation
     actionsThisGen = archive.reduce((n, e) => n + (e.generation === r.generation ? 1 : 0), 0)
   }
@@ -3579,6 +3584,34 @@ renderer.setAnimationLoop(() => {
     scene.fog.near = rig.distance * 0.8
     scene.fog.far = rig.distance * 2.1
   }
+  /**
+   * §75: the lighting envelope. The world drifts between deep night and dusk
+   * blue over NIGHT_PERIOD_S, and the generational dawn rides on top of it.
+   *
+   * `dt` rather than wall clock, deliberately and against §68.4's lesson: this
+   * is an ANIMATION, not a promise to a person about elapsed time. A tab that
+   * has been throttled should resume the drift where it left off rather than
+   * jump — the clamp is the behaviour that is wanted here, where for the §66.1
+   * dwell it was the bug.
+   */
+  nightPhaseT = (nightPhaseT + dt / NIGHT_PERIOD_S) % 1
+  if (dawnT >= 0) {
+    dawnT += dt
+    if (dawnT > DAWN_TOTAL_S) dawnT = -1
+  }
+  // triangle, so the pass out and the pass back take the same time
+  const band = nightPhaseT < 0.5 ? nightPhaseT * 2 : 2 - nightPhaseT * 2
+  /**
+   * §75 capture: the band takes NIGHT_PERIOD_S to walk, so an a/b of its two
+   * ends taken by waiting would be four and a half minutes apart with the world
+   * moving underneath it — which §74.2 is precisely the rule against. The
+   * override pins the phase so the two arms differ by the light and nothing
+   * else. It has to live HERE rather than in a direct call on the envelope,
+   * because this line runs every frame and would overwrite one.
+   */
+  if (lightingOverride) env.lighting.set(lightingOverride.phase, lightingOverride.dawn)
+  else env.lighting.set(band, dawnAmount())
+
   env.sky.position.copy(rig.camera.position)
   substrate.tick(t)
 
@@ -3710,6 +3743,61 @@ function* withIdentity(): Generator<AgentPresence> {
  * and rotation sweeping a point that is not the city — is precisely what a
  * correct distance aimed at a stale target looks like.
  */
+/**
+ * §75: the lighting envelope's clock.
+ *
+ * `phase` walks a full pass in NIGHT_PERIOD_S and starts at a per-chunk offset,
+ * so eight cities sit at eight points in the band rather than breathing in
+ * unison. The offset is the chunk's own name hashed — stable across reloads,
+ * which matters because a viewer who comes back to a city should find it where
+ * they left it rather than at a random phase.
+ */
+const NIGHT_PERIOD_S = 270
+/**
+ * §75's generational dawn: a pale wash that reveals the whole baseline in cold
+ * daylight, holds, and falls back. It is the contrast moment and a narrative
+ * beat at once, and it does not spend the night register because it is rare —
+ * once per generation, which at this world's pace is minutes apart.
+ */
+const DAWN_RISE_S = 6
+const DAWN_HOLD_S = 5
+const DAWN_FALL_S = 9
+const DAWN_TOTAL_S = DAWN_RISE_S + DAWN_HOLD_S + DAWN_FALL_S
+
+let nightPhaseT = (hashString(entry.id) % 1000) / 1000
+let dawnT = -1
+let lightingOverride: { phase: number; dawn: number } | null = null
+
+/** §75: 0 while the world is in its band, rising to 1 at the top of the sweep */
+function dawnAmount(): number {
+  if (dawnT < 0) return 0
+  if (dawnT < DAWN_RISE_S) return smoothstep(dawnT / DAWN_RISE_S)
+  if (dawnT < DAWN_RISE_S + DAWN_HOLD_S) return 1
+  return 1 - smoothstep((dawnT - DAWN_RISE_S - DAWN_HOLD_S) / DAWN_FALL_S)
+}
+
+const smoothstep = (t: number): number => {
+  const x = Math.max(0, Math.min(1, t))
+  return x * x * (3 - 2 * x)
+}
+
+/**
+ * §75: the sweep fires on the generation turn and the director HOLDS STILL
+ * through it rather than cutting. A cut during the one moment the whole
+ * baseline is visible would be the product interrupting its own best frame.
+ */
+function beginDawn(generation: number): void {
+  dawnT = 0
+  director.holdFor(DAWN_TOTAL_S)
+  queueFeedRow({
+    id: lastEventId + 1,
+    type: 'season_began',
+    generation,
+    cinematicWeight: 127,
+    rationale: `generation ${generation} · dawn over ${settlementLabel(entry.id)}`,
+  } as EventWire)
+}
+
 function civHome(opts: { snap?: boolean } = {}): void {
   /**
    * §66.2: home is reachable from ANY state, and reaching it ends ambient.
@@ -3872,6 +3960,43 @@ function civHome(opts: { snap?: boolean } = {}): void {
    */
   freezeClock(at: number | null) {
     frozenClock = at
+  },
+  /**
+   * §75's capture surface, and §74.2's rule applied to my own block: the band
+   * takes four and a half minutes to walk, so an a/b of its two ends taken by
+   * waiting would have the world moving between the arms and could confirm
+   * anything. `pin` fixes the phase; `state` reports what the lights are
+   * ACTUALLY at, read back off the objects.
+   *
+   * `emissive` is the assertion the block turns on. §75's claim is that
+   * "emissive windows and worksite lights do not [move]" — that the semantic
+   * survives because agent light stays the brightest thing in frame at every
+   * point in the band. That is a claim about numbers, so here are the numbers:
+   * the night term the window shader multiplies by, the lamp and traffic
+   * counts, and whether they are lit. If any of them differs between the
+   * band's ends, the envelope is spending the register it was supposed to
+   * leave alone.
+   */
+  lighting: {
+    pin(phase: number, dawn = 0) {
+      lightingOverride = { phase, dawn }
+    },
+    release() {
+      lightingOverride = null
+    },
+    /** the real generational path — director hold and feed row included */
+    fireDawn(generation = readouts?.generation ?? 1) {
+      lightingOverride = null
+      beginDawn(generation)
+    },
+    dawnAmount,
+    state: () => env.lighting.state(),
+    emissive: () => ({
+      night: buildings.material.civ.uNight.value,
+      windowWarm: `#${buildings.material.civ.uWindowWarm.value.getHexString()}`,
+      streetLights: { on: streetLights.on, count: streetLights.count },
+      traffic: { on: traffic.on, count: traffic.count },
+    }),
   },
   bloom: {
     get strength() {

@@ -1,0 +1,58 @@
+<!doctype html><meta charset="utf-8"><style>
+    body{margin:0;background:#0d0c0a;color:#8a8069;
+      font:11px ui-monospace,Menlo,monospace;text-transform:lowercase}
+    h1{font-size:11px;color:#e2a54f;font-weight:400;padding:10px 12px 0;margin:0}
+    h2{font-size:11px;color:#c9bda0;font-weight:400;padding:0 0 3px;margin:0}
+    .g{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;padding:8px 12px}
+    section{margin:0}
+    img{width:100%;display:block;border:1px solid #2a2620;margin-bottom:3px}
+    p{margin:0;padding:1px 0}
+    .e{color:#e2a54f}
+    ul{padding:2px 12px 12px 28px;margin:0}
+    li{padding:1px 0}
+    .f{color:#c96a4a}
+   </style>
+   <h1>§75 lighting envelope — brooklyn-redhook · one camera, wire closed, clock pinned</h1>
+   <div class="g"><section>
+  <h2>deep night · phase 0</h2>
+  <img src="shots/night.png">
+  <p>hemi 3.312 · ambient 1.584 · sun 1.296
+     · sky #171510 → #0b0a08</p>
+  <p class="e">emissive night=1 warm=#ffb15c
+     lamps=413 traffic=196</p>
+  <p>warm p99 190 · fabric median 8
+     · contrast 23.75x · warm 3.737% of frame</p>
+</section><section>
+  <h2>control · phase 0 again, one interval later</h2>
+  <img src="shots/control.png">
+  <p>hemi 3.312 · ambient 1.584 · sun 1.296
+     · sky #171510 → #0b0a08</p>
+  <p class="e">emissive night=1 warm=#ffb15c
+     lamps=413 traffic=196</p>
+  <p>warm p99 190 · fabric median 8
+     · contrast 23.75x · warm 3.742% of frame</p>
+</section><section>
+  <h2>dusk blue · phase 1</h2>
+  <img src="shots/dusk.png">
+  <p>hemi 7.13 · ambient 3.41 · sun 2.79
+     · sky #1f1c16 → #110f0d</p>
+  <p class="e">emissive night=1 warm=#ffb15c
+     lamps=413 traffic=196</p>
+  <p>warm p99 193 · fabric median 10
+     · contrast 19.30x · warm 4.603% of frame</p>
+</section><section>
+  <h2>generational dawn · top of the sweep</h2>
+  <img src="shots/dawn.png">
+  <p>hemi 9.43 · ambient 4.51 · sun 2.0295
+     · sky #8fa2b4 → #6f8496</p>
+  <p class="e">emissive night=1 warm=#ffb15c
+     lamps=413 traffic=196</p>
+  <p>warm p99 252 · fabric median 116
+     · contrast 2.17x · warm 5.911% of frame</p>
+</section></div>
+   <h1>pre-registered assertions</h1>
+   <ul><li class="">pass · A0 · the world is actually frozen — same pin, same interval, same pixels<br>&nbsp;&nbsp;control drift: fabricMed ±0, warm% ±0.005 · per-pixel median 0, p99 0, 0.01% of frame moved a visible step</li><li class="">pass · A1 · the emissive register does not move across any arm<br>&nbsp;&nbsp;night=1 warm=#ffb15c lamps=413 traffic=196 in every arm</li><li class="">pass · A2 · agent light stays the brightest thing in frame across the band<br>&nbsp;&nbsp;contrast night 23.75x, dusk 19.30x  | literal argmax warm: night true, dusk true</li><li class="">pass · A3 · the band actually changes how legible the fabric is<br>&nbsp;&nbsp;20.21% of frame gained a visible step across the band (noise floor 0.01%) · per-pixel median +6, p90 +9
+        for reference, the statistic this replaced: fabricMed 8 -> 10</li><li class="">pass · A4 · the dawn goes where the band does not<br>&nbsp;&nbsp;per-pixel median +109 from dusk to the top of the sweep, against +6 across the whole band — 18.2x
+        99.94% of frame lifts (band 20.21%) · fabric median 10 -> 116 · dawn contrast 2.17x</li><li class="">pass · A5 · the band does not push the fabric over §56.1’s bright-pass line<br>&nbsp;&nbsp;over the bloom line 0.422% -> 0.428% of the linear buffer
+        hot% (warm above 120) 0.598 -> 0.8 · all-warm% 3.737 -> 4.603 — both lit brick, see the header</li><li class="">pass · A7 · the dawn reveals the baseline rather than clipping it<br>&nbsp;&nbsp;clipped 0% of frame · fabric median 116 · fabric p99 187 · window cores 5.716% of frame</li><li class="">pass · A6 · the generation turn drives the sweep and holds the director still<br>&nbsp;&nbsp;dawn amount 0.0018 after 3 frames · director dwell -62.4s -> 20s (DAWN_TOTAL_S is 20)
+        feed: +54 more</li></ul>
