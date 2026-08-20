@@ -39,7 +39,7 @@ async function measure(chunk) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
   page.on('pageerror', (e) => console.log(`  PAGE EXCEPTION (${chunk})`, e.message))
   await page.goto(
-    `${ORIGIN}/?chunk=${chunk}&server=${encodeURIComponent(`${SERVER_BASE}/${chunk}`)}`,
+    `${ORIGIN}/w/?chunk=${chunk}&server=${encodeURIComponent(`${SERVER_BASE}/${chunk}`)}`,
     { waitUntil: 'domcontentloaded' },
   )
   await page.waitForFunction(() => window.civ != null, null, { timeout: 120000 })

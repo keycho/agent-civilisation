@@ -3,5 +3,8 @@
   "buildCommand": "npm run build -w @civ/client",
   "outputDirectory": "packages/client/dist",
   "installCommand": "npm ci",
-  "framework": null
+  "framework": null,
+  "rewrites": [
+    { "source": "/w/:slug", "destination": "/w/index.html" }
+  ]
 }

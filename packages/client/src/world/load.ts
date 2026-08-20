@@ -26,6 +26,19 @@ export interface LoadedChunk {
   servers: Record<string, string>
 }
 
+/**
+ * §79: the viewer moved to `/w/`, so the slug can arrive two ways — `?chunk=`
+ * as it always has, or as the path segment in `/w/<slug>` which is what the
+ * desk's rows link to and what a person would paste. The query wins when both
+ * are present, so every existing harness and link keeps its exact meaning.
+ */
+export function wantedChunk(): string | null {
+  const q = new URLSearchParams(location.search).get('chunk')
+  if (q) return q
+  const m = location.pathname.match(/^\/w\/([a-z0-9-]+)\/?$/i)
+  return m ? m[1] : null
+}
+
 export async function loadChunk(base = '/world'): Promise<LoadedChunk> {
   const [index, servers] = await Promise.all([
     (await fetch(`${base}/index.json`)).json() as Promise<{ chunks: ChunkEntry[] }>,
@@ -36,7 +49,7 @@ export async function loadChunk(base = '/world'): Promise<LoadedChunk> {
   // §31: the index now lists more than one chunk. ?chunk= selects; the default
   // stays the first entry. The real fix is selecting by the server's hello,
   // which lands with the multi-chunk client (§31.6-6).
-  const want = new URLSearchParams(location.search).get('chunk')
+  const want = wantedChunk()
   const entry = index.chunks.find((c) => c.id === want) ?? index.chunks[0]
   const seed = (await (await fetch(`${base}/${entry.file}`)).json()) as WorldSeed
 

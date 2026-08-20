@@ -20,7 +20,7 @@ const browser = await chromium.launch({
   args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--no-sandbox'],
 })
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
-await page.goto(`${ORIGIN}/?chunk=${CHUNK}&server=${encodeURIComponent(SERVER)}`, {
+await page.goto(`${ORIGIN}/w/?chunk=${CHUNK}&server=${encodeURIComponent(SERVER)}`, {
   waitUntil: 'domcontentloaded',
 })
 await page.waitForFunction(() => window.civ != null, null, { timeout: 120000 })

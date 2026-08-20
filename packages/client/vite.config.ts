@@ -23,7 +23,17 @@ export default defineConfig({
     target: 'es2022',
     rollupOptions: {
       input: {
-        main: resolve(__dirname, 'index.html'),
+        /**
+         * §79: the desk is the homepage and the viewer moved to /w/.
+         *
+         * The viewer keeps reading `?chunk=`, so every harness and existing
+         * link only gains the `/w/` prefix rather than changing shape. A
+         * `/w/<slug>` path is rewritten to this entry by vercel.json, and the
+         * viewer reads the slug from the path when the query is absent.
+         */
+        desk: resolve(__dirname, 'index.html'),
+        main: resolve(__dirname, 'w/index.html'),
+        og: resolve(__dirname, 'og.html'),
         preview: resolve(__dirname, 'preview/index.html'),
       },
     },

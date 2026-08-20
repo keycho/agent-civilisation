@@ -33,7 +33,7 @@ const browser = await chromium.launch({
 const [VW, VH] = (process.env.CIV_VIEWPORT ?? '1280x800').split('x').map(Number)
 const page = await browser.newPage({ viewport: { width: VW, height: VH } })
 page.on('pageerror', (e) => console.log('PAGE EXCEPTION', e.message))
-await page.goto(`${ORIGIN}/?chunk=${CHUNK}&server=${encodeURIComponent(SERVER)}`, {
+await page.goto(`${ORIGIN}/w/?chunk=${CHUNK}&server=${encodeURIComponent(SERVER)}`, {
   waitUntil: 'domcontentloaded',
 })
 await page.waitForFunction(() => window.civ != null, null, { timeout: 120000 })

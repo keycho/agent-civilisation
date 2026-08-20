@@ -58,7 +58,7 @@ const browser = await chromium.launch({
 })
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
 page.on('pageerror', (e) => console.log('PAGE EXCEPTION', e.message))
-const url = `${ORIGIN}/?chunk=${CHUNK}&server=${encodeURIComponent(SERVER)}`
+const url = `${ORIGIN}/w/?chunk=${CHUNK}&server=${encodeURIComponent(SERVER)}`
 await page.goto(url, { waitUntil: 'domcontentloaded' })
 
 // ---------------------------------------------------------------------------

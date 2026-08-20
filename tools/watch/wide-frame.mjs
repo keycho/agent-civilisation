@@ -168,7 +168,7 @@ const EDGE_PROBE = (band) =>
 const rows = []
 for (const vp of VIEWPORTS) {
   const page = await browser.newPage({ viewport: { width: vp.width, height: vp.height } })
-  await page.goto(`${ORIGIN}/?chunk=${CHUNK}&server=${encodeURIComponent(SERVER)}`, {
+  await page.goto(`${ORIGIN}/w/?chunk=${CHUNK}&server=${encodeURIComponent(SERVER)}`, {
     waitUntil: 'domcontentloaded',
   })
   await page.waitForFunction(() => window.civ != null, null, { timeout: 120000 })

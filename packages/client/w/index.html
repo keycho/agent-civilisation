@@ -1,0 +1,846 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>terrafork</title>
+    <style>
+      /*
+       * §35: the chrome goes terminal, the world stays a diorama. Everything in
+       * this stylesheet is the ui layer only — no rule here may touch the
+       * canvas or tint the render (§35.1). amber/cream on near-black, one mono
+       * face, all lowercase. No scanlines, no glow: the terminal register is
+       * typographic, not atmospheric (§35.5).
+       */
+      :root {
+        --bg: #0d0c0a;
+        --pane: rgba(13, 12, 9, 0.78);
+        --edge: #2a2620;
+        --cream: #e6ddc6;
+        --dim: #8a8069;
+        --dimmer: #5c5546;
+        --amber: #e2a54f;
+        --wash: rgba(226, 165, 79, 0.07);
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); }
+      body {
+        font: 12px/1.55 ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+        color: var(--cream);
+        text-transform: lowercase;
+        -webkit-font-smoothing: antialiased;
+        font-variant-numeric: tabular-nums;
+      }
+      canvas { display: block; }
+      a { color: inherit; }
+      .hidden { display: none !important; }
+      .amber { color: var(--amber); }
+      .dim { color: var(--dim); }
+      button {
+        font: inherit; text-transform: inherit; color: var(--cream);
+        background: none; border: 1px solid var(--edge); padding: 2px 8px; cursor: pointer;
+      }
+      button:hover { border-color: var(--dim); }
+      button[aria-pressed="true"] { color: var(--amber); border-color: var(--amber); }
+
+      /*
+       * §35.7: top and bottom are full-width strips with a single hairline
+       * separator. Bars, not panes: no titles, no border box.
+       */
+      .bar {
+        position: fixed; left: 0; right: 0; z-index: 3;
+        display: flex; align-items: center; gap: 14px;
+        padding: 7px 12px; background: var(--pane);
+        transition: opacity 420ms ease;
+      }
+      #barTop { top: 0; border-bottom: 1px solid var(--edge); }
+      #barBottom { bottom: 0; border-top: 1px solid var(--edge); }
+      .bar .sep { color: var(--dimmer); }
+      .bar .push { margin-left: auto; }
+      #wordmark { color: var(--amber); }
+      #chunkBtn { border: 0; padding: 0; color: var(--cream); }
+      #chunkBtn:hover { color: var(--amber); }
+      #diffStat b { color: var(--amber); font-weight: 400; }
+      #link.live { color: var(--dim); }
+      #link.connecting, #link.lost { color: var(--amber); }
+
+      #barBottom label { color: var(--dim); }
+      #barBottom .row { display: flex; align-items: center; gap: 8px; }
+      #barBottom output { min-width: 62px; color: var(--cream); }
+      #keys { color: var(--dimmer); white-space: nowrap; }
+      #keys b { color: var(--dim); font-weight: 400; }
+
+      /* §35.6: thin amber tracks, square thumbs */
+      input[type="range"] {
+        -webkit-appearance: none; appearance: none;
+        width: 150px; height: 2px; background: var(--edge); outline: none;
+      }
+      input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none; appearance: none;
+        width: 8px; height: 8px; border-radius: 0; background: var(--amber); border: 0;
+      }
+      input[type="range"]::-moz-range-thumb {
+        width: 8px; height: 8px; border-radius: 0; background: var(--amber); border: 0;
+      }
+
+      /*
+       * §35.7: one pane component, used everywhere. 1px dim border, near-black
+       * translucent fill, title bar with the pane's dot-notation name in amber
+       * and a dim meta/close slot right. The world is never framed: panes float
+       * over it at the edges.
+       */
+      .pane {
+        position: fixed; z-index: 2;
+        background: var(--pane); border: 1px solid var(--edge); border-radius: 1px;
+        transition: opacity 420ms ease;
+      }
+      .pane .title {
+        display: flex; align-items: baseline; gap: 8px;
+        padding: 5px 9px; border-bottom: 1px solid var(--edge);
+      }
+      .pane .title .name { color: var(--amber); }
+      .pane .title .meta { margin-left: auto; color: var(--dimmer); }
+      .pane .title .x {
+        border: 0; padding: 0 0 0 8px; color: var(--dimmer); cursor: pointer; line-height: 1;
+      }
+      .pane .title .x:hover { color: var(--cream); }
+      .pane .body { padding: 7px 9px; }
+
+      /*
+       * §35.7 log gutter: right-aligned event ordinal in dim ink, 1px vertical
+       * rule, then the body. Never clock time (§20). Severity by colour, not
+       * boxes: routine dim, physical change cream, high weight amber with a
+       * faint row wash — the weight column drives it.
+       */
+      /*
+       * §59.3: panes stop being independently-positioned rectangles that happen
+       * not to overlap, and become two managed stacks — one per screen edge.
+       * Every pane in a rail is laid out by the rail, so crew and changelog
+       * cannot collide however long either grows; each scrolls inside itself
+       * instead of pushing the next one off the bottom. The rails are bounded
+       * by the two bars, so the whole set fits any window down to 1280x800.
+       */
+      .rail {
+        position: fixed; top: 42px; bottom: 52px; z-index: 2;
+        display: flex; flex-direction: column; gap: 8px;
+        pointer-events: none;
+      }
+      .rail > * { pointer-events: auto; }
+      .rail .pane { position: static; flex: 0 0 auto; min-height: 0; }
+      /* the feed takes what is left and scrolls; nothing else may grow into it */
+      .rail .pane.grow { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 60px; }
+      .rail .pane.grow .body { flex: 1 1 auto; overflow-y: auto; }
+      /*
+       * §64.1: the log is the star, not a sidebar. It takes real width, holds
+       * full sentences without wrapping every clause, and is the only pane on
+       * screen when nothing has been asked for.
+       */
+      #railRight { right: 12px; width: 430px; align-items: stretch; }
+      /* §59.2: wider, and resizable by the viewer */
+      #railLeft {
+        left: 12px; width: 380px; align-items: stretch;
+        resize: horizontal; overflow: hidden; min-width: 260px; max-width: 620px;
+      }
+
+      /*
+       * §60(a): the headline. One line, always present, naming the most
+       * dramatic thing currently under way. Amber because it is the one row on
+       * screen that is never routine.
+       */
+      #headline { cursor: pointer; }
+      #headline .body { padding: 6px 9px; }
+      #headline .lead { color: var(--amber); }
+      #headline .dim { display: block; color: var(--dim); }
+      #headline:hover { border-color: var(--dim); }
+      #headline.quiet .lead { color: var(--dim); }
+
+      /* §60(b): stories — a campaign per card, progressing in place */
+      #stories {}
+      /* four cards, whole — a card cut in half reads as a rendering fault */
+      #stories .body { padding: 3px 0; max-height: 250px; overflow-y: auto; }
+      #stories .s { display: block; padding: 4px 9px; cursor: pointer; border-left: 2px solid transparent; }
+      #stories .s:hover { background: var(--wash); border-left-color: var(--amber); }
+      #stories .s .hd { display: flex; gap: 6px; align-items: baseline; }
+      #stories .s .who { color: var(--cream); }
+      #stories .s .chip { width: 7px; height: 7px; flex: 0 0 7px; align-self: center; }
+      #stories .s .w { margin-left: auto; color: var(--dimmer); }
+      #stories .s .stage { color: var(--dim); padding-left: 13px; }
+      #stories .s .stage b { color: var(--amber); font-weight: 400; }
+      /*
+       * NOT `.bar`: that class is already taken by the full-width fixed strips
+       * at the top and bottom of the screen (`.bar { position: fixed; left: 0;
+       * right: 0 }`), so a progress bar named `bar` inherited it and every
+       * story card drew a 1267px strip straight across the plate. Four stories
+       * meant four bands over the city — which read as a renderer fault and
+       * cost an hour of hunting through the scene graph for geometry that was
+       * never there.
+       */
+      #stories .s .prog { height: 2px; background: var(--edge); margin: 3px 0 0 13px; }
+      #stories .s .prog i { display: block; height: 2px; background: var(--amber); }
+
+      /* §60(c): the digest — a rolling window, in the bottom bar */
+      #digest b { color: var(--cream); font-weight: 400; }
+
+      /* §59.3: the rail owns position and height now; the feed is the pane
+       * that absorbs whatever space the others leave. */
+      #log .body { padding: 4px 0; }
+      #log .e { display: flex; gap: 8px; padding: 1.5px 9px; color: var(--dim); }
+      #log .e .ord {
+        flex: 0 0 52px; text-align: right; color: var(--dimmer);
+        border-right: 1px solid var(--edge); padding-right: 7px;
+      }
+      #log .e .t { flex: 1; min-width: 0; }
+      #log .e .t b { font-weight: 400; }
+      #log .e.cream { color: var(--cream); }
+      #log .e.high { color: var(--amber); background: var(--wash); }
+      #log .e .n { color: var(--dimmer); }
+      #log .e.high .n { color: var(--amber); opacity: 0.7; }
+      /*
+       * §58.3: a monument falling is the loudest line this feed has. §58 retired
+       * the untouchable class, so it can happen — once per landmark, and the
+       * world is permanently different afterwards. It stays in register (amber
+       * on the wash, still lowercase); what it gains is a rule down the gutter
+       * and one wash that decays, so it reads as the top of the scale rather
+       * than as a different language.
+       */
+      #log .e.monument {
+        color: var(--amber); background: var(--wash);
+        box-shadow: inset 2px 0 0 var(--amber);
+        animation: monumentSettle 3.2s ease-out 1;
+      }
+      #log .e.monument .n { color: var(--amber); opacity: 0.7; }
+      @keyframes monumentSettle {
+        0% { background: rgba(226, 165, 79, 0.3); }
+        100% { background: var(--wash); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #log .e.monument { animation: none; }
+      }
+      /*
+       * §63.4: fine grain over world and chrome together. Fixed, above
+       * everything, pointer-transparent. The opacity is the whole argument —
+       * enough to bind the two layers into one surface, never enough to cost a
+       * character of the terminal register.
+       */
+      #grain {
+        position: fixed; inset: 0; z-index: 9; pointer-events: none;
+        opacity: 0.055; background-repeat: repeat; background-size: 128px 128px;
+        mix-blend-mode: overlay;
+      }
+      @media (prefers-reduced-motion: reduce) { #grain { opacity: 0.035; } }
+
+      /* §63.4: the world's own readouts — dim mono, amber only where it earns it */
+      #siteMarks { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
+      #siteMarks .m {
+        position: absolute; transform: translate(-50%, -50%);
+        font-size: 9px; line-height: 1.25; letter-spacing: 0.04em;
+        color: var(--dimmer); white-space: pre; text-align: center;
+        text-shadow: 0 0 3px #000, 0 0 6px #000;
+      }
+      #siteMarks .m.live { color: var(--amber); opacity: 0.72; }
+
+      /*
+       * §64.1: THE DEFAULTS CHANGE. Nothing here is deleted — every pane that
+       * was present is now available, one keystroke away, and closed until
+       * asked for. §64.4's ordering principle is the reason: when a frame reads
+       * as boring the first question is what can be removed, and a product with
+       * thirty surfaces has to earn its clarity by hiding what it built.
+       *
+       * The class goes on <body> rather than on each pane so a single keydown
+       * flips one flag, and so `Escape` can clear the lot without knowing what
+       * is open.
+       */
+      body:not(.show-narrative) #headline,
+      body:not(.show-narrative) #stories,
+      body:not(.show-changelog) #changelog,
+      body:not(.show-crew) #crew,
+      body:not(.show-digest) #digest { display: none; }
+      /* a rail with nothing in it must not eat the pointer over the world */
+      body:not(.show-crew):not(.show-changelog) #railLeft { display: none; }
+
+      /* §64.3: the full legend lives in `?` now */
+      #readouts { margin-top: 8px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+      #readouts .sep { color: var(--dimmer); }
+      #digest .body { color: var(--dim); max-width: 46ch; }
+      #legend { margin-top: 9px; border-top: 1px solid var(--edge); padding-top: 7px; }
+      #legend .k { display: flex; gap: 8px; padding: 1px 0; color: var(--dim); }
+      #legend .k b { flex: 0 0 42px; color: var(--amber); font-weight: 400; }
+
+      /* §46.2: rows that know where they happened invite the click */
+      #log .e.place { cursor: pointer; }
+      #log .e.place:hover { color: var(--cream); background: var(--wash); }
+
+      /*
+       * §51.2: the feed paces itself. Two rows never in the stream's grammar:
+       * the roll-up of what the pace held back, and the per-generation count of
+       * routine lines. Both are dim, both expand on click.
+       */
+      #log .e.roll, #log .e.count { cursor: pointer; color: var(--dimmer); }
+      #log .e.roll { color: var(--amber); opacity: 0.75; }
+      #log .e.roll:hover, #log .e.count:hover { color: var(--cream); }
+      /* the typing tick: a caret while a line writes itself in, then gone */
+      #log .e .tx.typing::after { content: "▌"; color: var(--amber); opacity: 0.8; }
+      .pane .title .tbtn { border: 0; padding: 0 0 0 8px; color: var(--dimmer); line-height: 1; }
+      .pane .title .tbtn:hover { color: var(--cream); }
+      .pane .title .tbtn[aria-pressed="true"] { color: var(--amber); }
+      #logState { color: var(--amber); }
+
+      /*
+       * §67: the world listing. Full-frame, because it replaces a view rather
+       * than annotating one, and in the §35.7 pane grammar so that arriving at
+       * it does not feel like leaving the product. The city keeps rendering
+       * behind it: the listing is a sheet over the world, not another world.
+       */
+      #worlds {
+        /*
+         * Between the two bars, not over them: the top bar names where you are
+         * and the bottom one holds the diff scrub, and both are still true
+         * while the index is up. Opaque, because the listing IS the view — a
+         * translucent one printed the table over a lit city and neither could
+         * be read.
+         */
+        position: fixed; top: 36px; bottom: 40px; left: 0; right: 0;
+        display: none; z-index: 5;
+        background: var(--bg); border: 0; border-radius: 0;
+        flex-direction: column;
+      }
+      body.worlds #worlds { display: flex; }
+      /* nothing else on screen has anything to say while the index is up */
+      body.worlds #railRight, body.worlds #railLeft,
+      body.worlds #cards, body.worlds #titleCard, body.worlds #miniCard,
+      body.worlds #siteMarks { display: none; }
+      /* the status line describes one world; on /earth most of it does not apply */
+      body.worlds #genN, body.worlds #ambient { display: none; }
+      body.worlds #worldCount { display: inline; }
+      #worlds > .title { padding: 9px 16px; }
+      #worlds > .body { flex: 1; overflow-y: auto; padding: 0; display: flex; flex-direction: column; }
+      #worlds .row {
+        display: grid; align-items: baseline;
+        grid-template-columns: minmax(13ch, 1fr) 4ch 5ch 7ch 12ch 12ch;
+        gap: 14px; padding: 5px 16px; border-bottom: 1px solid var(--edge);
+        /* every row is one line: a wrapped row reads as a rendering fault */
+        white-space: nowrap;
+      }
+      #worlds .row.hd { color: var(--dimmer); border-bottom-color: var(--edge); }
+      /* flex, so a re-sort can reseat a row with `order` instead of moving it */
+      #worldsList { display: flex; flex-direction: column; }
+      #worlds #worldsList .row { cursor: pointer; }
+      #worlds #worldsList .row:hover { background: var(--wash); }
+      /* selection is the keyboard's cursor and has to read at a glance */
+      #worlds #worldsList .row.sel { background: var(--wash); box-shadow: inset 2px 0 0 var(--amber); }
+      #worlds .row .nm { color: var(--cream); }
+      #worlds #worldsList .row.sel .nm, #worlds #worldsList .row:hover .nm { color: var(--amber); }
+      #worlds .row .cc, #worlds .row .gen, #worlds .row .diff { color: var(--dim); }
+      #worlds .row .wk { color: var(--dim); text-align: right; }
+      #worlds .row .wk b { color: var(--amber); font-weight: 400; }
+      #worlds .row .act { color: var(--amber); opacity: 0.85; letter-spacing: 1px; }
+      #worlds .row .here { color: var(--dimmer); padding-left: 8px; }
+      #worlds .row.cold .act { color: var(--dimmer); }
+      #worlds .row.cold .nm { color: var(--dim); }
+      /*
+       * §69: everything below the table. It takes the space the listing does
+       * not, so eight rows do not leave half a screen of void, and it reads top
+       * to bottom as: what this is, what the numbers are doing, what just
+       * happened, where the ground came from.
+       */
+      #worldsBelow {
+        margin-top: auto; display: flex; flex-direction: column;
+        border-top: 1px solid var(--edge);
+      }
+      #worldsPremise { padding: 14px 16px 10px; max-width: 78ch; }
+      #worldsPremise p { margin: 0 0 5px; color: var(--dim); }
+      #worldsPremise p:first-child { color: var(--cream); }
+      #worldsPremise .cta { color: var(--amber); margin-top: 8px; }
+      /* numbers that move are the cheapest evidence the thing is running */
+      #worldsTotals {
+        padding: 8px 16px; border-top: 1px solid var(--edge);
+        display: flex; flex-wrap: wrap; gap: 18px; color: var(--dim);
+      }
+      #worldsTotals b { color: var(--amber); font-weight: 400; }
+      #worldsTotals .stale { color: var(--dimmer); }
+      /* the last few high-weight events, across every world */
+      #worldsTicker { padding: 6px 16px 8px; border-top: 1px solid var(--edge); }
+      #worldsTicker .e { display: flex; gap: 9px; color: var(--dim); padding: 1px 0; }
+      #worldsTicker .e .w {
+        color: var(--dimmer); flex: 0 0 17ch;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      #worldsTicker .e .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      #worldsTicker .e .t { color: var(--cream); }
+      #worldsTicker .none { color: var(--dimmer); }
+      /*
+       * The one thing the map showed that a list would otherwise lose. It is
+       * about the region where every row above is about one world.
+       */
+      #worldsMigration { padding: 7px 16px; border-top: 1px solid var(--edge); color: var(--dim); }
+      #worldsMigration b { color: var(--amber); font-weight: 400; }
+      #worldsMigration .src { color: var(--dimmer); padding-left: 10px; }
+      #worldsCredits {
+        padding: 9px 16px 12px; border-top: 1px solid var(--edge);
+        display: flex; flex-direction: column; gap: 2px; color: var(--dimmer);
+      }
+      #worldsCredits a { color: var(--dim); }
+      #worldsCredits a:hover { color: var(--amber); }
+
+      /*
+       * §35.7: panes float at the edges and must not stack on each other. The
+       * four corners are spoken for — crew top-left, sheet top-right, agent
+       * log bottom-left, world.log bottom-right — so each is capped to its own
+       * half of the height rather than growing until it covers the pane below.
+       */
+      #inspector { top: 42px; right: 12px; width: 300px; display: none; }
+      #inspector.on { display: block; }
+      #inspector .body { overflow-y: auto; max-height: 46vh; }
+      #inspector h2 { margin: 0 0 1px; font-size: 12px; font-weight: 400; }
+      #inspector .sub { margin: 0 0 8px; color: var(--dim); }
+      #inspector dl { margin: 0; display: grid; grid-template-columns: 92px 1fr; gap: 2px 10px; }
+      #inspector dt { color: var(--dim); }
+      #inspector dd { margin: 0; }
+      #inspector .section { margin-top: 9px; padding-top: 7px; border-top: 1px solid var(--edge); }
+      #inspector .section h3 { margin: 0 0 4px; font-size: 12px; font-weight: 400; color: var(--dim); }
+      #inspector .lineage .step { display: flex; gap: 7px; }
+      #inspector .lineage .step .yr { color: var(--dim); flex: 0 0 40px; }
+      #followBtn { margin-top: 9px; width: 100%; }
+      #followBtn.on { color: var(--amber); border-color: var(--amber); }
+
+      /*
+       * §59.2: the crew pane is a roster — a picture, a name, and the plan in
+       * full. Two lines per agent, never ellipsised: a plan cut off at the pane
+       * edge is exactly what made the old pane unable to answer "who is this".
+       */
+      /*
+       * §64.1: one switch per surface. `#crew.on` and `#changelog.on` were a
+       * second gate on top of the body class, so a surface could be asked for
+       * and still not appear — which is exactly what happened to the changelog.
+       * The body class is now the only thing that decides.
+       */
+      #crew .body { max-height: calc(100vh - 170px); overflow-y: auto; }
+      #crew .grp {
+        display: flex; gap: 6px; align-items: baseline;
+        color: var(--dim); padding: 5px 9px 2px; border-top: 1px solid var(--edge);
+      }
+      #crew .grp:first-child { border-top: 0; }
+      #crew .grp .n { color: var(--cream); }
+      #crew .grp.fold { cursor: pointer; }
+      #crew .grp.fold:hover { color: var(--cream); }
+      #crew .grp .tw { margin-left: auto; color: var(--dimmer); }
+      #crew .a {
+        display: flex; gap: 8px; align-items: flex-start;
+        padding: 5px 9px; cursor: pointer; border-left: 2px solid transparent;
+      }
+      #crew .a:hover, #crew .a.pinned { background: var(--wash); border-left-color: var(--amber); }
+      #crew .a .sprite {
+        width: 24px; height: 24px; flex: 0 0 24px;
+        image-rendering: pixelated; margin-top: 1px;
+      }
+      #crew .a.pinned .sprite { width: 40px; height: 40px; flex: 0 0 40px; }
+      #crew .a .who { flex: 1; min-width: 0; }
+      /* a name broken across two lines reads as two agents; it never wraps */
+      #crew .a .l1 { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+      #crew .a .nm, #crew .a .meta { white-space: nowrap; }
+      #crew .a .chip { width: 7px; height: 7px; flex: 0 0 7px; }
+      #crew .a .meta { color: var(--dimmer); }
+      /* the plan wraps; it is never cut */
+      #crew .a .plan { color: var(--dim); overflow-wrap: anywhere; }
+      #crew .a .stats { flex: 0 0 52px; text-align: right; color: var(--dimmer); }
+      #crew .a .eff { height: 2px; background: var(--edge); margin-top: 4px; }
+      #crew .a .eff i { display: block; height: 2px; background: var(--amber); }
+      #crew .a.idle { opacity: 0.72; }
+
+      /*
+       * §51.3: the mini-card. Hovering a floating marker reads the agent
+       * without committing to follow — chrome register, follows the cursor,
+       * never takes the pointer.
+       */
+      #miniCard {
+        position: fixed; z-index: 6; display: none; pointer-events: none;
+        max-width: 260px; padding: 4px 8px;
+        background: var(--pane); border: 1px solid var(--edge);
+      }
+      #miniCard.on { display: block; }
+      #miniCard .nm { color: var(--amber); }
+      #miniCard .ln { color: var(--dim); }
+
+      /* wishlist: while following, the agent gets its own log in pane grammar */
+      #agentLog { left: 12px; bottom: 52px; width: 320px; display: none; }
+      body.following #agentLog { display: block; }
+      #agentLog .body { padding: 4px 0; max-height: 26vh; overflow: hidden; }
+      #agentLog .e { display: flex; gap: 8px; padding: 1.5px 9px; color: var(--dim); }
+      #agentLog .e .ord { flex: 0 0 52px; text-align: right; color: var(--dimmer);
+                          border-right: 1px solid var(--edge); padding-right: 7px; }
+      #agentLog .e .t { flex: 1; min-width: 0; }
+      #agentLog .e.cream { color: var(--cream); }
+      #agentLog .e.high { color: var(--amber); background: var(--wash); }
+
+
+      #changelog .body { max-height: 40vh; overflow-y: auto; }
+      #changelog .g { margin-bottom: 7px; }
+      #changelog .g .hd { color: var(--dim); }
+      #changelog .g .ev { display: flex; gap: 7px; cursor: pointer; padding: 1px 0; }
+      #changelog .g .ev:hover { color: var(--amber); }
+      #changelog .g .ev .w { color: var(--dimmer); flex: 0 0 26px; text-align: right; }
+      #changelog .g .ev .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden;
+                             text-overflow: ellipsis; }
+
+      /*
+       * §36.3: the entry card. Never modal: no backdrop, the world runs live
+       * behind it and any interaction dismisses it. §39: docked left rather
+       * than centered — never-blocking includes not sitting on the diorama's
+       * centre of mass.
+       */
+      #cards {
+        position: fixed; z-index: 4; inset: 0; pointer-events: none;
+        display: flex; align-items: center; justify-content: flex-start;
+        gap: 12px; padding-left: 48px;
+      }
+      #cards .pane { position: static; pointer-events: auto; }
+      #explainer { width: 400px; }
+      #explainer .body { padding: 12px 14px; }
+      #explainer p { margin: 0 0 10px; }
+      #explainer p:last-of-type { margin-bottom: 12px; }
+      #watchBtn { width: 100%; color: var(--amber); }
+      #help { width: 380px; display: none; }
+      #help.on { display: block; }
+      #help dl { margin: 0 0 4px; display: grid; grid-template-columns: 86px 1fr; gap: 2px 10px; }
+      #help dt { color: var(--amber); }
+      #help dd { margin: 0; color: var(--cream); }
+      #help .credits { margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--edge);
+                       color: var(--dim); }
+      #help .credits div { margin-bottom: 3px; }
+
+      /*
+       * §35.6: the shot label is a lowercase chip anchored to what it labels,
+       * not a floating pill mid-canvas.
+       */
+      #chip {
+        position: fixed; z-index: 1; transform: translate(-50%, -140%);
+        padding: 1px 7px; border: 1px solid var(--edge); background: var(--pane);
+        color: var(--dim); opacity: 0; transition: opacity 0.4s ease; pointer-events: none;
+      }
+      #chip.on { opacity: 1; }
+      #chip .who { color: var(--amber); }
+
+      /*
+       * §51.1: the mode flip. When input wins the camera (or ambient resumes)
+       * the chrome says so — one word, centred under the top bar, gone in a
+       * breath. Its own layer: it must read even while ambient hides the panes.
+       */
+      #modeFlip {
+        position: fixed; z-index: 6; top: 42px; left: 50%; transform: translateX(-50%);
+        padding: 1px 9px; border: 1px solid var(--edge); background: var(--pane);
+        color: var(--amber); opacity: 0; transition: opacity 260ms ease;
+        pointer-events: none;
+      }
+      #modeFlip.on { opacity: 1; }
+
+      /* §40.2/§40.4: the title card — the world's own caption */
+      #titleCard {
+        position: fixed; z-index: 6; left: 50%; bottom: 84px; transform: translateX(-50%);
+        padding: 4px 14px; border: 1px solid var(--edge); background: var(--pane);
+        color: var(--cream); opacity: 0; transition: opacity 620ms ease;
+        pointer-events: none; white-space: nowrap;
+      }
+      #titleCard.on { opacity: 1; }
+      body.ambient #titleCard.on { opacity: 1; }
+
+      /*
+       * §35.2 boot: over the world fading in. Two seconds, skippable, once per
+       * session.
+       */
+      #boot {
+        position: fixed; inset: 0; z-index: 10; background: var(--bg);
+        display: grid; place-items: center;
+        transition: opacity 600ms ease;
+      }
+      #boot.fading { opacity: 0; pointer-events: none; }
+      #boot .lines { min-width: 320px; min-height: 60px; color: var(--dim); }
+      #boot .lines div { margin: 2px 0; }
+      #boot .lines .done { color: var(--cream); }
+      #boot .lines .live { color: var(--amber); }
+
+      /* ambient (§15 leave-it-running): chrome recedes, the way out stays */
+      body.ambient .bar, body.ambient .pane, body.ambient #chip { opacity: 0; pointer-events: none; }
+      body.ambient #barTop { opacity: 1; pointer-events: none; background: none; border-color: transparent; }
+      body.ambient #barTop > * { opacity: 0; transition: opacity 420ms ease; }
+      body.ambient #barTop #ambient { opacity: 0.6; pointer-events: auto; }
+    </style>
+  </head>
+  <body>
+    <div id="boot"><div class="lines" id="bootLines"><div>mounting /earth</div></div></div>
+
+    <!--
+      §64.2: the status line states the constraint. Four facts, not eight
+      numbers: what this is, where, how far it has got, and — the load-bearing
+      one — that no message a viewer sends can advance it. `observer` is not a
+      disclaimer, it is the appeal. The money figure arrives with §55's
+      inference budget; uptime since genesis is free.
+
+      §64.1 makes everything else a keystroke: the crew button, the diff
+      readout, the season and pace counters all left this bar. What stays is
+      the sentence, plus the two controls a viewer needs to be able to find
+      without knowing anything — the way out of ambient, and `?`.
+    -->
+    <div class="bar" id="barTop">
+      <span id="wordmark">terrafork</span>
+      <span class="sep">·</span>
+      <button id="chunkBtn" title="switch city (m)">—</button>
+      <span class="sep">·</span>
+      <span id="genN">gen 1</span>
+      <!--
+        §69: on /earth there is no generation — a generation belongs to one
+        world and there are eight. The slot says how many are mounted instead.
+      -->
+      <span id="worldCount" hidden></span>
+      <span class="sep">·</span>
+      <span id="link" class="connecting">connecting…</span>
+      <span class="sep">·</span>
+      <span id="observer" title="no client message can advance this world">observer</span>
+      <span class="sep" id="spendSep" hidden>·</span>
+      <span id="spend" class="dim" hidden></span>
+      <span class="sep">·</span>
+      <span id="uptime" class="dim">up —</span>
+      <span class="push"></span>
+      <button id="helpBtn" title="what is this, and every key (?)">?</button>
+      <button id="ambient" aria-pressed="false" title="ambient camera, chrome recedes (a)">ambient off</button>
+    </div>
+
+    <!--
+      §21.6: no speed control. Throughput is a property of the world, which one
+      server owns; a viewer reads the pace and cannot set it.
+    -->
+    <div class="bar" id="barBottom">
+      <div class="row">
+        <label for="mode">diff</label>
+        <input id="mode" type="range" min="0" max="1" step="0.01" value="0" />
+        <output id="modeOut">as built</output>
+      </div>
+      <div class="row">
+        <label for="scrub">log</label>
+        <input id="scrub" type="range" min="0" max="1" step="1" value="1" />
+        <output id="scrubOut">live</output>
+      </div>
+      <span class="push"></span>
+      <!--
+        §64.3: the legend went to `?`. Eleven advertised shortcuts is a menu,
+        not a product. What is left is the one hint a stranger needs to
+        discover that there IS a keyboard.
+      -->
+      <span id="keys"><b>?</b> keys</span>
+    </div>
+
+    <!--
+      §60: the narrative hierarchy sits ABOVE the log, because the log answers
+      "what just happened" and a stranger's first question is "what is
+      happening". Headline, then the stories in progress, then the feed.
+      §59.3: all of it inside the managed right rail, which owns the layout.
+    -->
+    <div class="rail" id="railRight">
+    <div class="pane" id="headline">
+      <div class="body">
+        <span class="lead" id="headlineText">the world is quiet</span>
+        <span class="dim" id="headlineWho"></span>
+      </div>
+    </div>
+
+    <div class="pane" id="stories">
+      <div class="title"><span class="name">in progress</span>
+        <span class="meta" id="storiesMeta"></span></div>
+      <div class="body" id="storyList"></div>
+    </div>
+
+    <div class="pane" id="inspector">
+      <div class="title"><span class="name" id="insName">bldg</span><span class="meta" id="insMeta"></span>
+        <button class="x" id="close" title="close">x</button></div>
+      <div class="body">
+        <h2 id="insTitle"></h2>
+        <p class="sub" id="insSub"></p>
+        <dl id="insFacts"></dl>
+        <div class="section hidden" id="insLineageBox">
+          <h3>lineage</h3>
+          <div class="lineage" id="insLineage"></div>
+        </div>
+        <button id="followBtn" class="hidden">follow (f)</button>
+      </div>
+    </div>
+
+    <!--
+      §64.1: the digest was a line in the bottom bar, which is a place for
+      controls. It is a reading surface, so it is a pane, and like every other
+      reading surface it is closed until asked for (g).
+    -->
+    <div class="pane" id="digest">
+      <div class="title"><span class="name">digest</span><span class="meta" id="watched"></span></div>
+      <div class="body" id="digestBody"></div>
+    </div>
+
+    <div class="pane grow" id="log">
+      <div class="title"><span class="name">world.log</span><span class="meta" id="logMeta"></span>
+        <span id="logState" class="hidden">paused</span>
+        <button id="verboseBtn" class="tbtn" aria-pressed="false" title="show routine lines too">verbose</button>
+      </div>
+      <div class="body" id="feedList"></div>
+    </div>
+    </div>
+
+
+
+    <div class="pane" id="agentLog">
+      <div class="title"><span class="name" id="agentLogName">agent.log</span>
+        <span class="meta" id="agentLogMeta"></span>
+        <button class="x" id="agentLogClose" title="release (f)">x</button></div>
+      <div class="body" id="agentFeed"></div>
+    </div>
+
+    <div class="rail" id="railLeft">
+    <div class="pane" id="crew">
+      <div class="title"><span class="name">crew</span><span class="meta" id="crewMeta">this generation</span>
+        <button class="x" id="crewClose" title="close">x</button></div>
+      <div class="body" id="crewList"></div>
+    </div>
+    <div class="pane" id="changelog">
+      <div class="title"><span class="name">changelog</span><span class="meta">as observed</span></div>
+      <div class="body" id="changelogList"></div>
+    </div>
+    </div>
+
+    <div id="cards">
+      <div class="pane" id="explainer" style="display: none">
+        <div class="title"><span class="name">terrafork</span>
+          <button class="x" id="explainerClose" title="close">x</button></div>
+        <div class="body">
+          <p id="exPlace">this is a real place, real buildings.</p>
+          <p>we forked it. autonomous agents own the fork now.<br />
+             they buy, build, demolish and remake it. nobody controls them.</p>
+          <p>grey is the world as we left it. colour is theirs.</p>
+          <p>click a building for its history. click an agent to follow.<br />
+             press d for the diff against reality.<br />
+             hold b to see what was here. press t to watch it happen.</p>
+          <button id="watchBtn">[watch]</button>
+        </div>
+      </div>
+      <div class="pane" id="help">
+        <div class="title"><span class="name">vocabulary</span>
+          <button class="x" id="helpClose" title="close">x</button></div>
+        <div class="body">
+          <dl>
+            <dt>upstream</dt><dd>the real city as imported. the fork's baseline.</dd>
+            <dt>diff</dt><dd>what the agents changed against upstream. d toggles it.</dd>
+            <dt>log</dt><dd>every event since the fork. scrub travels it.</dd>
+            <dt>generation</dt><dd>agents retire, heirs continue. the world's clock.</dd>
+            <dt>ghost</dt><dd>hold b: the real city, as we left it, inside the fork.</dd>
+            <dt>timelapse</dt><dd>t: the whole history replayed from here, then back to live.</dd>
+            <dt>observer</dt><dd>nothing you send can change this world. that is the point.</dd>
+          </dl>
+          <!--
+            §64.3: the eleven shortcuts that used to be advertised along the
+            bottom bar. A menu belongs behind a key; the screen belongs to the
+            world and the log.
+          -->
+          <div id="legend">
+            <div class="k"><b>n</b>narrative — headline and the campaigns in progress</div>
+            <div class="k"><b>r</b>crew · <b>c</b>changelog · <b>g</b>digest</div>
+            <div class="k"><b>m</b>/earth, every world listed · <b>[ ]</b>cycle city</div>
+            <div class="k"><b>d</b>diff · <b>b</b>ghost (hold) · <b>t</b>timelapse</div>
+            <div class="k"><b>f</b>follow · <b>0</b>home framing · <b>p</b>pause the feed</div>
+            <div class="k"><b>a</b>ambient · <b>s</b>sound · <b>v</b>verbose log</div>
+            <div class="k"><b>esc</b>close everything</div>
+          </div>
+          <!--
+            §64.2: the numbers that used to sit along the top bar. Nothing is
+            deleted; `diff`, the season, the pace and the durability of the
+            store are facts a viewer may want and none of them is one of the
+            four the status line is for. They are here, one keystroke away.
+          -->
+          <div id="readouts">
+            <span id="diffStat"><b>0.0%</b> diff</span>
+            <span class="sep">·</span>
+            <span id="season" class="dim">s1</span>
+            <span class="sep">·</span>
+            <span id="pace" class="dim">—</span>
+            <span class="sep">·</span>
+            <span id="durability" class="dim"></span>
+            <span class="sep">·</span>
+            <button id="agentsBtn" title="the crew (r)">agents —</button>
+            <button id="soundBtn" aria-pressed="false" title="the log as sound (s)">sound off</button>
+          </div>
+          <div class="credits" id="credits"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="chip"><span class="who" id="chipWho"></span><span id="chipWhat"></span></div>
+    <div id="modeFlip"></div>
+
+    <!-- §40.2/§40.4: the title card. One line, pane grammar, centred low over
+         the world; it never takes the pointer and never blocks a click. -->
+    <div id="titleCard"><span id="titleCardText"></span></div>
+    <div id="miniCard"></div>
+
+    <!--
+      §67: `earth` is a listing, not a map. Three globe attempts and one flat
+      map all failed the same way — labels detached from their marks, cities
+      placed wrong — because the failure is structural: eight worlds clustered
+      inside 15 km of one country cannot be laid out geographically without a
+      label ladder that lies about where they are. A terminal listing tells
+      more truth, and the thing a map showed that a list would lose — that
+      people move between these places — is the line under the table.
+    -->
+    <div class="pane" id="worlds">
+      <div class="title"><span class="name">/earth</span>
+        <span class="meta" id="worldsMeta"></span>
+        <button class="x" id="worldsClose" title="close">x</button></div>
+      <div class="body">
+        <div id="worldsHead" class="row hd">
+          <span class="nm">world</span><span class="cc">cc</span><span class="gen">gen</span>
+          <span class="diff">diff</span><span class="act">activity</span><span class="wk">working</span>
+        </div>
+        <div id="worldsList"></div>
+        <!--
+          §69: the half of the frame under the listing. A picker with an empty
+          bottom half tells a stranger nothing about what they are picking. Four
+          things, in the §35 register and no other: what this is, numbers that
+          move, what just happened, and where the ground truth came from.
+        -->
+        <div id="worldsBelow">
+          <div id="worldsPremise">
+            <p>we forked earth.</p>
+            <p>eight real places, imported from open geographic data — real buildings, real
+              footprints, real construction years.</p>
+            <p>autonomous agents own them now. they buy, convert, demolish, rebuild, die, and
+              pass the land to their heirs. nobody controls them and nothing is scripted.</p>
+            <p class="cta">select a world.</p>
+          </div>
+          <div id="worldsTotals"></div>
+          <div id="worldsTicker"></div>
+          <div id="worldsMigration"></div>
+          <div id="worldsCredits">
+            <span>ground truth: openstreetmap (odbl) · 3dbag lidar heights · ahn elevation ·
+              hm land registry price paid (ogl v3) · etalab dvf</span>
+            <span>every figure on this page is simulated. the places are real; what has
+              happened to them is not.</span>
+            <span>built with <a href="https://claude.ai/code">@claudeai</a> · terrafork.dev</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!--
+      §63.4: the cryptic layer. §35.5 banned grain for legibility; §63.4 relaxes
+      that ban to a subtle WHOLE-FRAME treatment, because unifying the world and
+      the chrome into one register is exactly what it is for. It sits above
+      everything, takes no pointer, and is faint enough that no text loses a
+      pixel — the tile and the opacity are set in main.ts and measured.
+    -->
+    <div id="grain"></div>
+
+    <!--
+      §63.4: technical readouts drawn into the WORLD layer rather than only the
+      panes. Parcel ordinals and coordinates on active sites, dim mono, in the
+      §35 register — projected each frame, so they belong to the city rather
+      than to the interface.
+    -->
+    <div id="siteMarks"></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

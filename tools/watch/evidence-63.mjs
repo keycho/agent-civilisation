@@ -41,7 +41,7 @@ for (const chunk of CHUNKS) {
   const live = process.env.CIV_LIVE
     ? `&server=${encodeURIComponent(`${process.env.CIV_LIVE}/ws/${chunk}`)}`
     : ''
-  await page.goto(`${ORIGIN}/?chunk=${chunk}${live}`, { waitUntil: 'domcontentloaded' })
+  await page.goto(`${ORIGIN}/w/?chunk=${chunk}${live}`, { waitUntil: 'domcontentloaded' })
   await page.waitForFunction(() => window.civ != null, null, { timeout: 120000 })
   await page.evaluate(() => {
     document.getElementById('watchBtn')?.click()

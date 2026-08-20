@@ -73,7 +73,7 @@ import { createSubstrateView } from './render/substrateMesh.ts'
 import { createTrees } from './render/trees.ts'
 import { PunctuationLayer } from './render/punctuation.ts'
 import { AgentInterpolator, Connection, fromBase64 } from './world/connection.ts'
-import { type ChunkEntry, loadChunk } from './world/load.ts'
+import { type ChunkEntry, loadChunk, wantedChunk } from './world/load.ts'
 import { Observer } from './world/observer.ts'
 import { Narrative, type OpenAction } from './world/narrative.ts'
 
@@ -3012,6 +3012,18 @@ function switchTo(id: string): void {
   // override that pointed at this one
   q.delete('server')
   sessionStorage.setItem('tf-arrive', '1')
+  /**
+   * §79: on a `/w/<slug>` route the slug IS the address, so switching worlds
+   * moves the path rather than bolting a contradicting query onto it. The
+   * query form still works and still wins, which is what keeps the harnesses
+   * and every existing link meaning exactly what they meant before.
+   */
+  if (/^\/w\/[a-z0-9-]+\/?$/i.test(location.pathname)) {
+    q.delete('chunk')
+    const rest = q.toString()
+    location.href = `/w/${id}${rest ? `?${rest}` : ''}`
+    return
+  }
   location.search = q.toString()
 }
 
@@ -4236,7 +4248,7 @@ function civHome(opts: { snap?: boolean } = {}): void {
  * The auto-dive is deleted rather than lengthened. A homepage that navigates
  * away on its own is a homepage a viewer cannot read.
  */
-const bareLoad = !new URLSearchParams(location.search).has('chunk')
+const bareLoad = wantedChunk() === null
 if (bareLoad && !arriving && !sessionStorage.getItem('tf-earth-seen')) {
   sessionStorage.setItem('tf-earth-seen', '1')
   openWorlds(true)

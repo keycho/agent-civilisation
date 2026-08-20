@@ -44,7 +44,7 @@ const claim = (name, ok, detail) => {
   console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${name.padEnd(38)} ${detail}`)
 }
 
-await page.goto(`${ORIGIN}/?chunk=${CHUNK}&server=${encodeURIComponent(SERVER)}`, {
+await page.goto(`${ORIGIN}/w/?chunk=${CHUNK}&server=${encodeURIComponent(SERVER)}`, {
   waitUntil: 'domcontentloaded',
 })
 await page.waitForFunction(() => window.civ != null, null, { timeout: 120000 })

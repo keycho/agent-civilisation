@@ -98,7 +98,7 @@ const rows = []
 for (const chunk of CHUNKS) {
   const server = `ws://127.0.0.1:8820/ws/${chunk}`
   const page = await browser.newPage({ viewport: VP })
-  await page.goto(`${ORIGIN}/?chunk=${chunk}&server=${encodeURIComponent(server)}`, {
+  await page.goto(`${ORIGIN}/w/?chunk=${chunk}&server=${encodeURIComponent(server)}`, {
     waitUntil: 'domcontentloaded',
   })
   await page.waitForFunction(() => window.civ != null, null, { timeout: 120000 })
