@@ -192,7 +192,8 @@ export class Minds {
    */
   private degradedSince = Date.now()
   /** rolling sample of what tier 1 actually produced, for the block's report */
-  readonly transcript: Array<{ at: string; chunk: string; tier: 0 | 1; line: string }> = []
+  readonly transcript: Array<{ at: string; chunk: string; tier: 0 | 1; verb: string; line: string }> =
+    []
 
   constructor() {
     const key = process.env.ANTHROPIC_API_KEY
@@ -360,7 +361,7 @@ export class Minds {
         return null
       }
       this.ledger.ok++
-      this.remember(req.chunkId, 1, `${req.agentName.split(' ')[0].toLowerCase()} ${line}`)
+      this.remember(req.chunkId, 1, req.verb, `${req.agentName.split(' ')[0].toLowerCase()} ${line}`)
       return line
     } catch {
       // a rate limit, a timeout, a 500, a network blip: the sim's line stands
@@ -371,9 +372,15 @@ export class Minds {
     }
   }
 
-  /** the tier-0 lines go in the transcript too, so the report shows the mix */
-  remember(chunk: string, tier: 0 | 1, line: string): void {
-    this.transcript.push({ at: new Date().toISOString().slice(11, 19), chunk, tier, line })
+  /**
+   * The tier-0 lines go in the transcript too, so the report shows the MIX
+   * rather than a highlight reel. Both arms are the same eligible population —
+   * an event that cleared the weight floor and got a call — so a reader can
+   * put them side by side and see what the model actually adds. Events that
+   * never got held at all are not in here; they were never candidates.
+   */
+  remember(chunk: string, tier: 0 | 1, verb: string, line: string): void {
+    this.transcript.push({ at: new Date().toISOString().slice(11, 19), chunk, tier, verb, line })
     if (this.transcript.length > 200) this.transcript.shift()
   }
 }

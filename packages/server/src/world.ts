@@ -429,7 +429,7 @@ export class WorldService {
       .then((line) => {
         const first = agent.name.split(' ')[0].toLowerCase()
         if (line) this.store.voiceEvent(e.id, line)
-        else minds.remember(this.chunkId, 0, `${first} ${rationale}`)
+        else minds.remember(this.chunkId, 0, verbOf(e.type), `${first} ${rationale}`)
       })
       .catch(() => {})
       .finally(() => {

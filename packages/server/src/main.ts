@@ -480,6 +480,27 @@ const http = createServer((req, res) => {
   }
   // §27.3/§44.5: every hosted chunk's summary in one fetch — the global
   // view's poll. Always an array, in either mode.
+  /**
+   * §55: what tier 1 actually sounds like, from the process that produced it.
+   *
+   * The ledger on /health says how many lines were written; it cannot say
+   * whether they are any good. This serves the rolling transcript — both arms
+   * of the same eligible population, tier 1 beside tier 0 — because "does it
+   * read" is a judgement someone has to make by looking, and until now there
+   * was no way to look without Railway's log console.
+   *
+   * `?tier=1` or `?tier=0` to take one arm, `?n=` to bound it. No prompt, no
+   * key, no agent ids: only the lines, which the feed already publishes.
+   */
+  if (path === '/minds') {
+    const q = new URL(req.url ?? '/', 'http://x').searchParams
+    const want = q.get('tier')
+    const n = Math.min(200, Math.max(1, Number(q.get('n') ?? 40) || 40))
+    const rows = minds.transcript.filter((r) => want == null || String(r.tier) === want)
+    res.writeHead(200, JSON_HEAD)
+    res.end(JSON.stringify({ ...minds.health(), lines: rows.slice(-n) }))
+    return
+  }
   if (path === '/summary') {
     res.writeHead(200, JSON_HEAD)
     res.end(JSON.stringify([...hosts.values()].map((h) => summaryOfChunk(h))))
