@@ -41,6 +41,28 @@ const QUEUE_CEILING = 20_000
 /** the window the drain rate is measured over */
 const DRAIN_WINDOW_MS = 30_000
 
+/**
+ * How long a single flush may be in flight before it is abandoned.
+ *
+ * PRODUCTION DEADLOCK, 2026-08-20. All eight worlds stopped advancing and
+ * stayed stopped for days: `decisions` and `events` frozen to the row on every
+ * chunk, `lag.events` pinned at 20,002, `drain.busy` 0, and `stalledFrames`
+ * climbing at exactly the frame rate — 11.9 million of them.
+ *
+ * The chain: `flush()` opens with `if (this.flushing) return`, and nothing
+ * bounded how long a flush could stay in flight. postgres.js is given a
+ * `connect_timeout` but no statement timeout, so an `INSERT` on a connection
+ * that died without an RST — a pooler recycling, a NAT idle-eviction — awaits
+ * a reply that will never come. `flushing` stays true, every later interval
+ * returns at that first line, the queue never drains, `saturated` latches
+ * true, and §72.4's backpressure (which is CORRECT — it is what stops an
+ * unbounded queue widening the data-loss window) stalls every world forever.
+ *
+ * Backpressure with no way out is not backpressure, it is a deadlock. The
+ * emitter yielding to the drain only works while the drain can still finish.
+ */
+const FLUSH_STUCK_MS = 30_000
+
 /** §72.4: a queue this deep after a flush gets another one immediately */
 const CATCH_UP_AT = 2_000
 
@@ -68,6 +90,20 @@ export class DurableStore implements WorldStore {
   private pendingSnapshots: Snapshot[] = []
   private timer: ReturnType<typeof setInterval> | null = null
   private flushing = false
+  /** when the in-flight flush started, for the wedge check above */
+  private flushStartedAt = 0
+  /**
+   * Bumped when an attempt is abandoned. A stale attempt that finally returns
+   * must not touch the queue or the metrics — the live one owns them now.
+   */
+  private flushSeq = 0
+  /**
+   * The batch the in-flight attempt took off the queue. Held so an abandoned
+   * flush can put its rows BACK rather than dropping them: the whole point of
+   * §72.4 is that a dropped event is a hole in an append-only log.
+   */
+  private inFlight: { events: Array<WorldEvent & { season: number }>; snapshots: Snapshot[] } | null =
+    null
   /** §72.1: the next flush is re-sending a batch that already failed once */
   private retrying = false
   private ready: Promise<void>
@@ -112,7 +148,13 @@ export class DurableStore implements WorldStore {
           connect_timeout: 15,
           prepare: false,
           onnotice: () => {},
-          connection: { application_name: 'civ-sim-server' },
+          /**
+           * A server-side ceiling on any single statement, so a wedged socket
+           * is bounded by postgres as well as by FLUSH_STUCK_MS above. Belt
+           * and braces on purpose: the client-side abandon restores liveness,
+           * this stops the orphaned query holding a pooled connection.
+           */
+          connection: { application_name: 'civ-sim-server', statement_timeout: 20_000 },
         })
       : null
     this.durability = this.sql ? 'postgres' : 'memory'
@@ -558,10 +600,56 @@ export class DurableStore implements WorldStore {
     await this.flush()
   }
 
+  /**
+   * Close out an attempt: metrics, then release the lock. Split out of the
+   * `finally` so an ABANDONED attempt returning late cannot clear `flushing`
+   * for the live one or double-count its rows.
+   */
+  private finishFlush(t0: number, rows: number): void {
+    this.lastFlushMs = Date.now() - t0
+    this.drainMs += this.lastFlushMs
+    this.drainRows += rows
+    // roll the measurement window rather than averaging over the process's
+    // whole life, which is the mistake /health's old rate figure made
+    if (Date.now() - this.drainSince > DRAIN_WINDOW_MS) {
+      this.drainSince = Date.now() - DRAIN_WINDOW_MS / 2
+      this.drainRows = Math.round(this.drainRows / 2)
+      this.drainMs = Math.round(this.drainMs / 2)
+    }
+    this.inFlight = null
+    this.flushing = false
+  }
+
   private async flush(): Promise<void> {
-    if (!this.sql || this.flushing) return
+    if (!this.sql) return
+    if (this.flushing) {
+      if (Date.now() - this.flushStartedAt < FLUSH_STUCK_MS) return
+      /**
+       * The wedge. Abandon the attempt, put its rows back at the FRONT of the
+       * queue so the log keeps its order, and let this call take over. The
+       * re-send is marked `retrying`, so the one case where the abandoned
+       * insert did land is swallowed by `on conflict do nothing` — which is
+       * exactly the "provably a retry of the same row" the flag exists for.
+       */
+      this.onError(
+        new Error(
+          `[store] flush wedged for ${Math.round((Date.now() - this.flushStartedAt) / 1000)}s — ` +
+            `abandoning it and retrying; ${this.pendingEvents.length} events queued`,
+        ),
+      )
+      if (this.inFlight) {
+        this.pendingEvents = this.inFlight.events.concat(this.pendingEvents)
+        this.pendingSnapshots = this.inFlight.snapshots.concat(this.pendingSnapshots)
+        this.inFlight = null
+      }
+      this.retrying = true
+      this.flushSeq++
+      this.flushing = false
+    }
     if (this.pendingEvents.length === 0 && this.pendingSnapshots.length === 0) return
     this.flushing = true
+    this.flushStartedAt = Date.now()
+    const seq = this.flushSeq
     let ok = true
     const t0 = Date.now()
     const events = this.pendingEvents
@@ -582,6 +670,7 @@ export class DurableStore implements WorldStore {
     this.retrying = false
     this.pendingEvents = []
     this.pendingSnapshots = []
+    this.inFlight = { events, snapshots }
     try {
       await this.ready
       for (let i = 0; i < events.length; i += 500) {
@@ -648,6 +737,9 @@ export class DurableStore implements WorldStore {
           : this.sql`insert into snapshots ${this.sql(rows)}`)
       }
     } catch (e) {
+      // an abandoned attempt has already had its rows re-queued by whoever
+      // abandoned it; touching them here would double the queue
+      if (seq !== this.flushSeq) return
       // Put them back rather than dropping them; a dropped event is a hole in
       // an append-only log, which is worse than a slow one. The next attempt is
       // a RETRY, and only a retry is allowed to swallow a conflict.
@@ -657,18 +749,10 @@ export class DurableStore implements WorldStore {
       ok = false
       this.onError(e)
     } finally {
-      this.lastFlushMs = Date.now() - t0
-      this.drainMs += this.lastFlushMs
-      this.drainRows += events.length + snapshots.length
-      // roll the measurement window rather than averaging over the process's
-      // whole life, which is the mistake /health's old rate figure made
-      if (Date.now() - this.drainSince > DRAIN_WINDOW_MS) {
-        this.drainSince = Date.now() - DRAIN_WINDOW_MS / 2
-        this.drainRows = Math.round(this.drainRows / 2)
-        this.drainMs = Math.round(this.drainMs / 2)
-      }
-      this.flushing = false
+      if (seq === this.flushSeq) this.finishFlush(t0, events.length + snapshots.length)
     }
+    if (seq !== this.flushSeq) return
+
     /**
      * §72.4: when the queue is still deep, flush again now rather than waiting
      * out the rest of the interval.
